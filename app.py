@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 from datetime import date, datetime
 
 st.title('Dividend Harvesting')
@@ -29,5 +30,16 @@ with col2:
 
 st.write('Last 10 dividend')
 st.dataframe(df[:10])
+
+col1, col2 = st.columns(2)
+
+with col1:
+    top10 = df.groupby('Stock')['Total Dividend'].sum().sort_values(ascending=False)[:10]
+
+    fig, ax = plt.subplots()
+    top10.plot(kind='pie', ax=ax)
+
+    st.write('Top 10 dividend by Stock')
+    st.pyplot(fig)
 
 
