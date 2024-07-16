@@ -33,8 +33,10 @@ st.dataframe(df[:10])
 
 col1, col2 = st.columns(2)
 
+top10 = df.groupby('Stock')['Total Dividend'].sum().sort_values(ascending=False)[:10]
+number = df.groupby('Stock')['Date'].count()
+
 with col1:
-    top10 = df.groupby('Stock')['Total Dividend'].sum().sort_values(ascending=False)[:10]
 
     fig, ax = plt.subplots()
     top10.plot(kind='pie', ax=ax)
@@ -42,4 +44,5 @@ with col1:
     st.write('Top 10 dividend by Stock')
     st.pyplot(fig)
 
-
+with col2:
+    st.dataframe(pd.DataFrame(top10).join(number, on='Stock'))
