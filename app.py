@@ -3,6 +3,8 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from datetime import date, datetime
 
+st.set_page_config(layout='wide')
+
 st.title('Dividend Harvesting')
 
 with st.sidebar:
@@ -13,8 +15,6 @@ with st.sidebar:
     target = st.text_input('Target', 100_000_000)
 
 df = pd.read_csv('stockbit.csv', delimiter=';')
-
-# st.dataframe(df)
 
 col1, col2 = st.columns(2)
 
@@ -46,3 +46,56 @@ with col1:
 
 with col2:
     st.dataframe(pd.DataFrame(top10).join(number, on='Stock'))
+
+import july
+
+st.write('Dividend Calendar')
+
+counts = df.groupby('Date')['Stock'].count().to_frame().reset_index()
+ax = july.heatmap(counts['Date'], counts['Stock'])
+
+st.pyplot(ax.get_figure())
+
+st.write('Sector Analysis')
+
+col1, col2 = st.columns(2)
+
+import yfinance as yf
+
+sectors = {}
+for s in df['Stock'].unique():
+    ticker = yf.Ticker(s+'.JK')
+    sectors[s] = ticker.info['sector']
+
+df_sectors = pd.DataFrame.from_dict({'stock': sectors.keys(), 'sector': sectors.values()})
+df = df.merge(df_sectors, left_on='Stock', right_on='stock')
+agg_sector = df.groupby('sector')['Total Dividend'].sum().sort_values(ascending=False)
+
+with col1:
+    st.dataframe(agg_sector)
+
+with col2:
+    fig2, ax2 = plt.subplots()
+    agg_sector.plot(kind='pie', ax=ax2)
+    st.pyplot(fig2)
+
+# Single stock analysis
+stock = st.text_input('Select Stock', value='ADRO')
+
+history = yf.Ticker(stock+'.JK').history(period='3mo').reset_index()
+
+import plotly.graph_objects as go
+candlestick = go.Candlestick(
+                            x=history['Date'],
+                            open=history['Open'],
+                            high=history['High'],
+                            low=history['Low'],
+                            close=history['Close']
+                            )
+
+fig = go.Figure(data=[candlestick])
+
+st.plotly_chart(fig)
+
+
+st.image('test2.gif')
