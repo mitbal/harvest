@@ -1,7 +1,10 @@
+from datetime import date
+
 import pandas as pd
-import streamlit as st
 import matplotlib.pyplot as plt
-from datetime import date, datetime
+
+import streamlit as st
+from st_aggrid import AgGrid
 
 st.set_page_config(layout='wide')
 
@@ -18,8 +21,8 @@ df = pd.read_csv('stockbit.csv', delimiter=';')
 
 col1, col2 = st.columns(2)
 
-total_dividend = str(df['Total Dividend'].sum())
-percentage = float(total_dividend) / float(target) * 100
+total_dividend = f"IDR {df['Total Dividend'].sum():,}"
+percentage = f"{df['Total Dividend'].sum() / float(target) * 100:.2f}%"
 
 with col1:
     st.metric(label='Total Dividend', value=total_dividend)
@@ -29,7 +32,7 @@ with col2:
 
 
 st.write('Last 10 dividend')
-st.dataframe(df[:10])
+AgGrid(df, height=400)
 
 col1, col2 = st.columns(2)
 
@@ -96,6 +99,3 @@ candlestick = go.Candlestick(
 fig = go.Figure(data=[candlestick])
 
 st.plotly_chart(fig)
-
-
-st.image('test2.gif')
