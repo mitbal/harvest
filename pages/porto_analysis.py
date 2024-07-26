@@ -10,7 +10,11 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 
-df = pd.read_csv('porto.csv', delimiter=';')
+uploaded_file = st.file_uploader("Choose a file")
+if uploaded_file is None:
+    st.stop()
+
+df = pd.read_csv(uploaded_file, delimiter=';', dtype='str')
 
 @st.cache_data
 def enrich_data(porto):
@@ -33,8 +37,6 @@ def enrich_data(porto):
 
     return df, divs
 
-
-df_display = pd.DataFrame()
 
 # get realtime stock data from yahoo finance
 df, divs = enrich_data(df)
