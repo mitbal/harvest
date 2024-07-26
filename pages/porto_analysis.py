@@ -62,3 +62,58 @@ builder.configure_column('Symbol', editable=False)
 grid_options = builder.build()
 
 selection = AgGrid(df, gridOptions=grid_options, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+
+
+# Perform dividend modelling and prediction for selected stock
+try:
+    if selection:
+        symbol = f'{selection['selected_rows']['Symbol'].iloc[0]}'
+        st.write('You select: ' +symbol)
+except Exception:
+    st.stop()
+
+fig, ax = plt.subplots(figsize=(8, 3.5))
+
+def fit_linear(divs, ax):
+    
+    X = np.arange(len(divs)).reshape(-1, 1)
+
+    temp = divs.to_frame().reset_index()
+    temp['year'] = temp['Date'].apply(lambda x: x.year)
+    temp = temp.groupby('year')['Dividends'].sum().to_frame().reset_index()
+
+    y = temp['Dividends'].to_numpy().reshape(-1, 1)
+    X = temp['year'].to_numpy().reshape(-1, 1)
+
+    lr = LinearRegression()
+    lr.fit(X, y)
+
+    y_hat = lr.predict(X)
+    temp['Prediction'] = y_hat
+    sns.lineplot(data=temp, x='year', y='Dividends', ax=ax)
+    sns.lineplot(data=temp, x='year', y='Prediction', ax=ax)
+
+    return lr.score(X, y), lr.predict([[temp['year'].iloc[-1]+1]])[0][0]
+
+score, pred = fit_linear(divs[symbol], ax)
+
+col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
+
+with col1:
+    AgGrid(divs[symbol][::-1].to_frame().reset_index(), height=200)
+
+with col2:
+    st.pyplot(fig)
+
+with col3:
+    st.write(f'R squared: {score:.2f}')
+    st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
+    
+    last = divs[symbol][-1]
+    if pred > divs[symbol][-1]:
+        color = 'green'
+    else:
+        color = 'red'
+
+    st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
+    st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
