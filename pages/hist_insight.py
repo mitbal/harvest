@@ -17,7 +17,11 @@ with st.sidebar:
 
     target = st.text_input('Target', 100_000_000)
 
-df = pd.read_csv('stockbit.csv', delimiter=';')
+
+uploaded_file = st.file_uploader('Choose a file')
+if uploaded_file is None:
+    st.stop()
+df = pd.read_csv(uploaded_file, delimiter=';')
 
 col1, col2 = st.columns(2)
 
