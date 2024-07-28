@@ -14,6 +14,8 @@ uploaded_file = st.file_uploader("Choose a file")
 if uploaded_file is None:
     st.stop()
 
+target = st.number_input(label='Select Target', value=60_000_000)
+
 df = pd.read_csv(uploaded_file, delimiter=';', dtype='str')
 
 @st.cache_data
@@ -49,14 +51,18 @@ df['yield_on_cost'] = df['div_rate'] / df['avg_price']
 total_investment = df['total_invested'].sum()
 annual_dividend = (df['current_lot']*df['div_rate']).sum() * 100
 total_yield_on_cost = annual_dividend / total_investment * 100
+achieve_percentage = annual_dividend / target * 100
 
-col1, col2, col3 = st.columns(3)
+
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric('Total Dividend Yield on Cost', value=f'{total_yield_on_cost:.2f} %')
 with col2:
     st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.2f}')
 with col3:
     st.metric('Total Investment', value=f'IDR {total_investment:,.2f}')
+with col4:
+    st.metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
 
 st.write('Current Portfolio')
 
