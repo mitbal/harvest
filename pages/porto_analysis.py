@@ -68,7 +68,10 @@ with col4:
 
 st.write('Current Portfolio')
 
-builder = GridOptionsBuilder.from_dataframe(df)
+df_display = df[['Symbol', 'Available Lot', 'Average Price', 'total_invested', 'div_rate', 'last_price', 
+                 'yield_on_cost', 'yield_on_price']].copy(deep=True)
+
+builder = GridOptionsBuilder.from_dataframe(df_display)
 builder.configure_pagination(enabled=True)
 builder.configure_selection(selection_mode='single', use_checkbox=False)
 builder.configure_column('Symbol', editable=False)
@@ -76,7 +79,7 @@ builder.configure_column('yield_on_cost', header_name='Yield on Cost', type=['nu
 builder.configure_column('yield_on_price', header_name='Yield on Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
 grid_options = builder.build()
 
-selection = AgGrid(df, gridOptions=grid_options, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+selection = AgGrid(df_display, gridOptions=grid_options, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
 
 
 # Perform dividend modelling and prediction for selected stock
