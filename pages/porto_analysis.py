@@ -1,6 +1,6 @@
 import yfinance as yf
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode
+from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 st.set_page_config(layout='wide')
 
@@ -68,18 +68,34 @@ with col4:
 
 st.write('Current Portfolio')
 
-df_display = df[['Symbol', 'Available Lot', 'Average Price', 'total_invested', 'div_rate', 'last_price', 
+df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
                  'yield_on_cost', 'yield_on_price']].copy(deep=True)
 
 builder = GridOptionsBuilder.from_dataframe(df_display)
 builder.configure_pagination(enabled=True)
 builder.configure_selection(selection_mode='single', use_checkbox=False)
+
+k_sep_formatter = JsCode("""
+    function(params) {
+        return (params.value == null) ? params.value : params.value.toLocaleString(); 
+    }
+    """)
+
 builder.configure_column('Symbol', editable=False)
-builder.configure_column('yield_on_cost', header_name='Yield on Cost', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
-builder.configure_column('yield_on_price', header_name='Yield on Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('Available Lot', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
+builder.configure_column('avg_price', header_name='Average Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('total_invested', header_name='Total Invested', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
+builder.configure_column('div_rate', header_name='Dividend Rate (IDR)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
+builder.configure_column('last_price', header_name='Last Price (IDR)')
+builder.configure_column('yield_on_cost', header_name='Yield on Cost (%)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('yield_on_price', header_name='Yield on Price (%)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+
 grid_options = builder.build()
 
-selection = AgGrid(df_display, gridOptions=grid_options, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+selection = AgGrid(df_display, 
+                   gridOptions=grid_options, 
+                   allow_unsafe_jscode=True,
+                   columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
 
 
 # Perform dividend modelling and prediction for selected stock
