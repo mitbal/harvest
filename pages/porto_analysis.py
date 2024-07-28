@@ -10,11 +10,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 
-uploaded_file = st.file_uploader("Choose a file")
-if uploaded_file is None:
-    st.stop()
+with st.popover('Insert data and parameter for calculation'):
+    uploaded_file = st.file_uploader("Choose a file")
+    target = st.number_input(label='Select Target', value=60_000_000)
 
-target = st.number_input(label='Select Target', value=60_000_000)
+    if uploaded_file is None:
+        st.stop()
 
 df = pd.read_csv(uploaded_file, delimiter=';', dtype='str')
 
@@ -54,7 +55,7 @@ total_yield_on_cost = annual_dividend / total_investment * 100
 achieve_percentage = annual_dividend / target * 100
 
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4 = st.columns(4, gap='small')
 with col1:
     st.metric('Total Dividend Yield on Cost', value=f'{total_yield_on_cost:.2f} %')
 with col2:
