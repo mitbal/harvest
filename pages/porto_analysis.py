@@ -47,7 +47,8 @@ df, divs = enrich_data(df)
 df['current_lot'] = df['Available Lot'].apply(lambda x: x.replace(',', '')).astype(float)
 df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype(float)
 df['total_invested'] = df['current_lot'] * df['avg_price'] * 100
-df['yield_on_cost'] = df['div_rate'] / df['avg_price']
+df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
+df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
 
 total_investment = df['total_invested'].sum()
 annual_dividend = (df['current_lot']*df['div_rate']).sum() * 100
@@ -71,6 +72,8 @@ builder = GridOptionsBuilder.from_dataframe(df)
 builder.configure_pagination(enabled=True)
 builder.configure_selection(selection_mode='single', use_checkbox=False)
 builder.configure_column('Symbol', editable=False)
+builder.configure_column('yield_on_cost', header_name='Yield on Cost', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('yield_on_price', header_name='Yield on Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
 grid_options = builder.build()
 
 selection = AgGrid(df, gridOptions=grid_options, columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
