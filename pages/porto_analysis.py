@@ -3,6 +3,7 @@ import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 st.set_page_config(layout='wide')
+st.title('Portfolio Analysis')
 
 import numpy as np
 import pandas as pd
@@ -60,9 +61,9 @@ col1, col2, col3, col4 = st.columns(4, gap='small')
 with col1:
     st.metric('Total Dividend Yield on Cost', value=f'{total_yield_on_cost:.2f} %')
 with col2:
-    st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.2f}')
+    st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
 with col3:
-    st.metric('Total Investment', value=f'IDR {total_investment:,.2f}')
+    st.metric('Total Investment', value=f'IDR {total_investment:,.0f}')
 with col4:
     st.metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
 
@@ -92,7 +93,8 @@ builder.configure_column('yield_on_price', header_name='Yield on Price (%)', typ
 
 grid_options = builder.build()
 
-selection = AgGrid(df_display, 
+selection = AgGrid(df_display,
+                   height=360,
                    gridOptions=grid_options, 
                    allow_unsafe_jscode=True,
                    columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
