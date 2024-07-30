@@ -25,6 +25,15 @@ with con:
     with col1:
         total_dividend = f"IDR {df['Total Dividend'].sum():,}"
         st.metric(label='Total Dividend', value=total_dividend)
+
+        cola, colb = st.columns(2)
+        with cola:
+            num_transaction = len(df)
+            st.metric(label='Number of Transaction', value=num_transaction)
+
+        with colb:
+            num_stocks = len(df['Stock'].unique())
+            st.metric(label='Number of Stocks', value=num_stocks)
         
         cola, colb = st.columns(2)
         with cola:
