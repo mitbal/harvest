@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import streamlit as st
-from st_aggrid import AgGrid
+from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 st.set_page_config(layout='wide')
 
@@ -20,7 +20,7 @@ df = pd.read_csv(uploaded_file, delimiter=';')
 con = st.container(border=True)
 
 with con:
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns([0.45, 0.55])
 
     with col1:
         total_dividend = f"IDR {df['Total Dividend'].sum():,}"
@@ -52,7 +52,27 @@ with con:
 
     with col2:
         st.write('List of transactions')
-        AgGrid(df, height=300)
+
+        df_display = df[['Date', 'Stock', 'Lot']].copy(deep=True)
+        df_display['Dividend'] = df['Price'].astype('float')
+        df_display['Total'] = df['Total Dividend'].astype('float')
+
+        k_sep_formatter = JsCode("""
+            function(params) {
+                return (params.value == null) ? params.value : params.value.toLocaleString(); 
+            }
+        """)
+
+        builder = GridOptionsBuilder.from_dataframe(df_display)
+        builder.configure_column('Dividend', header_name='Dividend (IDR)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=1)
+        builder.configure_column('Total', header_name='Total (IDR)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
+        
+        grid_options = builder.build()
+        AgGrid(df_display, 
+               height=300,
+               gridOptions=grid_options,
+               allow_unsafe_jscode=True,
+               columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
 
 
 ## Second section, summarization
