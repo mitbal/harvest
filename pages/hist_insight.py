@@ -1,6 +1,9 @@
 from datetime import date, datetime
 
+import numpy as np
 import pandas as pd
+import altair as alt
+import seaborn as sns
 import matplotlib.pyplot as plt
 
 import streamlit as st
@@ -76,22 +79,33 @@ with con:
 
 
 ## Second section, summarization
+con2 = st.container(border=True)
 
-col1, col2 = st.columns(2)
+with con2:
 
-top10 = df.groupby('Stock')['Total Dividend'].sum().sort_values(ascending=False)[:10]
-number = df.groupby('Stock')['Date'].count()
+    df['year'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').year)
+    df['month'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').month)
 
-with col1:
+    df_summary = df.groupby('Stock').agg({'Total Dividend': 'sum', 'Date': 'count'}).reset_index()
 
-    fig, ax = plt.subplots(figsize=(2, 2))
-    top10.plot(kind='pie', ax=ax)
+    col1, col2 = st.columns(2)
 
-    st.write('Top 10 dividend by Stock')
-    st.pyplot(fig)
+    with col1:
+        AgGrid(df_summary)
+    
+    with col2:
+        pass
 
-with col2:
-    st.dataframe(pd.DataFrame(top10).join(number, on='Stock'))
+# with col1:
+
+#     fig, ax = plt.subplots(figsize=(2, 2))
+#     top10.plot(kind='pie', ax=ax)
+
+#     st.write('Top 10 dividend by Stock')
+#     st.pyplot(fig)
+
+# with col2:
+#     st.dataframe(pd.DataFrame(top10).join(number, on='Stock'))
 
 import july
 
