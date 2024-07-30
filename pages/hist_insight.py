@@ -94,18 +94,46 @@ with con2:
         AgGrid(df_summary)
     
     with col2:
-        pass
+        bar_plot = alt.Chart(df_summary).mark_bar().encode(
+            x='Stock',
+            y='Total Dividend'
+        ).interactive()
 
-# with col1:
+        st.altair_chart(bar_plot, use_container_width=True)
 
-#     fig, ax = plt.subplots(figsize=(2, 2))
-#     top10.plot(kind='pie', ax=ax)
 
-#     st.write('Top 10 dividend by Stock')
-#     st.pyplot(fig)
 
-# with col2:
-#     st.dataframe(pd.DataFrame(top10).join(number, on='Stock'))
+## Now year on year analysis
+con3 = st.container(border=True)
+with con3:
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        df_year = df.groupby('year').agg({'Total Dividend': 'sum'}).reset_index()
+        # df_year['year'] = df_year['year'].apply(lambda x: datetime(year=x, month=1, day=1))
+        df_year['year'] = df_year['year'].astype('str')
+        # st.dataframe(df_year)
+
+        plot_year = alt.Chart(df_year).mark_bar().encode(
+            x='year',
+            y='Total Dividend'
+        ).interactive()
+
+        st.altair_chart(plot_year, use_container_width=True)
+
+    with col2:
+        df_month = df.groupby(['year', 'month']).agg({'Total Dividend': 'sum'}).reset_index()
+        # st.dataframe(df_month)
+
+        plot_month = alt.Chart(df_month).mark_bar().encode(
+            x='month:N',
+            xOffset='year:N',
+            color='year:N',
+            y='Total Dividend:Q'
+        ).interactive()
+
+        st.altair_chart(plot_month, use_container_width=True)
 
 import july
 
