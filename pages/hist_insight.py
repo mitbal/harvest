@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,35 +8,42 @@ from st_aggrid import AgGrid
 
 st.set_page_config(layout='wide')
 
-st.title('Dividend Harvesting')
-
-with st.sidebar:
-    start_date = st.date_input('Select start date', date(2024, 1, 1))
-
-    end_date = st.date_input('Select end date', date(2024, 12, 31))
-
-    target = st.text_input('Target', 100_000_000)
-
+st.title('Historical Insight')
 
 uploaded_file = st.file_uploader('Choose a file')
 if uploaded_file is None:
     st.stop()
 df = pd.read_csv(uploaded_file, delimiter=';')
 
-col1, col2 = st.columns(2)
 
-total_dividend = f"IDR {df['Total Dividend'].sum():,}"
-percentage = f"{df['Total Dividend'].sum() / float(target) * 100:.2f}%"
+## First section, overall 
+con = st.container(border=True)
 
-with col1:
-    st.metric(label='Total Dividend', value=total_dividend)
+with con:
+    col1, col2 = st.columns(2)
 
-with col2:
-    st.metric(label='Percent from Target', value=percentage)
+    with col1:
+        total_dividend = f"IDR {df['Total Dividend'].sum():,}"
+        st.metric(label='Total Dividend', value=total_dividend)
+        
+        cola, colb = st.columns(2)
+        with cola:
+            first_date = df['Date'].values[-1]
+            st.metric(label='First Transaction Date', value=first_date)
+
+        with colb:
+            last_date = df['Date'][0]
+            st.metric(label='Last Transaction Date', value=last_date)
+
+        duration = datetime.strptime(last_date, '%Y-%m-%d') - datetime.strptime(first_date, '%Y-%m-%d')
+        st.metric(label='Total Duration', value=str(duration))
+
+    with col2:
+        st.write('List of transactions')
+        AgGrid(df, height=300)
 
 
-st.write('Last 10 dividend')
-AgGrid(df, height=400)
+## Second section, summarization
 
 col1, col2 = st.columns(2)
 
@@ -45,7 +52,7 @@ number = df.groupby('Stock')['Date'].count()
 
 with col1:
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(2, 2))
     top10.plot(kind='pie', ax=ax)
 
     st.write('Top 10 dividend by Stock')
