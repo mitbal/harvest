@@ -45,7 +45,10 @@ with con:
             st.metric(label='Last Transaction Date', value=last_date)
 
         duration = datetime.strptime(last_date, '%Y-%m-%d') - datetime.strptime(first_date, '%Y-%m-%d')
-        st.metric(label='Total Duration', value=str(duration))
+        years = int(duration.days / 365)
+        months = int((duration.days % 365) / 30)
+        days = ((duration.days % 365) % 30)
+        st.metric(label='Total Duration', value=f'{years} years, {months} months, {days} days')
 
     with col2:
         st.write('List of transactions')
