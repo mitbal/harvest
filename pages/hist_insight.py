@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 
 import july
 import yfinance as yf
+import plotly.graph_objects as go
 
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
@@ -189,14 +190,37 @@ with con5:
             theta='Total Dividend:Q',
             color='sector',
         ).interactive()
-
         st.altair_chart(plot_sectors, use_container_width=True)
 
         plot_industries = alt.Chart(agg_industry).mark_arc().encode(
             theta='Total Dividend:Q',
             color='industry',
         ).interactive()
-
         st.altair_chart(plot_industries, use_container_width=True)
 
 
+# Last section, single stock analysis
+con6 = st.container(border=True)
+with con6:
+
+    col1, col2 = st.columns([0.35, 0.65])
+    with col1:
+        stock_list = np.sort(df['Stock'].unique())
+        stock = st.selectbox('Select Stock', stock_list)
+        
+        filt = df_display[df_display['Stock'] == stock][['Date', 'Lot', 'Dividend', 'Total']].reset_index().drop(columns='index')
+        # st.d÷at÷aframe(filt)
+        AgGrid(filt)
+
+    with col2:
+        history = yf.Ticker(stock+'.JK').history(period='1y').reset_index()
+        candlestick = go.Candlestick(
+                                    x=history['Date'],
+                                    open=history['Open'],
+                                    high=history['High'],
+                                    low=history['Low'],
+                                    close=history['Close']
+                                    )
+
+        fig = go.Figure(data=[candlestick])
+        st.plotly_chart(fig)
