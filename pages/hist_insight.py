@@ -1,11 +1,13 @@
 from datetime import date, datetime
 
-import july
 import numpy as np
 import pandas as pd
 import altair as alt
 import seaborn as sns
 import matplotlib.pyplot as plt
+
+import july
+import yfinance as yf
 
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
@@ -22,10 +24,9 @@ df = pd.read_csv(uploaded_file, delimiter=';')
 
 ## First section, overall 
 con = st.container(border=True)
-
 with con:
-    col1, col2 = st.columns([0.45, 0.55])
 
+    col1, col2 = st.columns([0.45, 0.55])
     with col1:
         total_dividend = f"IDR {df['Total Dividend'].sum():,}"
         st.metric(label='Total Dividend', value=total_dividend)
@@ -156,4 +157,46 @@ with con4:
 
     st.write('Dividend Calendar')
     st.pyplot(ax.get_figure())
+
+
+# Section 5, Sector and Industries Analysis
+con5 = st.container(border=True)
+with con5:
+
+    sectors = {}
+    industries = {}
+    for s in df['Stock'].unique():
+        ticker = yf.Ticker(s+'.JK')
+        sectors[s] = ticker.info['sector']
+        industries[s] = ticker.info['industry']
+
+    df_sectors = pd.DataFrame.from_dict({'stock': sectors.keys(), 'sector': sectors.values()})
+    df_industries = pd.DataFrame.from_dict({'stock': industries.keys(), 'industry': industries.values()})
+    df = df.merge(df_sectors, left_on='Stock', right_on='stock')
+    df = df.merge(df_industries, left_on='Stock', right_on='stock')
+    
+    agg_sector = df.groupby('sector')['Total Dividend'].sum().sort_values(ascending=False).reset_index()
+    agg_industry = df.groupby('industry')['Total Dividend'].sum().sort_values(ascending=False).reset_index()    
+
+    st.write('Sector Analysis')
+    col1, col2 = st.columns(2)
+    with col1:
+        st.dataframe(agg_sector)
+        st.dataframe(agg_industry)
+
+    with col2:
+        plot_sectors = alt.Chart(agg_sector).mark_arc().encode(
+            theta='Total Dividend:Q',
+            color='sector',
+        ).interactive()
+
+        st.altair_chart(plot_sectors, use_container_width=True)
+
+        plot_industries = alt.Chart(agg_industry).mark_arc().encode(
+            theta='Total Dividend:Q',
+            color='industry',
+        ).interactive()
+
+        st.altair_chart(plot_industries, use_container_width=True)
+
 
