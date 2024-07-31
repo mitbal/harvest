@@ -80,27 +80,33 @@ with con:
 
 ## Second section, summarization
 con2 = st.container(border=True)
-
 with con2:
 
     df['year'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').year)
     df['month'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').month)
-
     df_summary = df.groupby('Stock').agg({'Total Dividend': 'sum', 'Date': 'count'}).reset_index()
 
-    col1, col2 = st.columns(2)
-
+    col1, col2 = st.columns([0.3, 0.7])
     with col1:
-        AgGrid(df_summary)
+
+        builder = GridOptionsBuilder.from_dataframe(df_summary)
+        builder.configure_column('Total Dividend', header_name='Total Dividend', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
+        builder.configure_column('Date', header_name='Count', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
+        
+        grid_options = builder.build()
+        AgGrid(df_summary, 
+               height=310,
+               gridOptions=grid_options,
+               allow_unsafe_jscode=True,
+               columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
     
     with col2:
+
         bar_plot = alt.Chart(df_summary).mark_bar().encode(
             x='Stock',
             y='Total Dividend'
         ).interactive()
-
         st.altair_chart(bar_plot, use_container_width=True)
-
 
 
 ## Now year on year analysis
