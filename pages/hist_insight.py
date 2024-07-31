@@ -1,5 +1,6 @@
 from datetime import date, datetime
 
+import july
 import numpy as np
 import pandas as pd
 import altair as alt
@@ -114,12 +115,10 @@ con3 = st.container(border=True)
 with con3:
 
     col1, col2 = st.columns(2)
-
     with col1:
+
         df_year = df.groupby('year').agg({'Total Dividend': 'sum'}).reset_index()
-        # df_year['year'] = df_year['year'].apply(lambda x: datetime(year=x, month=1, day=1))
         df_year['year'] = df_year['year'].astype('str')
-        # st.dataframe(df_year)
 
         plot_year = alt.Chart(df_year).mark_bar().encode(
             x='year',
@@ -129,9 +128,8 @@ with con3:
         st.altair_chart(plot_year, use_container_width=True)
 
     with col2:
-        df_month = df.groupby(['year', 'month']).agg({'Total Dividend': 'sum'}).reset_index()
-        # st.dataframe(df_month)
 
+        df_month = df.groupby(['year', 'month']).agg({'Total Dividend': 'sum'}).reset_index()
         plot_month = alt.Chart(df_month).mark_bar().encode(
             x='month:N',
             xOffset='year:N',
@@ -141,52 +139,21 @@ with con3:
 
         st.altair_chart(plot_month, use_container_width=True)
 
-import july
 
-st.write('Dividend Calendar')
+## fourth section, dividend calendar
+con4 = st.container(border=True)
+with con4:
 
-counts = df.groupby('Date')['Stock'].count().to_frame().reset_index()
-ax = july.heatmap(counts['Date'], counts['Stock'])
+    year_list = df['year'].unique()
+    year_select = st.selectbox('Select the Year', year_list)
 
-st.pyplot(ax.get_figure())
+    filtered_df = df[df['year'] == year_select]
+    counts = filtered_df.groupby('Date')['Stock'].count().to_frame().reset_index()
+    counts = pd.concat([pd.DataFrame({'Date': date(year=year_select, month=1, day=1), 'Stock': 0}, index=[0]), 
+                        counts,
+                        pd.DataFrame({'Date': date(year=year_select, month=12, day=31), 'Stock': 0}, index=[0])]).reset_index()
+    ax = july.heatmap(counts['Date'], counts['Stock'], month_grid=True, cmap='github')
 
-st.write('Sector Analysis')
+    st.write('Dividend Calendar')
+    st.pyplot(ax.get_figure())
 
-col1, col2 = st.columns(2)
-
-import yfinance as yf
-
-sectors = {}
-for s in df['Stock'].unique():
-    ticker = yf.Ticker(s+'.JK')
-    sectors[s] = ticker.info['sector']
-
-df_sectors = pd.DataFrame.from_dict({'stock': sectors.keys(), 'sector': sectors.values()})
-df = df.merge(df_sectors, left_on='Stock', right_on='stock')
-agg_sector = df.groupby('sector')['Total Dividend'].sum().sort_values(ascending=False)
-
-with col1:
-    st.dataframe(agg_sector)
-
-with col2:
-    fig2, ax2 = plt.subplots()
-    agg_sector.plot(kind='pie', ax=ax2)
-    st.pyplot(fig2)
-
-# Single stock analysis
-stock = st.text_input('Select Stock', value='ADRO')
-
-history = yf.Ticker(stock+'.JK').history(period='3mo').reset_index()
-
-import plotly.graph_objects as go
-candlestick = go.Candlestick(
-                            x=history['Date'],
-                            open=history['Open'],
-                            high=history['High'],
-                            low=history['Low'],
-                            close=history['Close']
-                            )
-
-fig = go.Figure(data=[candlestick])
-
-st.plotly_chart(fig)
