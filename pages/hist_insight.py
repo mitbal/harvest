@@ -206,11 +206,18 @@ with con6:
     col1, col2 = st.columns([0.35, 0.65])
     with col1:
         stock_list = np.sort(df['Stock'].unique())
-        stock = st.selectbox('Select Stock', stock_list)
-        
+        stock = st.selectbox('Select Stock', stock_list) 
         filt = df_display[df_display['Stock'] == stock][['Date', 'Lot', 'Dividend', 'Total']].reset_index().drop(columns='index')
-        # st.d÷at÷aframe(filt)
-        AgGrid(filt)
+        
+        builder = GridOptionsBuilder.from_dataframe(filt)
+        builder.configure_column('Dividend', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
+        builder.configure_column('Total', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
+        
+        grid_options = builder.build()
+        AgGrid(filt,
+               height=200,
+               gridOptions=grid_options,
+               allow_unsafe_jscode=True)
 
     with col2:
         history = yf.Ticker(stock+'.JK').history(period='1y').reset_index()
