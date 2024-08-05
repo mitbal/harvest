@@ -14,13 +14,17 @@ import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 st.set_page_config(layout='wide')
-
 st.title('Historical Insight')
 
 uploaded_file = st.file_uploader('Choose a file')
-if uploaded_file is None:
+if uploaded_file:
+    st.session_state['history_file'] = uploaded_file
+
+if st.session_state['history_file'] is not 'EMPTY':
+    st.session_state['history_file'].seek(0)
+    df = pd.read_csv(st.session_state['history_file'], delimiter=';')
+else:
     st.stop()
-df = pd.read_csv(uploaded_file, delimiter=';')
 
 
 ## First section, overall 

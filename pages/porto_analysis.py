@@ -15,10 +15,14 @@ with st.popover('Insert data and parameter for calculation'):
     uploaded_file = st.file_uploader("Choose a file")
     target = st.number_input(label='Select Target', value=60_000_000)
 
-    if uploaded_file is None:
-        st.stop()
+    if uploaded_file:
+        st.session_state['porto_file'] = uploaded_file
 
-df = pd.read_csv(uploaded_file, delimiter=';', dtype='str')
+if st.session_state['porto_file'] is not 'EMPTY':
+    st.session_state['porto_file'].seek(0)
+    df = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
+else:
+    st.stop()
 
 @st.cache_data
 def enrich_data(porto):

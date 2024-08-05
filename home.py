@@ -13,3 +13,8 @@ show_pages(
         Page('pages/porto_analysis.py', 'Portfolio Analysis', '🧮')
     ]
 )
+
+if 'porto_file' not in st.session_state:
+    st.session_state['porto_file'] = 'EMPTY'
+if 'history_file' not in st.session_state:
+    st.session_state['history_file'] = 'EMPTY'
