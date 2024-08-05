@@ -18,3 +18,9 @@ if 'porto_file' not in st.session_state:
     st.session_state['porto_file'] = 'EMPTY'
 if 'history_file' not in st.session_state:
     st.session_state['history_file'] = 'EMPTY'
+
+
+with open('README.md', 'r') as f:
+    desc = f.read()
+
+st.markdown(desc)
