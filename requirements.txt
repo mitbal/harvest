@@ -1,4 +1,4 @@
-altair==4.2.2
+altair==5.3.0
 juni @ git+https://github.com/mitbal/juni@master
 matplotlib==3.9.1
 numpy==2.0.1
@@ -8,7 +8,7 @@ scikit_learn==1.5.1
 seaborn==0.13.2
 st_pages==0.5.0
 streamlit==1.36.0
-streamlit-aggrid==1.0.5
+streamlit-aggrid @ git+https://github.com/mitbal/streamlit-aggrid@master
 streamlit_calendar==1.2.0
 streamlit_lottie==0.0.5
 yfinance==0.2.40
