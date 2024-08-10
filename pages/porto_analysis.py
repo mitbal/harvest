@@ -7,6 +7,7 @@ st.title('Portfolio Analysis')
 
 import numpy as np
 import pandas as pd
+import altair as alt
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
@@ -18,7 +19,7 @@ with st.popover('Insert data and parameter for calculation'):
     if uploaded_file:
         st.session_state['porto_file'] = uploaded_file
 
-if st.session_state['porto_file'] is not 'EMPTY':
+if st.session_state['porto_file'] != 'EMPTY':
     st.session_state['porto_file'].seek(0)
     df = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
 else:
@@ -108,13 +109,12 @@ selection = AgGrid(df_display,
 try:
     if selection:
         symbol = f'{selection['selected_rows']['Symbol'].iloc[0]}'
-        st.write('You select: ' +symbol)
 except Exception:
     st.stop()
 
-fig, ax = plt.subplots(figsize=(8, 3.5))
 
-def fit_linear(divs, ax):
+
+def fit_linear(divs):
     
     X = np.arange(len(divs)).reshape(-1, 1)
 
@@ -130,30 +130,45 @@ def fit_linear(divs, ax):
 
     y_hat = lr.predict(X)
     temp['Prediction'] = y_hat
-    sns.lineplot(data=temp, x='year', y='Dividends', ax=ax)
-    sns.lineplot(data=temp, x='year', y='Prediction', ax=ax)
 
-    return lr.score(X, y), lr.predict([[temp['year'].iloc[-1]+1]])[0][0]
+    return lr.score(X, y), lr.predict([[temp['year'].iloc[-1]+1]])[0][0], temp
 
-score, pred = fit_linear(divs[symbol], ax)
+score, pred, pred_df = fit_linear(divs[symbol])
 
-col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
+detail_section = st.container(border=True)
+with detail_section:
+    st.write('You select: ' +symbol)
 
-with col1:
-    AgGrid(divs[symbol][::-1].to_frame().reset_index(), height=200)
+    col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
+    with col1:
+        AgGrid(divs[symbol][::-1].to_frame().reset_index(), height=290)
 
-with col2:
-    st.pyplot(fig)
+    with col2:
+        div_bar = alt.Chart(pred_df).mark_bar().encode(
+            alt.X('year:N'),
+            alt.Y('Dividends')
+        ).properties(
+            height=300,
+            width=450
+        )
 
-with col3:
-    st.write(f'R squared: {score:.2f}')
-    st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
-    
-    last = divs[symbol][-1]
-    if pred > divs[symbol][-1]:
-        color = 'green'
-    else:
-        color = 'red'
+        pred_line = alt.Chart(pred_df).mark_line().encode(
+            alt.X('year:N'),
+            alt.Y('Prediction'),
+            color=alt.value('red')
+        )
 
-    st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
-    st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
+        st.altair_chart(div_bar + pred_line)
+
+    with col3:
+        st.write(f'R squared: {score:.2f}')
+        st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
+        
+        last = divs[symbol].iloc[-1]
+        if pred > last:
+            color = 'green'
+        else:
+            color = 'red'
+
+        st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
+        st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
