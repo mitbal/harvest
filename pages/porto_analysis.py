@@ -115,25 +115,31 @@ except Exception:
 
 
 def fit_linear(divs):
+
+    df_train = divs.to_frame().reset_index()
+    df_train['year'] = df_train['Date'].apply(lambda x: x.year)
+    df_train = df_train.groupby('year')['Dividends'].sum().to_frame().reset_index()
+
+    import pendulum
+
+    year = pendulum.today().year
+    y = df_train[df_train['year'] < year]['Dividends'].to_numpy().reshape(-1, 1)
+    X = np.arange(y.shape[0]).reshape(-1, 1)
+
+    weight = np.append([2*y.shape[0]], np.ones(y.shape[0]-1)) # make the first dividend as kind of intercept
+    lr = LinearRegression(fit_intercept=True)
+    lr.fit(X, y, sample_weight=weight)
+
+    X_predict = np.arange(y.shape[0]+2).reshape(-1, 1)
+    y_hat = lr.predict(X_predict)
     
-    X = np.arange(len(divs)).reshape(-1, 1)
+    df_predict = pd.DataFrame()
+    df_predict['year'] = np.append(df_train['year'].values, [year+1])
+    df_predict['Prediction'] = y_hat
 
-    temp = divs.to_frame().reset_index()
-    temp['year'] = temp['Date'].apply(lambda x: x.year)
-    temp = temp.groupby('year')['Dividends'].sum().to_frame().reset_index()
+    return lr.score(X, y), df_predict['Prediction'].values[-1], df_train, df_predict
 
-    y = temp['Dividends'].to_numpy().reshape(-1, 1)
-    X = temp['year'].to_numpy().reshape(-1, 1)
-
-    lr = LinearRegression()
-    lr.fit(X, y)
-
-    y_hat = lr.predict(X)
-    temp['Prediction'] = y_hat
-
-    return lr.score(X, y), lr.predict([[temp['year'].iloc[-1]+1]])[0][0], temp
-
-score, pred, pred_df = fit_linear(divs[symbol])
+score, pred, df_train, df_predict = fit_linear(divs[symbol])
 
 detail_section = st.container(border=True)
 with detail_section:
@@ -144,7 +150,7 @@ with detail_section:
         AgGrid(divs[symbol][::-1].to_frame().reset_index(), height=290)
 
     with col2:
-        div_bar = alt.Chart(pred_df).mark_bar().encode(
+        div_bar = alt.Chart(df_train).mark_bar().encode(
             alt.X('year:N'),
             alt.Y('Dividends')
         ).properties(
@@ -152,7 +158,7 @@ with detail_section:
             width=450
         )
 
-        pred_line = alt.Chart(pred_df).mark_line().encode(
+        pred_line = alt.Chart(df_predict).mark_line().encode(
             alt.X('year:N'),
             alt.Y('Prediction'),
             color=alt.value('red')
