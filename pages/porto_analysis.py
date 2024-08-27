@@ -55,11 +55,12 @@ df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype
 df['total_invested'] = df['current_lot'] * df['avg_price'] * 100
 df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
 df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
+df['total_dividend'] = df['div_rate'] * df['current_lot'] * 100
 
+annual_dividend = df['total_dividend'].sum()
 total_investment = df['total_invested'].sum()
-annual_dividend = (df['current_lot']*df['div_rate']).sum() * 100
-total_yield_on_cost = annual_dividend / total_investment * 100
 achieve_percentage = annual_dividend / target * 100
+total_yield_on_cost = annual_dividend / total_investment * 100
 
 
 col1, col2, col3, col4 = st.columns(4, gap='small')
@@ -75,7 +76,7 @@ with col4:
 st.write('Current Portfolio')
 
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
-                 'yield_on_cost', 'yield_on_price']].copy(deep=True)
+                 'yield_on_cost', 'yield_on_price', 'total_dividend']].copy(deep=True)
 
 builder = GridOptionsBuilder.from_dataframe(df_display)
 builder.configure_pagination(enabled=True)
@@ -88,13 +89,14 @@ k_sep_formatter = JsCode("""
     """)
 
 builder.configure_column('Symbol', editable=False)
-builder.configure_column('Available Lot', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
+builder.configure_column('Available Lot', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
 builder.configure_column('avg_price', header_name='Average Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
 builder.configure_column('total_invested', header_name='Total Invested', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-builder.configure_column('div_rate', header_name='Dividend Rate (IDR)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
-builder.configure_column('last_price', header_name='Last Price (IDR)')
-builder.configure_column('yield_on_cost', header_name='Yield on Cost (%)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
-builder.configure_column('yield_on_price', header_name='Yield on Price (%)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('div_rate', header_name='Dividend Rate', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
+builder.configure_column('last_price', header_name='Last Price')
+builder.configure_column('yield_on_cost', header_name='Yield on Cost', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('yield_on_price', header_name='Yield on Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
+builder.configure_column('total_dividend', header_name='Total Dividend', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2, valueFormatter=k_sep_formatter)
 
 grid_options = builder.build()
 
