@@ -1,29 +1,77 @@
-import yfinance as yf
-import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
-
-st.set_page_config(layout='wide')
-st.title('Portfolio Analysis')
+import io
 
 import numpy as np
 import pandas as pd
 import altair as alt
-import seaborn as sns
-import matplotlib.pyplot as plt
+import yfinance as yf
+import streamlit as st
+
 from sklearn.linear_model import LinearRegression
+from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
-with st.popover('Insert data and parameter for calculation'):
-    uploaded_file = st.file_uploader("Choose a file")
-    target = st.number_input(label='Select Target', value=60_000_000)
 
-    if uploaded_file:
-        st.session_state['porto_file'] = uploaded_file
+st.set_page_config(layout='wide')
+st.title('Portfolio Analysis')
 
-if st.session_state['porto_file'] != 'EMPTY':
-    st.session_state['porto_file'].seek(0)
-    df = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
-else:
-    st.stop()
+
+df = None
+
+with st.expander('Data Input', expanded=True):
+    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Paste CSV', 'Form'], horizontal=True)
+
+    with st.form('abc'):
+
+        if method == 'Upload CSV':
+
+            uploaded_file = st.file_uploader("Choose a file")
+
+            if uploaded_file:
+                st.session_state['porto_file'] = uploaded_file
+
+            if st.session_state['porto_file'] != 'EMPTY':
+                st.session_state['porto_file'].seek(0)
+                df = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
+            
+        elif method == 'Paste Raw':
+            raw = st.text_area('Paste the Raw Data Here')
+        
+        elif method == 'Paste CSV':
+            raw = st.text_area('Paste CSV data here')
+        
+        elif method == 'Form':
+            example_df = pd.DataFrame(
+                [
+                    {'Symbol': 'ASII', 'Available Lot': '100', 'Average Price': '5000'}
+                ]
+            )
+
+            edited_df = st.data_editor(example_df, num_rows='dynamic')
+
+        target = st.number_input(label='Select Target', value=60_000_000)
+
+        submit = st.form_submit_button('Submit data')
+        if submit:
+
+            if method == 'Upload CSV':
+                pass
+            elif method == 'Paste Raw':
+                rows = np.array(raw.split())
+
+                stock = rows[range(0, len(rows), 9)]
+                lot = rows[range(1, len(rows), 9)]
+                price = rows[range(3, len(rows), 9)]
+
+                df = pd.DataFrame({
+                    'Symbol': stock,
+                    'Available Lot': lot,
+                    'Average Price': price
+                })
+            elif method == 'Paste CSV':
+                input_str = io.StringIO(raw)
+                df = pd.read_csv(input_str, sep=';', dtype='str')
+            elif method == 'Form':
+                df = edited_df.copy(deep=True)
+
 
 @st.cache_data
 def enrich_data(porto):
@@ -46,6 +94,8 @@ def enrich_data(porto):
 
     return df, divs
 
+if df is None:
+    st.stop()
 
 # get realtime stock data from yahoo finance
 df, divs = enrich_data(df)
