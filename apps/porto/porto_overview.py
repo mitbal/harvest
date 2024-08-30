@@ -160,7 +160,7 @@ selection = AgGrid(df_display,
 # Perform dividend modelling and prediction for selected stock
 try:
     if selection:
-        symbol = f'{selection['selected_rows']['Symbol'].iloc[0]}'
+        symbol = f"{selection['selected_rows']['Symbol'].iloc[0]}"
 except Exception:
     st.stop()
 
