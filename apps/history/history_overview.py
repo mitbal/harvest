@@ -1,12 +1,10 @@
-from datetime import date, datetime
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import altair as alt
-import seaborn as sns
-import matplotlib.pyplot as plt
 
-import july
+import lesley
 import yfinance as yf
 import plotly.graph_objects as go
 
@@ -20,7 +18,7 @@ uploaded_file = st.file_uploader('Choose a file')
 if uploaded_file:
     st.session_state['history_file'] = uploaded_file
 
-if st.session_state['history_file'] is not 'EMPTY':
+if st.session_state['history_file'] != 'EMPTY':
     st.session_state['history_file'].seek(0)
     df = pd.read_csv(st.session_state['history_file'], delimiter=';')
 else:
@@ -150,18 +148,27 @@ with con3:
 con4 = st.container(border=True)
 with con4:
 
-    year_list = df['year'].unique()
-    year_select = st.selectbox('Select the Year', year_list)
+    div_cols = st.columns(2)
+    with div_cols[0]:
+        year_list = df['year'].unique()
+        year_select = st.selectbox('Select the Year', year_list)
+    with div_cols[1]:
+        method = st.selectbox('Select Aggregation', ['Count', 'Sum', 'Percentage'])
 
     filtered_df = df[df['year'] == year_select]
-    counts = filtered_df.groupby('Date')['Stock'].count().to_frame().reset_index()
-    counts = pd.concat([pd.DataFrame({'Date': date(year=year_select, month=1, day=1), 'Stock': 0}, index=[0]), 
-                        counts,
-                        pd.DataFrame({'Date': date(year=year_select, month=12, day=31), 'Stock': 0}, index=[0])]).reset_index()
-    ax = july.heatmap(counts['Date'], counts['Stock'], month_grid=True, cmap='github')
+    if method == 'Count':
+        agg = filtered_df.groupby('Date')['Stock'].count().to_frame().reset_index()
+        heatmap_chart = lesley.cal_heatmap(pd.to_datetime(agg['Date']), agg['Stock'], height=300)
+    elif method == 'Sum':
+        agg = filtered_df.groupby('Date')['Total Dividend'].sum().to_frame().reset_index()
+        heatmap_chart = lesley.cal_heatmap(pd.to_datetime(agg['Date']), agg['Total Dividend'], height=300)
+    else:
+        agg = filtered_df.groupby('Date')['Total Dividend'].sum().to_frame().reset_index()
+        agg['pct'] = agg['Total Dividend'] / agg['Total Dividend'].sum()
+        heatmap_chart = lesley.cal_heatmap(pd.to_datetime(agg['Date']), agg['pct'], height=300)
 
     st.write('Dividend Calendar')
-    st.pyplot(ax.get_figure())
+    st.altair_chart(heatmap_chart)
 
 
 # Section 5, Sector and Industries Analysis
