@@ -1,6 +1,12 @@
 import streamlit as st
 from streamlit_lottie import st_lottie
 
+st.set_page_config(
+    page_title='Panen Dividen',
+    page_icon='🪙',
+    layout='wide'
+)
+
 st.title('Panen Dividen')
 st_lottie(animation_source='https://lottie.host/632869fc-4f0f-4707-84ff-00c73c591eed/QEtuVsuLs5.json',
           height=200)
