@@ -1,6 +1,7 @@
 numpy==2.0.1
 pandas==2.2.2
 altair==4.2.2
+lesley==0.1.3
 seaborn==0.13.2
 st_pages==0.5.0
 pendulum==3.0.0
