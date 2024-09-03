@@ -1,3 +1,4 @@
+import calendar
 from datetime import datetime
 
 import numpy as np
@@ -133,10 +134,11 @@ with con3:
 
     with col2:
 
-        df_month = df.groupby(['year', 'month']).agg({'Total Dividend': 'sum'}).reset_index()
+        df['month_name'] = df['month'].apply(lambda x: calendar.month_name[x])
+
+        df_month = df.groupby(['year', 'month_name']).agg({'Total Dividend': 'sum'}).reset_index()
         plot_month = alt.Chart(df_month).mark_bar().encode(
-            x='month:N',
-            xOffset='year:N',
+            x=alt.X('month_name', sort=list(calendar.month_name)),
             color='year:N',
             y='Total Dividend:Q'
         ).interactive()
