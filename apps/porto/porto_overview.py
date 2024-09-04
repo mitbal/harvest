@@ -14,7 +14,8 @@ st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
 
 
-df = None
+if 'porto_df' not in st.session_state:
+    st.session_state['porto_df'] = None
 
 with st.expander('Data Input', expanded=True):
     method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Paste CSV', 'Form'], horizontal=True)
@@ -22,15 +23,10 @@ with st.expander('Data Input', expanded=True):
     with st.form('abc'):
 
         if method == 'Upload CSV':
-
             uploaded_file = st.file_uploader("Choose a file")
 
             if uploaded_file:
                 st.session_state['porto_file'] = uploaded_file
-
-            if st.session_state['porto_file'] != 'EMPTY':
-                st.session_state['porto_file'].seek(0)
-                df = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
             
         elif method == 'Paste Raw':
             raw = st.text_area('Paste the Raw Data Here')
@@ -44,7 +40,6 @@ with st.expander('Data Input', expanded=True):
                     {'Symbol': 'ASII', 'Available Lot': '100', 'Average Price': '5000'}
                 ]
             )
-
             edited_df = st.data_editor(example_df, num_rows='dynamic')
 
         target = st.number_input(label='Select Target', value=60_000_000)
@@ -53,7 +48,10 @@ with st.expander('Data Input', expanded=True):
         if submit:
 
             if method == 'Upload CSV':
-                pass
+                if st.session_state['porto_file'] != 'EMPTY':
+                    st.session_state['porto_file'].seek(0)
+                    st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
+
             elif method == 'Paste Raw':
                 rows = np.array(raw.split())
 
@@ -66,12 +64,16 @@ with st.expander('Data Input', expanded=True):
                     'Available Lot': lot,
                     'Average Price': price
                 })
+                st.session_state['porto_df'] = df
+
             elif method == 'Paste CSV':
                 input_str = io.StringIO(raw)
                 df = pd.read_csv(input_str, sep=';', dtype='str')
+                st.session_state['porto_df'] = df
+                
             elif method == 'Form':
                 df = edited_df.copy(deep=True)
-
+                st.session_state['porto_df'] = df
 
 @st.cache_data
 def enrich_data(porto):
@@ -79,6 +81,7 @@ def enrich_data(porto):
     divs = {}
     drs = {}
     prices = {}
+    sectors = {}
     for s in porto['Symbol']:
         t = yf.Ticker(s+'.JK')
 
@@ -86,19 +89,21 @@ def enrich_data(porto):
             drs[s] = t.info['dividendRate']
             divs[s] = t.get_dividends()
             prices[s] = t.info['previousClose']
+            sectors[s] = t.info['sector']
         except Exception as e:
             print(s, e) 
     
     df = porto.merge(pd.DataFrame({'Symbol': drs.keys(), 'div_rate': drs.values()})).\
-        merge(pd.DataFrame({'Symbol': prices.keys(), 'last_price': prices.values()}))
+        merge(pd.DataFrame({'Symbol': prices.keys(), 'last_price': prices.values()})).\
+        merge(pd.DataFrame({'Symbol': sectors.keys(), 'sector': sectors.values()}))
 
     return df, divs
 
-if df is None:
+if st.session_state['porto_df'] is None:
     st.stop()
 
 # get realtime stock data from yahoo finance
-df, divs = enrich_data(df)
+df, divs = enrich_data(st.session_state['porto_df'])
 
 df['current_lot'] = df['Available Lot'].apply(lambda x: x.replace(',', '')).astype(float)
 df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype(float)
