@@ -182,6 +182,21 @@ with con_table:
         combined_chart = (div_bar + yield_bar).resolve_scale(y='independent')
         st.altair_chart(combined_chart)
 
+    with tabs[2]:
+        sector_cols = st.columns(2)
+
+        sector_df = df.groupby('sector')['total_dividend'].sum()
+        with sector_cols[0]:
+            st.dataframe(sector_df)
+
+        sector_pie = alt.Chart(df).mark_arc().encode(
+            theta='sum(total_dividend)',
+            color='sector'
+        ).interactive()
+
+        with sector_cols[1]:
+            st.altair_chart(sector_pie)
+
 
 # Perform dividend modelling and prediction for selected stock
 try:
