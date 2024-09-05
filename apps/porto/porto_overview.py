@@ -6,6 +6,7 @@ import altair as alt
 import yfinance as yf
 import streamlit as st
 
+from datetime import datetime
 from sklearn.linear_model import LinearRegression
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
@@ -118,17 +119,18 @@ achieve_percentage = annual_dividend / target * 100
 total_yield_on_cost = annual_dividend / total_investment * 100
 
 
-col1, col2, col3, col4 = st.columns(4, gap='small')
-with col1:
-    st.metric('Total Dividend Yield on Cost', value=f'{total_yield_on_cost:.2f} %')
-with col2:
-    st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
-with col3:
-    st.metric('Total Investment', value=f'IDR {total_investment:,.0f}')
-with col4:
-    st.metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
+con_overall = st.container(border=True)
+with con_overall:
+    col1, col2, col3, col4 = st.columns(4, gap='small')
+    with col1:
+        st.metric('Total Dividend Yield on Cost', value=f'{total_yield_on_cost:.2f} %')
+    with col2:
+        st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
+    with col3:
+        st.metric('Total Investment', value=f'IDR {total_investment:,.0f}')
+    with col4:
+        st.metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
 
-st.write('Current Portfolio')
 
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
                  'yield_on_cost', 'yield_on_price', 'total_dividend']].copy(deep=True)
