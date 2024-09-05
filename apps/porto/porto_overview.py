@@ -237,3 +237,13 @@ with detail_section:
 
         st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
         st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
+
+        current_year = datetime.now().year
+        number_of_year = len(df_train)
+        consistency = number_of_year / (current_year - df_train['year'][0] +1)
+        st.write(f'Number of year {number_of_year}, consistency {consistency*100:.2f}%')
+
+        st.write()
+        inc = df_train['Dividends'].shift(-1) - df_train['Dividends']
+        avg_annual_increase = np.mean(inc)
+        st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(inc > 0)}, increase percentage {np.sum(inc > 0) / number_of_year*100:.2f}%')
