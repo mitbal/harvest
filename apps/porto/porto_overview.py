@@ -159,12 +159,23 @@ grid_options = builder.build()
 
 con_table = st.container(border=True)
 with con_table:
-    st.write('Current Portfolio')
-    selection = AgGrid(df_display,
-                    height=360,
-                    gridOptions=grid_options, 
-                    allow_unsafe_jscode=True,
-                    columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+
+    tabs = st.tabs(['Table View', 'Bar Chart View', 'Sectoral View', 'Calendar View'])
+    
+    with tabs[0]:
+        st.write('Current Portfolio')
+        selection = AgGrid(df_display,
+                        height=360,
+                        gridOptions=grid_options, 
+                        allow_unsafe_jscode=True,
+                        columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+    
+    with tabs[1]:
+        porto_bar = alt.Chart(df_display).mark_bar().encode(
+            x=alt.X('Symbol'),
+            y=alt.Y('total_dividend')
+        )    
+        st.altair_chart(porto_bar)
 
 
 # Perform dividend modelling and prediction for selected stock
