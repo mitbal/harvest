@@ -157,11 +157,14 @@ builder.configure_column('total_dividend', header_name='Total Dividend', type=['
 
 grid_options = builder.build()
 
-selection = AgGrid(df_display,
-                   height=360,
-                   gridOptions=grid_options, 
-                   allow_unsafe_jscode=True,
-                   columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+con_table = st.container(border=True)
+with con_table:
+    st.write('Current Portfolio')
+    selection = AgGrid(df_display,
+                    height=360,
+                    gridOptions=grid_options, 
+                    allow_unsafe_jscode=True,
+                    columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
 
 
 # Perform dividend modelling and prediction for selected stock
