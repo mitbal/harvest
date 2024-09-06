@@ -43,7 +43,10 @@ with st.expander('Data Input', expanded=True):
             )
             edited_df = st.data_editor(example_df, num_rows='dynamic')
 
-        target = st.number_input(label='Select Target', value=60_000_000)
+        target = st.number_input(
+            label='Input Target Annual Income (in million IDR)', 
+            value=120, step=1, 
+            format='%d')
 
         submit = st.form_submit_button('Submit data')
         if submit:
@@ -115,7 +118,7 @@ df['total_dividend'] = df['div_rate'] * df['current_lot'] * 100
 
 annual_dividend = df['total_dividend'].sum()
 total_investment = df['total_invested'].sum()
-achieve_percentage = annual_dividend / target * 100
+achieve_percentage = annual_dividend / target * 100 / 1_000_000
 total_yield_on_cost = annual_dividend / total_investment * 100
 
 
