@@ -7,6 +7,7 @@ import yfinance as yf
 import streamlit as st
 
 import lesley
+import calendar
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
@@ -173,7 +174,7 @@ with con_table:
                         gridOptions=grid_options,
                         allow_unsafe_jscode=True,
                         columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
-    
+
     with tabs[1]:
         div_bar = alt.Chart(df_display).mark_bar().encode(
             x=alt.X('Symbol'),
@@ -203,10 +204,12 @@ with con_table:
 
     with tabs[3]:
 
+        view_type = st.radio('Select View', ['Calendar', 'Table'], horizontal=True)
+
         # prepare calendar data
         div_lists = []
         for index, row in df.iterrows():
-            
+
             stock = row['Symbol']
             div_df = divs[stock].to_frame().reset_index()
             div_df['year'] = div_df['Date'].apply(lambda x: x.year)
@@ -215,15 +218,35 @@ with con_table:
             last_year_div = div_df[div_df['year'] == current_year-1]
             last_year_div['Symbol'] = stock
             last_year_div['Lot'] = row['current_lot']
-            
+
             div_lists += [last_year_div]
         all_divs = pd.concat(div_lists).reset_index(drop=True)       
 
         all_divs['total_dividend'] = all_divs['Lot'] * all_divs['Dividends'] * 100
         all_divs['Date'] = pd.to_datetime(all_divs['Date']).dt.tz_localize(None)
         
-        cal = lesley.calendar_plot(all_divs['Date'], all_divs['total_dividend'], nrows=2)
-        st.altair_chart(cal)
+        if view_type == 'Calendar':
+            cal = lesley.calendar_plot(all_divs['Date'], all_divs['total_dividend'], nrows=2)
+            st.altair_chart(cal)
+        else:
+            all_divs['month'] = all_divs['Date'].apply(lambda x: x.month)
+            month_div = all_divs.groupby('month')['total_dividend'].sum()
+
+            row_1 = st.container()
+            with row_1:
+                row_1_cols = st.columns(6)
+                for c, i in zip(row_1_cols, range(1, 7)):
+                    m = all_divs[all_divs['month'] == i]
+                    c.write(calendar.month_name[i])
+                    c.dataframe(m[['Symbol', 'total_dividend']], hide_index=True)
+
+            row_2 = st.container()
+            with row_2:
+                row_2_cols = st.columns(6)
+                for c, i in zip(row_2_cols, range(6, 13)):
+                    m = all_divs[all_divs['month'] == i]
+                    c.write(calendar.month_name[i])
+                    c.dataframe(m[['Symbol', 'total_dividend']], hide_index=True)
 
 # Perform dividend modelling and prediction for selected stock
 try:
