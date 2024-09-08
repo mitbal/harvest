@@ -6,6 +6,7 @@ import altair as alt
 import yfinance as yf
 import streamlit as st
 
+import lesley
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
@@ -200,6 +201,29 @@ with con_table:
         with sector_cols[1]:
             st.altair_chart(sector_pie)
 
+    with tabs[3]:
+
+        # prepare calendar data
+        div_lists = []
+        for index, row in df.iterrows():
+            
+            stock = row['Symbol']
+            div_df = divs[stock].to_frame().reset_index()
+            div_df['year'] = div_df['Date'].apply(lambda x: x.year)
+
+            current_year = datetime.today().year
+            last_year_div = div_df[div_df['year'] == current_year-1]
+            last_year_div['Symbol'] = stock
+            last_year_div['Lot'] = row['current_lot']
+            
+            div_lists += [last_year_div]
+        all_divs = pd.concat(div_lists).reset_index(drop=True)       
+
+        all_divs['total_dividend'] = all_divs['Lot'] * all_divs['Dividends'] * 100
+        all_divs['Date'] = pd.to_datetime(all_divs['Date']).dt.tz_localize(None)
+        
+        cal = lesley.calendar_plot(all_divs['Date'], all_divs['total_dividend'], nrows=2)
+        st.altair_chart(cal)
 
 # Perform dividend modelling and prediction for selected stock
 try:
