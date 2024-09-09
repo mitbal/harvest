@@ -222,11 +222,11 @@ with con_table:
             div_lists += [last_year_div]
         all_divs = pd.concat(div_lists).reset_index(drop=True)       
 
-        all_divs['total_dividend'] = all_divs['Lot'] * all_divs['Dividends'] * 100
+        all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['Dividends'] * 100).astype('int')
         all_divs['Date'] = pd.to_datetime(all_divs['Date']).dt.tz_localize(None)
         
         if view_type == 'Calendar':
-            cal = lesley.calendar_plot(all_divs['Date'], all_divs['total_dividend'], nrows=2)
+            cal = lesley.calendar_plot(all_divs['Date'], all_divs['total_dividend'], nrows=3)
             st.altair_chart(cal)
         else:
             all_divs['month'] = all_divs['Date'].apply(lambda x: x.month)
@@ -238,7 +238,7 @@ with con_table:
                 for c, i in zip(row_1_cols, range(1, 7)):
                     m = all_divs[all_divs['month'] == i]
                     c.write(calendar.month_name[i])
-                    c.dataframe(m[['Symbol', 'total_dividend']], hide_index=True)
+                    c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
 
             row_2 = st.container()
             with row_2:
