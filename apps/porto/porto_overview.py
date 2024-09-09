@@ -246,7 +246,7 @@ with con_table:
                 for c, i in zip(row_2_cols, range(6, 13)):
                     m = all_divs[all_divs['month'] == i]
                     c.write(calendar.month_name[i])
-                    c.dataframe(m[['Symbol', 'total_dividend']], hide_index=True)
+                    c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
 
 # Perform dividend modelling and prediction for selected stock
 try:
