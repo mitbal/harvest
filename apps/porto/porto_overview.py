@@ -38,11 +38,14 @@ with st.expander('Data Input', expanded=True):
             raw = st.text_area('Paste CSV data here')
         
         elif method == 'Form':
-            example_df = pd.DataFrame(
-                [
-                    {'Symbol': 'ASII', 'Available Lot': '100', 'Average Price': '5000'}
-                ]
-            )
+            if st.session_state['porto_df'] is None:
+                example_df = pd.DataFrame(
+                    [
+                        {'Symbol': 'ASII', 'Available Lot': '100', 'Average Price': '5000'}
+                    ]
+                )
+            else:
+                example_df = st.session_state['porto_df'].copy(deep=True)
             edited_df = st.data_editor(example_df, num_rows='dynamic')
 
         target = st.number_input(
