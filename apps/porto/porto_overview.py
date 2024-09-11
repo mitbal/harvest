@@ -203,9 +203,12 @@ with con_table:
                                  key='data')
 
         with sector_cols[1]:
-            row_idx = event.selection['rows']
-            sector_name = sector_df.loc[row_idx, 'sector'].values[0]
-            st.dataframe(df[df['sector'] == sector_name][['Symbol', 'total_dividend']], hide_index=True, )
+            if len(event.selection['rows']) > 0:
+                row_idx = event.selection['rows'][0]
+                sector_name = sector_df.loc[row_idx, 'sector']
+                st.dataframe(df[df['sector'] == sector_name][['Symbol', 'total_dividend']], hide_index=True, )
+            else:
+                st.info('Select one of the sector on the table on the left')
 
         sector_pie = alt.Chart(df).mark_arc().encode(
             theta='sum(total_dividend)',
