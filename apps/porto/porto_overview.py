@@ -191,18 +191,27 @@ with con_table:
         st.altair_chart(combined_chart)
 
     with tabs[2]:
-        sector_cols = st.columns(2)
-
-        sector_df = df.groupby('sector')['total_dividend'].sum()
+        sector_cols = st.columns([.7,.5,1])
+        
         with sector_cols[0]:
-            st.dataframe(sector_df)
+            sector_df = df.groupby('sector')['total_dividend'].sum().to_frame().sort_values('total_dividend', ascending=False).reset_index()
+            event = st.dataframe(sector_df, 
+                                 selection_mode=['single-row'], 
+                                 on_select='rerun',
+                                 hide_index=True,
+                                 key='data')
+
+        with sector_cols[1]:
+            row_idx = event.selection['rows']
+            sector_name = sector_df.loc[row_idx, 'sector'].values[0]
+            st.dataframe(df[df['sector'] == sector_name][['Symbol', 'total_dividend']], hide_index=True, )
 
         sector_pie = alt.Chart(df).mark_arc().encode(
             theta='sum(total_dividend)',
             color='sector'
         ).interactive()
 
-        with sector_cols[1]:
+        with sector_cols[2]:
             st.altair_chart(sector_pie)
 
     with tabs[3]:
