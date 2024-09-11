@@ -176,6 +176,7 @@ with con_table:
                         height=360,
                         gridOptions=grid_options,
                         allow_unsafe_jscode=True,
+                        enable_enterprise_modules=False,
                         columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
 
     with tabs[1]:
