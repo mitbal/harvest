@@ -207,34 +207,53 @@ with con_table:
 
     with tabs[3]:
 
-        view_type = st.radio('Select View', ['Calendar', 'Table'], horizontal=True)
+        view_type = st.radio('Select View', ['Calendar', 'Bar Chart', 'Table'], horizontal=True)
 
         # prepare calendar data
         div_lists = []
         for index, row in df.iterrows():
 
-            stock = row['Symbol']
+            r = row.to_dict()
+            stock = r['Symbol']
             div_df = divs[stock].to_frame().reset_index()
             div_df['year'] = div_df['Date'].apply(lambda x: x.year)
+            div_df['Date'] = pd.to_datetime(div_df['Date']).dt.tz_localize(None)
+
+            end_date = pd.Timestamp('today').to_datetime64()
+            start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
 
             current_year = datetime.today().year
-            last_year_div = div_df[div_df['year'] == current_year-1]
-            last_year_div['Symbol'] = stock
-            last_year_div['Lot'] = row['current_lot']
+            last_year_div = div_df[(pd.to_datetime(div_df['Date']) >= start_date) & (pd.to_datetime(div_df['Date']) < end_date)]
+            last_year_div.loc[:, 'Symbol'] = stock
+            last_year_div.loc[:, 'Lot'] = r['current_lot']
 
             div_lists += [last_year_div]
-        all_divs = pd.concat(div_lists).reset_index(drop=True)       
 
+        all_divs = pd.concat(div_lists).reset_index(drop=True)       
         all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['Dividends'] * 100).astype('int')
         all_divs['Date'] = pd.to_datetime(all_divs['Date']).dt.tz_localize(None)
+        all_divs['new_date'] = all_divs['Date'].apply(lambda x: x + pd.Timedelta(days=14)) # payment date on average 2 weeks after ex-date
+        all_divs['month'] = all_divs['new_date'].apply(lambda x: x.month)
+        
+        month_div = all_divs.groupby('month')['total_dividend'].sum().to_frame().reset_index()
+        month_div['month_name'] = month_div['month'].apply(lambda x: calendar.month_name[x])
         
         if view_type == 'Calendar':
-            cal = lesley.calendar_plot(all_divs['Date'], all_divs['total_dividend'], nrows=3)
+            all_divs['new_date'] = all_divs['new_date'].apply(lambda x: datetime(year=current_year+1, month=x.month, day=x.day))
+            cal = lesley.calendar_plot(all_divs['new_date'], all_divs['total_dividend'], nrows=3)
             st.altair_chart(cal)
-        else:
-            all_divs['month'] = all_divs['Date'].apply(lambda x: x.month)
-            month_div = all_divs.groupby('month')['total_dividend'].sum()
+        
+        elif view_type == 'Bar Chart':
+            bar_cols = st.columns(2)
+            bar_cols[0].dataframe(month_div[['month_name', 'total_dividend']], hide_index=True)
 
+            month_bar = alt.Chart(month_div).mark_bar().encode(
+                x=alt.X('month:N'),
+                y=alt.Y('total_dividend')
+            )
+            bar_cols[1].altair_chart(month_bar)
+        
+        else:
             row_1 = st.container()
             with row_1:
                 row_1_cols = st.columns(6)
@@ -246,7 +265,7 @@ with con_table:
             row_2 = st.container()
             with row_2:
                 row_2_cols = st.columns(6)
-                for c, i in zip(row_2_cols, range(6, 13)):
+                for c, i in zip(row_2_cols, range(7, 13)):
                     m = all_divs[all_divs['month'] == i]
                     c.write(calendar.month_name[i])
                     c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
