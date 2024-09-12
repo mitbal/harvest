@@ -206,7 +206,7 @@ with con_table:
             if len(event.selection['rows']) > 0:
                 row_idx = event.selection['rows'][0]
                 sector_name = sector_df.loc[row_idx, 'sector']
-                st.dataframe(df[df['sector'] == sector_name][['Symbol', 'total_dividend']], hide_index=True, )
+                st.dataframe(df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True, )
             else:
                 st.info('Select one of the sector on the table on the left')
 
