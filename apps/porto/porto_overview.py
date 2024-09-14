@@ -1,4 +1,5 @@
 import io
+import os
 
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ import streamlit as st
 
 import lesley
 import calendar
+import requests
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
 from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
@@ -84,6 +86,8 @@ with st.expander('Data Input', expanded=True):
                 df = edited_df.copy(deep=True)
                 st.session_state['porto_df'] = df
 
+api_key = os.environ['FMP_API_KEY']
+
 @st.cache_data
 def enrich_data(porto):
 
@@ -92,15 +96,23 @@ def enrich_data(porto):
     prices = {}
     sectors = {}
     for s in porto['Symbol']:
-        t = yf.Ticker(s+'.JK')
+
+        company_profile_url = f'https://financialmodelingprep.com/api/v3/profile/{s}.JK?apikey={api_key}'
+        dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{s}.JK?apikey={api_key}'
+        
+        cpr = requests.get(company_profile_url)
+        dr = requests.get(dividend_history_url)
+
+        cpd = cpr.json()[0]
+        drd = dr.json()
 
         try:
-            drs[s] = t.info['dividendRate']
-            divs[s] = t.get_dividends()
-            prices[s] = t.info['previousClose']
-            sectors[s] = t.info['sector']
+            prices[s] = cpd['price']
+            sectors[s] = cpd['sector']
+            divs[s] = drd['historical']
+            drs[s] = cpd['lastDiv']
         except Exception as e:
-            print(s, e) 
+            print('error', e, 'in stock', s)
     
     df = porto.merge(pd.DataFrame({'Symbol': drs.keys(), 'div_rate': drs.values()})).\
         merge(pd.DataFrame({'Symbol': prices.keys(), 'last_price': prices.values()})).\
@@ -228,24 +240,26 @@ with con_table:
 
             r = row.to_dict()
             stock = r['Symbol']
-            div_df = divs[stock].to_frame().reset_index()
-            div_df['year'] = div_df['Date'].apply(lambda x: x.year)
-            div_df['Date'] = pd.to_datetime(div_df['Date']).dt.tz_localize(None)
+            if len(divs[stock]) == 0:
+                continue
+            div_df = pd.DataFrame(divs[stock])
+            div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
+            div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
 
             end_date = pd.Timestamp('today').to_datetime64()
             start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
 
             current_year = datetime.today().year
-            last_year_div = div_df[(pd.to_datetime(div_df['Date']) >= start_date) & (pd.to_datetime(div_df['Date']) < end_date)]
+            last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)]
             last_year_div.loc[:, 'Symbol'] = stock
             last_year_div.loc[:, 'Lot'] = r['current_lot']
 
             div_lists += [last_year_div]
 
         all_divs = pd.concat(div_lists).reset_index(drop=True)       
-        all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['Dividends'] * 100).astype('int')
-        all_divs['Date'] = pd.to_datetime(all_divs['Date']).dt.tz_localize(None)
-        all_divs['new_date'] = all_divs['Date'].apply(lambda x: x + pd.Timedelta(days=14)) # payment date on average 2 weeks after ex-date
+        all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['adjDividend'] * 100).astype('int')
+        all_divs['Date'] = pd.to_datetime(all_divs['date']).dt.tz_localize(None)
+        all_divs['new_date'] = all_divs['date'].apply(lambda x: x + pd.Timedelta(days=14)) # payment date on average 2 weeks after ex-date
         all_divs['month'] = all_divs['new_date'].apply(lambda x: x.month)
         
         month_div = all_divs.groupby('month')['total_dividend'].sum().to_frame().reset_index()
@@ -294,14 +308,14 @@ except Exception:
 
 def fit_linear(divs):
 
-    df_train = divs.to_frame().reset_index()
-    df_train['year'] = df_train['Date'].apply(lambda x: x.year)
-    df_train = df_train.groupby('year')['Dividends'].sum().to_frame().reset_index()
+    df_train = pd.DataFrame(divs)
+    df_train['year'] = df_train['date'].apply(lambda x: int(x.split('-')[0]))
+    df_train = df_train.groupby('year')['adjDividend'].sum().to_frame().reset_index()
 
     import pendulum
 
     year = pendulum.today().year
-    y = df_train[df_train['year'] < year]['Dividends'].to_numpy().reshape(-1, 1)
+    y = df_train[df_train['year'] < year]['adjDividend'].to_numpy().reshape(-1, 1)
     X = np.arange(y.shape[0]).reshape(-1, 1)
 
     weight = np.append([2*y.shape[0]], np.ones(y.shape[0]-1)) # make the first dividend as kind of intercept
@@ -325,12 +339,12 @@ with detail_section:
 
     col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
     with col1:
-        AgGrid(divs[symbol][::-1].to_frame().reset_index(), height=290)
+        AgGrid(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], height=290)
 
     with col2:
         div_bar = alt.Chart(df_train).mark_bar().encode(
             alt.X('year:N'),
-            alt.Y('Dividends')
+            alt.Y('adjDividend')
         ).properties(
             height=300,
             width=450
@@ -348,7 +362,7 @@ with detail_section:
         st.write(f'R squared: {score:.2f}')
         st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
         
-        last = divs[symbol].iloc[-1]
+        last = pd.DataFrame(divs[symbol])['adjDividend'].values[0]
         if pred > last:
             color = 'green'
         else:
@@ -363,6 +377,6 @@ with detail_section:
         st.write(f'Number of year {number_of_year}, consistency {consistency*100:.2f}%')
 
         st.write()
-        inc = df_train['Dividends'].shift(-1) - df_train['Dividends']
+        inc = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
         avg_annual_increase = np.mean(inc)
         st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(inc > 0)}, increase percentage {np.sum(inc > 0) / number_of_year*100:.2f}%')
