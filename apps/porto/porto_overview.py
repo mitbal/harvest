@@ -89,6 +89,43 @@ with st.expander('Data Input', expanded=True):
 api_key = os.environ['FMP_API_KEY']
 
 @st.cache_data
+def get_company_profile_data(porto):
+
+    stocks = ','.join([s+'.JK' for s in porto['Symbol']])
+    company_profile_url = f'https://financialmodelingprep.com/api/v3/profile/{stocks}?apikey={api_key}'
+    cpr = requests.get(company_profile_url)
+    
+    cp_df = pd.DataFrame(cpr.json())
+    cp_df['Symbol'] = cp_df['symbol'].apply(lambda x: x[:-3])
+    df = porto.merge(cp_df[['Symbol', 'price', 'sector', 'lastDiv']])
+    df.rename(columns={'lastDiv': 'div_rate', 'price': 'last_price'}, inplace=True)
+
+    return df
+
+@st.cache_data
+def get_dividend_data(porto):
+    divs = []
+    for i in range(int(len(porto)/5)+1):
+        stock_list = [s+'.JK' for s in porto['Symbol'][i*5:(i+1)*5]]
+        stocks = ','.join(stock_list)
+        dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stocks}?apikey={api_key}'
+        dr = requests.get(dividend_history_url)
+        drj = dr.json()
+        
+        if len(stock_list) > 1:
+            div = drj['historicalStockList']
+        else:
+            div = [drj]
+        divs.append(div)
+
+    div_df = pd.concat([pd.DataFrame(div) for div in divs])
+    div_df.set_index('symbol', inplace=True)
+    divs = {x[:-3]: y for x, y in zip(div_df.index, div_df['historical'])}
+
+    return divs
+
+
+@st.cache_data
 def enrich_data(porto):
 
     divs = {}
@@ -123,8 +160,9 @@ def enrich_data(porto):
 if st.session_state['porto_df'] is None:
     st.stop()
 
-# get realtime stock data from yahoo finance
-df, divs = enrich_data(st.session_state['porto_df'])
+df = get_company_profile_data(st.session_state['porto_df'])
+divs = get_dividend_data(st.session_state['porto_df'])
+st.write(divs)
 
 df['current_lot'] = df['Available Lot'].apply(lambda x: x.replace(',', '')).astype(float)
 df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype(float)
