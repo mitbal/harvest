@@ -162,7 +162,6 @@ if st.session_state['porto_df'] is None:
 
 df = get_company_profile_data(st.session_state['porto_df'])
 divs = get_dividend_data(st.session_state['porto_df'])
-st.write(divs)
 
 df['current_lot'] = df['Available Lot'].apply(lambda x: x.replace(',', '')).astype(float)
 df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype(float)
