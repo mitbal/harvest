@@ -115,7 +115,8 @@ def get_dividend_data(porto):
         if len(stock_list) > 1:
             div = drj['historicalStockList']
         else:
-            div = [drj]
+            if drj:
+               div = [drj]
         divs.append(div)
 
     div_df = pd.concat([pd.DataFrame(div) for div in divs])
