@@ -13,13 +13,13 @@ def compute_div_feature(cp_df):
 
     df = cp_df.copy()
     df = df[df['mktCap'] > 1_000_000_000_000]
-    df['yield'] = df['lastDiv'] / df['price']
+    df['yield'] = df['lastDiv'] / df['price'] * 100
 
-    return df[['price', 'lastDiv', 'sector', 'industry', 'mktCap', 'yield', 'ipoDate']]
+    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate']]
 
 
 @st.cache_data
-def get_company_profile():
+def get_company_profile(use_cache=False):
     
     url = f'https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}'
     r = requests.get(url)
@@ -37,19 +37,42 @@ def get_company_profile():
     return cp_df
 
 
-# cp_df = pd.read_csv('data/company_profiles.csv')
-cp_df = get_company_profile()
-# div_df = pd.read_csv('data/dividend_historical.csv').set_index('symbol')
+def get_historical_dividend(use_cache=True):
+    
+    if use_cache:
+        div_df = pd.read_csv('data/dividend_historical.csv').set_index('symbol')
+    else:
+        div_df  = pd.DataFrame()
+    
+    return div_df
+
+
+def get_financial_data():
+    pass
+
+
+cp_df = get_company_profile(use_cache=False)
+div_df = get_historical_dividend(use_cache=True)
+fin_df = get_financial_data()
 
 final_df = compute_div_feature(cp_df)
-# final_df = compute_div_feature(cp_df, div_df)
-# st.dataframe(cp_df, hide_index=True)
 
-st.dataframe(final_df)
+event = st.dataframe(final_df, selection_mode=['single-row'], on_select='rerun')
+
+detail_con = st.container(border=True)
+
+# display the detailed section of a single stock
+if len(event.selection['rows']) > 0:
+    row_idx = event.selection['rows'][0]
+    stock = final_df.iloc[row_idx]
+
+    st.dataframe(pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"'))))
 
 # get the attributes
+
 
 # calculate patented dividend score
 
 
 # display the table and the scatter plot
+
