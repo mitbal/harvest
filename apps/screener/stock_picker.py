@@ -1,7 +1,9 @@
 import os
 import json
 import requests
+import numpy as np
 import pandas as pd
+import altair as alt
 import streamlit as st
 
 st.title('Jajan Saham')
@@ -9,13 +11,27 @@ st.title('Jajan Saham')
 # get list of all stocks
 api_key = os.environ['FMP_API_KEY']
 
-def compute_div_feature(cp_df):
+@st.cache_data
+def compute_div_feature(cp_df, div_df):
 
     df = cp_df.copy()
     df = df[df['mktCap'] > 1_000_000_000_000]
     df['yield'] = df['lastDiv'] / df['price'] * 100
 
-    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate']]
+    for rows in df.iterrows():
+
+        symbol = rows[0]
+        div = pd.DataFrame(json.loads(div_df.loc[symbol, 'historical'].replace("'", '"')))
+        if len(div) == 0:
+            continue
+        
+        div['year'] = [x.year for x in pd.to_datetime(div['date'])]
+        agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
+        inc = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
+        avg_annual_increase = np.mean(inc)
+        df.loc[symbol, 'avgAnnualDivIncrease'] = avg_annual_increase
+
+    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'avgAnnualDivIncrease']]
 
 
 @st.cache_data
@@ -55,7 +71,7 @@ cp_df = get_company_profile(use_cache=False)
 div_df = get_historical_dividend(use_cache=True)
 fin_df = get_financial_data()
 
-final_df = compute_div_feature(cp_df)
+final_df = compute_div_feature(cp_df, div_df)
 
 event = st.dataframe(final_df, selection_mode=['single-row'], on_select='rerun')
 
