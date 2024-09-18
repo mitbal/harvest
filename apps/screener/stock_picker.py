@@ -30,8 +30,11 @@ def compute_div_feature(cp_df, div_df):
         inc = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
         avg_annual_increase = np.mean(inc)
         df.loc[symbol, 'avgAnnualDivIncrease'] = avg_annual_increase
+        df.loc[symbol, 'numDividendYear'] = len(agg_year)
 
-    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'avgAnnualDivIncrease']]
+
+    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
+               'avgAnnualDivIncrease', 'numDividendYear']]
 
 
 @st.cache_data
