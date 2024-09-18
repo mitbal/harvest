@@ -92,6 +92,15 @@ if len(event.selection['rows']) > 0:
 
 # calculate patented dividend score
 
-
 # display the table and the scatter plot
-
+# final_df['avgAnnualDividendIncrease'] = final_df['avgAnnualDividendIncrease'].dtype('float')
+sp = alt.Chart(final_df.reset_index()).mark_point().encode(
+    x='yield',
+    y='avgAnnualDivIncrease',
+    tooltip='symbol',
+    color='sector'
+).properties(
+    height=400,
+    width=1000
+).interactive()
+st.altair_chart(sp)
