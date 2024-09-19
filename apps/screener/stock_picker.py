@@ -27,14 +27,18 @@ def compute_div_feature(cp_df, div_df):
         
         div['year'] = [x.year for x in pd.to_datetime(div['date'])]
         agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-        inc = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
-        avg_annual_increase = np.mean(inc)
-        df.loc[symbol, 'avgAnnualDivIncrease'] = avg_annual_increase
+        inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
+        inc_pct = inc_flat / agg_year['adjDividend'] * 100
+        avg_flat_annual_increase = np.mean(inc_flat)
+        # avg_pct_annual_increase = np.nanmedian(inc_pct)
+        avg_pct_annual_increase = np.clip(avg_flat_annual_increase / df.loc[symbol, 'lastDiv'] * 100, 0, 100)
+        df.loc[symbol, 'avgFlatAnnualDivIncrease'] = avg_flat_annual_increase
+        df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
         df.loc[symbol, 'numDividendYear'] = len(agg_year)
 
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
-               'avgAnnualDivIncrease', 'numDividendYear']]
+               'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear']]
 
 
 @st.cache_data
