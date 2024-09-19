@@ -97,14 +97,27 @@ if len(event.selection['rows']) > 0:
 # calculate patented dividend score
 
 # display the table and the scatter plot
-# final_df['avgAnnualDividendIncrease'] = final_df['avgAnnualDividendIncrease'].dtype('float')
-sp = alt.Chart(final_df.reset_index()).mark_point().encode(
-    x='yield',
-    y='avgAnnualDivIncrease',
-    tooltip='symbol',
-    color='sector'
-).properties(
-    height=400,
-    width=1000
-).interactive()
-st.altair_chart(sp)
+scatter_section = st.container(border=True)
+with scatter_section:
+    x_axis = st.selectbox('Select X Axis', ['yield'])
+    y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
+
+    selection = alt.selection_point(fields=['sector'], bind='legend')
+
+    filtered_df = final_df[(final_df['avgPctAnnualDivIncrease'] < 100)
+                           & (final_df['numDividendYear'] > 5)
+                           & (final_df['lastDiv'] > 0)
+                           & (final_df['avgPctAnnualDivIncrease'] > 0)].reset_index()
+    sp = alt.Chart(filtered_df).mark_point().encode(
+        x=alt.X(x_axis, scale=alt.Scale(type='log')),
+        y=alt.Y(y_axis, scale=alt.Scale()),
+        tooltip='symbol',
+        color='sector',
+        opacity=alt.condition(selection, alt.value(1), alt.value(0.2))
+    ).add_params(
+        selection
+    ).properties(
+        height=400,
+        width=1000
+    ).interactive()
+    st.altair_chart(sp)
