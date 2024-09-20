@@ -93,14 +93,15 @@ with full_table_section:
     event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
 
 
-# display the detailed section of a single stock
-if len(event.selection['rows']) > 0:
-    row_idx = event.selection['rows'][0]
-    stock = final_df.iloc[row_idx]
+detail_section = st.container(border=True)
+with detail_section:
+    if len(event.selection['rows']) > 0:
+        row_idx = event.selection['rows'][0]
+        stock = filtered_df.iloc[row_idx]
+        
+        st.write(cp_df.loc[stock.name, 'description'])
+        st.dataframe(pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"'))))
 
-    st.dataframe(pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"'))))
-
-# get the attributes
 
 
 # calculate patented dividend score
