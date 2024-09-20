@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
+from datetime import datetime
 
 st.title('Jajan Saham')
 
@@ -36,9 +37,11 @@ def compute_div_feature(cp_df, div_df):
         df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
         df.loc[symbol, 'numDividendYear'] = len(agg_year)
 
+    # patented dividend score
+    df['DScore'] = df['yield'] * df['avgPctAnnualDivIncrease'] * (df['numDividendYear'] / 25)
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
-               'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear']]
+               'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
 
 
 @st.cache_data
@@ -80,9 +83,15 @@ fin_df = get_financial_data()
 
 final_df = compute_div_feature(cp_df, div_df)
 
-event = st.dataframe(final_df, selection_mode=['single-row'], on_select='rerun')
+full_table_section = st.container(border=True)
+with full_table_section:
+    st.write('Statistics')
+    st.write(f'Number of stocks in Jakarta Stock Exchange as of today {datetime.today().strftime('%Y-%m-%d')} is {len(cp_df)}')
+    st.write(f'Number of stocks that have market capitalization above 1T Rupiah is {len(final_df)}')
+    st.write(f'Number of stocks that have paid dividend at least once is {len(final_df[final_df['numDividendYear'] > 0])}')
+    filtered_df = final_df[final_df['numDividendYear'] > 0].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
+    event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
 
-detail_con = st.container(border=True)
 
 # display the detailed section of a single stock
 if len(event.selection['rows']) > 0:
