@@ -78,6 +78,27 @@ def get_financial_data():
     pass
 
 
+def calc_statistics():
+    text = f"""
+    Statistics as of {datetime.today().strftime('%Y-%m-%d')}  
+    Number of stocks in Jakarta Stock Exchange is {len(cp_df)}  
+    Number of stocks that have market capitalization above 1T Rupiah is {len(final_df)}  
+    Number of stocks that have paid dividend at least once is {len(final_df[final_df['numDividendYear'] > 0])}
+    """
+
+    return text
+
+
+def get_daily_price(stock):
+    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
+    url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{stock}?apikey={api_key}&from={start_date}'
+    r = requests.get(url)
+    intraday  = r.json()
+    
+    return pd.DataFrame(intraday['historical'])
+
+### End of Function definition
+
 cp_df = get_company_profile(use_cache=False)
 div_df = get_historical_dividend(use_cache=True)
 fin_df = get_financial_data()
@@ -86,10 +107,7 @@ final_df = compute_div_feature(cp_df, div_df)
 
 full_table_section = st.container(border=True)
 with full_table_section:
-    st.write('Statistics')
-    st.write(f'Number of stocks in Jakarta Stock Exchange as of today {datetime.today().strftime('%Y-%m-%d')} is {len(cp_df)}')
-    st.write(f'Number of stocks that have market capitalization above 1T Rupiah is {len(final_df)}')
-    st.write(f'Number of stocks that have paid dividend at least once is {len(final_df[final_df['numDividendYear'] > 0])}')
+    st.markdown(calc_statistics())
     filtered_df = final_df[final_df['numDividendYear'] > 0].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
     event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
 
