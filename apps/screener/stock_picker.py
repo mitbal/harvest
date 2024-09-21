@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.title('Jajan Saham')
 
@@ -36,9 +36,10 @@ def compute_div_feature(cp_df, div_df):
         df.loc[symbol, 'avgFlatAnnualDivIncrease'] = avg_flat_annual_increase
         df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
         df.loc[symbol, 'numDividendYear'] = len(agg_year)
+        df.loc[symbol, 'positiveYear'] = np.sum(inc_flat > 0)
 
     # patented dividend score
-    df['DScore'] = df['yield'] * df['avgPctAnnualDivIncrease'] * (df['numDividendYear'] / 25)
+    df['DScore'] = df['yield'] * df['avgPctAnnualDivIncrease'] * (df['numDividendYear'] / 25) * (df['positiveYear'] / 25)
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
                'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
