@@ -1,6 +1,5 @@
 import io
 import os
-
 import numpy as np
 import pandas as pd
 import altair as alt
@@ -126,38 +125,6 @@ def get_dividend_data(porto):
     return divs
 
 
-@st.cache_data
-def enrich_data(porto):
-
-    divs = {}
-    drs = {}
-    prices = {}
-    sectors = {}
-    for s in porto['Symbol']:
-
-        company_profile_url = f'https://financialmodelingprep.com/api/v3/profile/{s}.JK?apikey={api_key}'
-        dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{s}.JK?apikey={api_key}'
-        
-        cpr = requests.get(company_profile_url)
-        dr = requests.get(dividend_history_url)
-
-        cpd = cpr.json()[0]
-        drd = dr.json()
-
-        try:
-            prices[s] = cpd['price']
-            sectors[s] = cpd['sector']
-            divs[s] = drd['historical']
-            drs[s] = cpd['lastDiv']
-        except Exception as e:
-            print('error', e, 'in stock', s)
-    
-    df = porto.merge(pd.DataFrame({'Symbol': drs.keys(), 'div_rate': drs.values()})).\
-        merge(pd.DataFrame({'Symbol': prices.keys(), 'last_price': prices.values()})).\
-        merge(pd.DataFrame({'Symbol': sectors.keys(), 'sector': sectors.values()}))
-
-    return df, divs
-
 if st.session_state['porto_df'] is None:
     st.stop()
 
@@ -170,6 +137,24 @@ df['total_invested'] = df['current_lot'] * df['avg_price'] * 100
 df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
 df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
 df['total_dividend'] = df['div_rate'] * df['current_lot'] * 100
+
+incs = []
+years = []
+for symbol in df['Symbol']:
+
+    div = pd.DataFrame(divs[symbol])
+    if len(div) == 0:
+        incs += [0]
+        years += [0]
+        continue
+    div['year'] = [x.year for x in pd.to_datetime(div['date'])]
+    agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
+    inc = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
+    avg_annual_increase = np.mean(inc)
+    incs += [avg_annual_increase]
+    years += [len(agg_year)]
+df['numDividendYear'] = years
+df['avgAnnualDivIncrease'] = incs
 
 annual_dividend = df['total_dividend'].sum()
 total_investment = df['total_invested'].sum()
@@ -191,7 +176,7 @@ with con_overall:
 
 
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
-                 'yield_on_cost', 'yield_on_price', 'total_dividend']].copy(deep=True)
+                 'yield_on_cost', 'yield_on_price', 'total_dividend', 'numDividendYear', 'avgAnnualDivIncrease']].copy(deep=True)
 
 builder = GridOptionsBuilder.from_dataframe(df_display)
 builder.configure_pagination(enabled=True)
