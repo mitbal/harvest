@@ -403,3 +403,24 @@ with detail_section:
         inc = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
         avg_annual_increase = np.mean(inc)
         st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(inc > 0)}, increase percentage {np.sum(inc > 0) / number_of_year*100:.2f}%')
+
+# shows future projection 25 years time
+future_section = st.container(border=True)
+with future_section:
+    st.write('Future Projection')
+    number_of_year = 25
+
+    # first method, assume flat percentage increase each year based on current yield
+    inc = st.number_input('Input annual percentage increase', value=total_yield_on_cost, min_value=1.0, max_value=15.0, step=0.1)
+    futures = [0]*number_of_year
+    for i in range(number_of_year):
+        futures[i] = annual_dividend * (1+inc/100)**i
+
+    df_future = pd.DataFrame({'years': [f'Year {i+1:2d}' for i in range(number_of_year)], 'returns': futures})
+    future_chart = alt.Chart(df_future).mark_bar().encode(
+        x=alt.X('years'),
+        y=alt.Y('returns')
+    ).properties(
+        width=1000
+    )
+    st.altair_chart(future_chart)
