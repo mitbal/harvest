@@ -37,9 +37,10 @@ def compute_div_feature(cp_df, div_df):
         df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
         df.loc[symbol, 'numDividendYear'] = len(agg_year)
         df.loc[symbol, 'positiveYear'] = np.sum(inc_flat > 0)
-
+        df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
+    
     # patented dividend score
-    df['DScore'] = df['yield'] * df['avgPctAnnualDivIncrease'] * (df['numDividendYear'] / 25) * (df['positiveYear'] / 25)
+    df['DScore'] = df['yield'] * df['avgPctAnnualDivIncrease'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2)
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
                'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
