@@ -75,8 +75,12 @@ def get_historical_dividend(use_cache=True):
     return div_df
 
 
-def get_financial_data():
-    pass
+def get_financial_data(stock):
+    period = 'quarter' # or 'annual'
+    url = f'https://financialmodelingprep.com/api/v3/income-statement/{stock}?period={period}&apikey={api_key}'
+    r = requests.get(url)
+    fs = r.json()
+    return pd.DataFrame(fs)
 
 
 def calc_statistics():
