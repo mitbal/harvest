@@ -102,11 +102,44 @@ def get_daily_price(stock):
     
     return pd.DataFrame(intraday['historical'])
 
+
+def plot_candlestick(daily_df):
+    open_close_color = alt.condition(
+            "datum.open <= datum.close",
+            alt.value("#06982d"),
+            alt.value("#ae1325")
+    )
+
+    base = alt.Chart(daily_df).encode(
+        alt.X('date:T')
+            .axis(format='%m/%Y', labelAngle=-45)
+            .title('Date'),
+        color=open_close_color
+    )
+
+    rule = base.mark_rule().encode(
+        alt.Y('low:Q')
+            .title('Price')
+            .scale(zero=False),
+        alt.Y2('high:Q')
+    )
+
+    bar = base.mark_bar().encode(
+        alt.Y('open:Q'),
+        alt.Y2('close:Q')
+    )
+
+    candlestick = (rule + bar).properties(
+        width=1000,
+        height=400
+    )
+    # st.altair_chart(candlestick)
+    return candlestick
+
 ### End of Function definition
 
 cp_df = get_company_profile(use_cache=False)
 div_df = get_historical_dividend(use_cache=True)
-fin_df = get_financial_data()
 
 final_df = compute_div_feature(cp_df, div_df)
 
@@ -124,19 +157,23 @@ with detail_section:
         stock = filtered_df.iloc[row_idx]
         
         st.write(cp_df.loc[stock.name, 'description'])
-        st.dataframe(pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"'))))
+        sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
+        st.dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
+        fin = get_financial_data(stock.name)
+        st.dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
 
+        daily_df = get_daily_price(stock.name)
+        candlestick_chart = plot_candlestick(daily_df)
+        st.altair_chart(candlestick_chart)
 
-# calculate patented dividend score
-
-# display the table and the scatter plot
+# display the scatter plot
 scatter_section = st.container(border=True)
 with scatter_section:
     x_axis = st.selectbox('Select X Axis', ['yield'])
     y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
 
-    selection = alt.selection_point(fields=['sector'], bind='legend')
+    point_selection = alt.selection_point(fields=['sector'], bind='legend')
 
     filtered_df = final_df[(final_df['avgPctAnnualDivIncrease'] < 100)
                            & (final_df['numDividendYear'] > 5)
