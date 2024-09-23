@@ -173,7 +173,7 @@ with scatter_section:
     x_axis = st.selectbox('Select X Axis', ['yield'])
     y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
 
-    point_selection = alt.selection_point(fields=['sector'], bind='legend')
+    point_selection = alt.selection_point(name='point')
 
     filtered_df = final_df[(final_df['avgPctAnnualDivIncrease'] < 100)
                            & (final_df['numDividendYear'] > 5)
@@ -184,11 +184,13 @@ with scatter_section:
         y=alt.Y(y_axis, scale=alt.Scale()),
         tooltip='symbol',
         color='sector',
-        opacity=alt.condition(selection, alt.value(1), alt.value(0.2))
-    ).add_params(
-        selection
+        opacity=alt.condition(point_selection, alt.value(1), alt.value(0.2))
+    ).add_selection(
+        point_selection
     ).properties(
         height=400,
         width=1000
     ).interactive()
-    st.altair_chart(sp)
+    sp_event = st.altair_chart(sp, on_select='rerun')
+
+    st.write(sp_event)
