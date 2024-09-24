@@ -164,7 +164,7 @@ with full_table_section:
     with tabs[1]:
         x_axis = st.selectbox('Select X Axis', ['yield'])
         y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
-        point_selection = alt.selection(type='point', name='point')
+        point_selection = alt.selection_single(name='point')
 
         sp = alt.Chart(filtered_df).mark_point().encode(
             x=alt.X(x_axis, scale=alt.Scale(type='log')),
