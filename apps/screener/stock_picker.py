@@ -111,16 +111,21 @@ def plot_candlestick(daily_df):
     )
 
     base = alt.Chart(daily_df).encode(
-        alt.X('date:T')
-            .axis(format='%m/%Y', labelAngle=-45)
-            .title('Date'),
+        alt.X('date:T',
+          axis=alt.Axis(
+              format='%m/%Y',
+              labelAngle=-45
+          )
+        ),
         color=open_close_color
     )
 
     rule = base.mark_rule().encode(
-        alt.Y('low:Q')
-            .title('Price')
-            .scale(zero=False),
+        alt.Y(
+            'low:Q',
+            title='Price',
+            scale=alt.Scale(zero=False),
+        ),
         alt.Y2('high:Q')
     )
 
@@ -130,7 +135,7 @@ def plot_candlestick(daily_df):
     )
 
     candlestick = (rule + bar).properties(
-        width=1000,
+        width=1150,
         height=400
     )
     # st.altair_chart(candlestick)
