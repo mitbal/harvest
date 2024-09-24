@@ -151,51 +151,33 @@ final_df = compute_div_feature(cp_df, div_df)
 full_table_section = st.container(border=True)
 with full_table_section:
     st.markdown(calc_statistics())
-    filtered_df = final_df[final_df['numDividendYear'] > 0].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
-    event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
-
-
-detail_section = st.container(border=True)
-with detail_section:
-    if len(event.selection['rows']) > 0:
-        row_idx = event.selection['rows'][0]
-        stock = filtered_df.iloc[row_idx]
-        
-        st.write(cp_df.loc[stock.name, 'description'])
-        sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
-        st.dataframe(sdf[['date', 'adjDividend']], hide_index=True)
-
-        fin = get_financial_data(stock.name)
-        st.dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
-
-        daily_df = get_daily_price(stock.name)
-        candlestick_chart = plot_candlestick(daily_df)
-        st.altair_chart(candlestick_chart)
-
-# display the scatter plot
-scatter_section = st.container(border=True)
-with scatter_section:
-    x_axis = st.selectbox('Select X Axis', ['yield'])
-    y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
-
-    point_selection = alt.selection_point(name='point')
-
+    final_df['Emiten'] = [x[:-3] for x in final_df.index]
     filtered_df = final_df[(final_df['avgPctAnnualDivIncrease'] < 100)
-                           & (final_df['numDividendYear'] > 5)
-                           & (final_df['lastDiv'] > 0)
-                           & (final_df['avgPctAnnualDivIncrease'] > 0)].reset_index()
-    sp = alt.Chart(filtered_df).mark_point().encode(
-        x=alt.X(x_axis, scale=alt.Scale(type='log')),
-        y=alt.Y(y_axis, scale=alt.Scale()),
-        tooltip='symbol',
-        color='sector',
-        opacity=alt.condition(point_selection, alt.value(1), alt.value(0.2))
-    ).add_selection(
-        point_selection
-    ).properties(
-        height=400,
-        width=1000
-    ).interactive()
-    sp_event = st.altair_chart(sp, on_select='rerun')
+                            & (final_df['numDividendYear'] > 0)
+                            & (final_df['lastDiv'] > 0)
+                            & (final_df['avgPctAnnualDivIncrease'] > 0)].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
+
+    tabs = st.tabs(['Table View', 'Scatter View'])
+    with tabs[0]:
+        event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
+    
+    with tabs[1]:
+        x_axis = st.selectbox('Select X Axis', ['yield'])
+        y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
+        point_selection = alt.selection(type='point', name='point')
+
+        sp = alt.Chart(filtered_df).mark_point().encode(
+            x=alt.X(x_axis, scale=alt.Scale(type='log')),
+            y=alt.Y(y_axis, scale=alt.Scale()),
+            tooltip='Emiten',
+            color='sector',
+            opacity=alt.condition(point_selection, alt.value(1), alt.value(0.2))
+        ).add_selection(
+            point_selection
+        ).properties(
+            height=400,
+            width=1000
+        ).interactive()
+        sp_event = st.altair_chart(sp, on_select='rerun')
 
     st.write(sp_event)
