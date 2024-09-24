@@ -180,4 +180,26 @@ with full_table_section:
         ).interactive()
         sp_event = st.altair_chart(sp, on_select='rerun')
 
-    st.write(sp_event)
+detail_section = st.container(border=True)
+with detail_section:
+    if len(event.selection['rows']) > 0:
+        row_idx = event.selection['rows'][0]
+        stock = filtered_df.iloc[row_idx]
+        stock_name = stock.name
+    elif sp_event.selection['point']:
+        row_idx = sp_event.selection['point'][0]
+        stock = filtered_df.loc[row_idx['Emiten']+'.JK']
+        stock_name = row_idx['Emiten']+'.JK'
+    else:
+        st.stop()
+    
+    st.write(cp_df.loc[stock_name, 'description'])
+    sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
+    st.dataframe(sdf[['date', 'adjDividend']], hide_index=True)
+
+    fin = get_financial_data(stock_name)
+    st.dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
+
+    daily_df = get_daily_price(stock_name)
+    candlestick_chart = plot_candlestick(daily_df)
+    st.altair_chart(candlestick_chart)
