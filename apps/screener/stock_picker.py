@@ -171,9 +171,15 @@ with full_table_section:
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
     
     with tabs[1]:
-        x_axis = st.selectbox('Select X Axis', ['yield'])
-        y_axis = st.selectbox('Select Y Axis', ['avgPctAnnualDivIncrease'])
-        point_selection = alt.selection_single(name='point')
+
+        attributes = ['yield', 'avgPctAnnualDivIncrease', 'mktCap', 'DScore']
+
+        scatter_cols = st.columns(2)
+        x_axis = scatter_cols[0].selectbox('Select X Axis', attributes)
+        minus_one_attribute = attributes[:]
+        minus_one_attribute.remove(x_axis)
+        y_axis = scatter_cols[1].selectbox('Select Y Axis', minus_one_attribute)
+        point_selection = alt.selection_point(name='point')
 
         sp = alt.Chart(filtered_df).mark_point().encode(
             x=alt.X(x_axis, scale=alt.Scale(type='log')),
