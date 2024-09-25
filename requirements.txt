@@ -1,6 +1,6 @@
 numpy==2.0.1
 pandas==2.2.2
-altair==4.2.2
+altair==5.4.1
 lesley>=0.1.4
 plotly==5.22.0
 seaborn==0.13.2
