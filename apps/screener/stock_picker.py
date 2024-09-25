@@ -207,13 +207,35 @@ with detail_section:
         stock_name = row_idx['Emiten']+'.JK'
     else:
         st.stop()
-    
+
     st.write(cp_df.loc[stock_name, 'description'])
+    
+    dividend_history_cols = st.columns(2)
     sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
-    st.dataframe(sdf[['date', 'adjDividend']], hide_index=True)
+    dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
+
+    dividend_year_df = sdf.copy()
+    dividend_year_df['year'] = sdf['date'].apply(lambda x: x.split('-')[0])
+    yearly = dividend_year_df.groupby('year')['adjDividend'].sum().to_frame().reset_index()
+    yearly_dividend_chart = alt.Chart(yearly).mark_bar().encode(
+        alt.X('year'),
+        alt.Y('adjDividend')
+    )
+    dividend_history_cols[1].altair_chart(yearly_dividend_chart)
 
     fin = get_financial_data(stock_name)
-    st.dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
+    # fin_cols = st.columns(2, gap='small')
+    # fin_cols[0].dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
+
+    fin_chart = alt.Chart(fin[fin['calendarYear'] > '2016']).mark_bar().encode(
+        alt.X('period'),
+        alt.Y('netIncome'),
+        color='period',
+        column='calendarYear'
+    ).properties(
+        width=100
+    )
+    st.altair_chart(fin_chart, use_container_width=False)
 
     daily_df = get_daily_price(stock_name)
     candlestick_chart = plot_candlestick(daily_df)
