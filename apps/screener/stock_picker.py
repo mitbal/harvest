@@ -16,7 +16,6 @@ api_key = os.environ['FMP_API_KEY']
 def compute_div_feature(cp_df, div_df):
 
     df = cp_df.copy()
-    df = df[df['mktCap'] > 1_000_000_000_000]
     df['yield'] = df['lastDiv'] / df['price'] * 100
 
     for rows in df.iterrows():
@@ -83,12 +82,17 @@ def get_financial_data(stock):
     return pd.DataFrame(fs)
 
 
-def calc_statistics():
+def calc_statistics(full, market_cap_filter, dividend_filter):
+
+    num_of_all_stocks = len(full)
+    num_filtered_market_cap = len(full[full['mktCap'] > market_cap_filter*1000_000_1000])
+    num_filtered_dividend_year = len(full[full['numDividendYear'] > dividend_filter])
+
     text = f"""
     Statistics as of {datetime.today().strftime('%Y-%m-%d')}  
-    Number of stocks in Jakarta Stock Exchange is {len(cp_df)}  
-    Number of stocks that have market capitalization above 1T Rupiah is {len(final_df)}  
-    Number of stocks that have paid dividend at least once is {len(final_df[final_df['numDividendYear'] > 0])}
+    Number of stocks in Jakarta Stock Exchange is {num_of_all_stocks}  
+    Number of stocks that have market capitalization above {market_cap_filter}B Rupiah is {num_filtered_market_cap}  
+    Number of stocks that have paid dividend at lear {dividend_filter} year is {num_filtered_dividend_year}
     """
 
     return text
@@ -150,12 +154,17 @@ final_df = compute_div_feature(cp_df, div_df)
 
 full_table_section = st.container(border=True)
 with full_table_section:
-    st.markdown(calc_statistics())
+
+    st.write('Filter')
+    filter_cols = st.columns(2)
+    minimum_market_cap = filter_cols[0].number_input('Minimum Market Capitalization (in Billion Rupiah)', value=1000, min_value=100, max_value=1000_1000)
+    minimum_year = filter_cols[1].number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
+
+    st.markdown(calc_statistics(final_df, minimum_market_cap, minimum_year))
     final_df['Emiten'] = [x[:-3] for x in final_df.index]
-    filtered_df = final_df[(final_df['avgPctAnnualDivIncrease'] < 100)
-                            & (final_df['numDividendYear'] > 0)
-                            & (final_df['lastDiv'] > 0)
-                            & (final_df['avgPctAnnualDivIncrease'] > 0)].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
+    filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
+                            & (final_df['numDividendYear'] > minimum_year)
+                            & (final_df['lastDiv'] > 0)].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
 
     tabs = st.tabs(['Table View', 'Scatter View'])
     with tabs[0]:
