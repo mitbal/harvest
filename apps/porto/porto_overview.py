@@ -53,7 +53,13 @@ with st.expander('Data Input', expanded=True):
         target = st.number_input(
             label='Input Target Annual Income (in million IDR)', 
             value=120, step=1, 
-            format='%d')
+            format='%d'
+        )
+
+        baseline = st.number_input(
+            label='Benchmark Performance (in percent)',
+            value=6.35, step=.01
+        )
 
         submit = st.form_submit_button('Submit data')
         if submit:
@@ -167,7 +173,14 @@ con_overall = st.container(border=True)
 with con_overall:
     col1, col2, col3, col4 = st.columns(4, gap='small')
     with col1:
-        st.metric('Total Dividend Yield on Cost', value=f'{total_yield_on_cost:.2f} %')
+        delta = total_yield_on_cost - baseline
+        if delta > 0:
+            text_delta = f'{delta:.2f}% above benchmark'
+        else:
+            text_delta = f'{delta:.2f}% below benchmark'
+        st.metric('Total Dividend Yield on Cost', 
+                  value=f'{total_yield_on_cost:.2f} %',
+                  delta=text_delta)
     with col2:
         st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
     with col3:
