@@ -10,5 +10,4 @@ yfinance==0.2.40
 streamlit==1.36.0
 matplotlib==3.9.1
 scikit_learn==1.5.1
-streamlit-aggrid==1.0.5
 streamlit_lottie==0.0.5
