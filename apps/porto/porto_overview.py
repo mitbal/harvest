@@ -11,7 +11,6 @@ import calendar
 import requests
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
-from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 
 st.set_page_config(layout='wide')
@@ -192,28 +191,6 @@ with con_overall:
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
                  'yield_on_cost', 'yield_on_price', 'total_dividend', 'numDividendYear', 'avgAnnualDivIncrease']].copy(deep=True)
 
-builder = GridOptionsBuilder.from_dataframe(df_display)
-builder.configure_pagination(enabled=True)
-builder.configure_selection(selection_mode='single', use_checkbox=False)
-
-k_sep_formatter = JsCode("""
-    function(params) {
-        return (params.value == null) ? params.value : params.value.toLocaleString(); 
-    }
-    """)
-
-builder.configure_column('Symbol', editable=False)
-builder.configure_column('Available Lot', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-builder.configure_column('avg_price', header_name='Average Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
-builder.configure_column('total_invested', header_name='Total Invested', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-builder.configure_column('div_rate', header_name='Dividend Rate', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
-builder.configure_column('last_price', header_name='Last Price')
-builder.configure_column('yield_on_cost', header_name='Yield on Cost', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
-builder.configure_column('yield_on_price', header_name='Yield on Price', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2)
-builder.configure_column('total_dividend', header_name='Total Dividend', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=2, valueFormatter=k_sep_formatter)
-
-grid_options = builder.build()
-
 con_table = st.container(border=True)
 with con_table:
 
@@ -221,12 +198,7 @@ with con_table:
     
     with tabs[0]:
         st.write('Current Portfolio')
-        selection = AgGrid(df_display,
-                        height=360,
-                        gridOptions=grid_options,
-                        allow_unsafe_jscode=True,
-                        enable_enterprise_modules=False,
-                        columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
+        main_event = st.dataframe(df_display, on_select='rerun', selection_mode='single-row', hide_index=True)
 
     with tabs[1]:
         div_bar = alt.Chart(df_display).mark_bar().encode(
@@ -334,14 +306,6 @@ with con_table:
                     c.write(calendar.month_name[i])
                     c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
 
-# Perform dividend modelling and prediction for selected stock
-try:
-    if selection:
-        symbol = f"{selection['selected_rows']['Symbol'].iloc[0]}"
-except Exception:
-    st.stop()
-
-
 
 def fit_linear(divs):
 
@@ -368,55 +332,61 @@ def fit_linear(divs):
 
     return lr.score(X, y), df_predict['Prediction'].values[-1], df_train, df_predict
 
-score, pred, df_train, df_predict = fit_linear(divs[symbol])
+
 
 detail_section = st.container(border=True)
 with detail_section:
-    st.write('You select: ' +symbol)
+    
+    if main_event.selection['rows']:
+        symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
 
-    col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
-    with col1:
-        AgGrid(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], height=290)
+        st.write('You select: ', symbol)
 
-    with col2:
-        div_bar = alt.Chart(df_train).mark_bar().encode(
-            alt.X('year:N'),
-            alt.Y('adjDividend')
-        ).properties(
-            height=300,
-            width=450
-        )
+        score, pred, df_train, df_predict = fit_linear(divs[symbol])
 
-        pred_line = alt.Chart(df_predict).mark_line().encode(
-            alt.X('year:N'),
-            alt.Y('Prediction'),
-            color=alt.value('red')
-        )
+        col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
+        with col1:
+            st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']])
 
-        st.altair_chart(div_bar + pred_line)
+        with col2:
+            div_bar = alt.Chart(df_train).mark_bar().encode(
+                alt.X('year:N'),
+                alt.Y('adjDividend')
+            ).properties(
+                height=300,
+                width=450
+            )
 
-    with col3:
-        st.write(f'R squared: {score:.2f}')
-        st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
-        
-        last = pd.DataFrame(divs[symbol])['adjDividend'].values[0]
-        if pred > last:
-            color = 'green'
-        else:
-            color = 'red'
+            pred_line = alt.Chart(df_predict).mark_line().encode(
+                alt.X('year:N'),
+                alt.Y('Prediction'),
+                color=alt.value('red')
+            )
 
-        st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
-        st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
+            st.altair_chart(div_bar + pred_line)
 
-        current_year = datetime.now().year
-        number_of_year = len(df_train)
-        consistency = number_of_year / (current_year - df_train['year'][0] +1)
-        st.write(f'Number of year {number_of_year}, consistency {consistency*100:.2f}%')
+        with col3:
+            st.write(f'R squared: {score:.2f}')
+            st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
+            
+            last = pd.DataFrame(divs[symbol])['adjDividend'].values[0]
+            if pred > last:
+                color = 'green'
+            else:
+                color = 'red'
 
-        st.write()
-        inc = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
-        avg_annual_increase = np.mean(inc)
-        st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(inc > 0)}, increase percentage {np.sum(inc > 0) / number_of_year*100:.2f}%')
+            st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
+            st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
+
+            current_year = datetime.now().year
+            number_of_year = len(df_train)
+            consistency = number_of_year / (current_year - df_train['year'][0] +1)
+            st.write(f'Number of year {number_of_year}, consistency {consistency*100:.2f}%')
+
+            st.write()
+            inc = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
+            avg_annual_increase = np.mean(inc)
+            st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(inc > 0)}, increase percentage {np.sum(inc > 0) / number_of_year*100:.2f}%')
 
 # shows future projection 25 years time
 future_section = st.container(border=True)
