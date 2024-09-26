@@ -39,7 +39,11 @@ with st.expander('Data Input', expanded=True):
             if st.session_state['porto_df'] is None:
                 example_df = pd.DataFrame(
                     [
-                        {'Symbol': 'ASII', 'Available Lot': '100', 'Average Price': '5000'}
+                        {'Symbol': 'ASII', 'Available Lot': '100', 'Average Price': '5000'},
+                        {'Symbol': 'BBCA', 'Available Lot': '10', 'Average Price': '10000'},
+                        {'Symbol': 'EXCL', 'Available Lot': '20', 'Average Price': '2000'},
+                        {'Symbol': 'INDF', 'Available Lot': '30', 'Average Price': '6000'},
+                        {'Symbol': 'PTBA', 'Available Lot': '50', 'Average Price': '3000'}
                     ]
                 )
             else:
