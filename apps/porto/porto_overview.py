@@ -22,7 +22,7 @@ if 'porto_df' not in st.session_state:
     st.session_state['porto_df'] = None
 
 with st.expander('Data Input', expanded=True):
-    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Paste CSV', 'Form'], horizontal=True)
+    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], horizontal=True)
 
     with st.form('abc'):
 
@@ -34,9 +34,6 @@ with st.expander('Data Input', expanded=True):
             
         elif method == 'Paste Raw':
             raw = st.text_area('Paste the Raw Data Here')
-        
-        elif method == 'Paste CSV':
-            raw = st.text_area('Paste CSV data here')
         
         elif method == 'Form':
             if st.session_state['porto_df'] is None:
