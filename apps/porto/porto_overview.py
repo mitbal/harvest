@@ -66,7 +66,7 @@ with st.expander('Data Input', expanded=True):
             if method == 'Upload CSV':
                 if st.session_state['porto_file'] != 'EMPTY':
                     st.session_state['porto_file'].seek(0)
-                    st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], delimiter=';', dtype='str')
+                    st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], sep=',', dtype='str')
 
             elif method == 'Paste Raw':
                 rows = np.array(raw.split())

@@ -10,7 +10,7 @@ COPY apps ./apps
 COPY main.py ./main.py
 COPY home.py ./home.py
 COPY README.md ./README.md
-COPY .streamlit/config.toml ././streamlit/config.toml
+COPY .streamlit/config.toml ./.streamlit/config.toml
 
 EXPOSE 8501
 ENTRYPOINT ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
