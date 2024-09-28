@@ -3,7 +3,6 @@ import os
 import numpy as np
 import pandas as pd
 import altair as alt
-import yfinance as yf
 import streamlit as st
 
 import lesley
@@ -401,9 +400,11 @@ with future_section:
         futures[i] = annual_dividend * (1+inc/100)**i
 
     df_future = pd.DataFrame({'years': [f'Year {i+1:2d}' for i in range(number_of_year)], 'returns': futures})
+    df_future['achieved'] = df_future['returns'] > (target*1_000_000)
     future_chart = alt.Chart(df_future).mark_bar().encode(
         x=alt.X('years'),
-        y=alt.Y('returns')
+        y=alt.Y('returns'),
+        color=alt.condition(alt.datum['achieved'], alt.value('#008631'), alt.value('#87CEFA')),
     ).properties(
         width=1000
     )
