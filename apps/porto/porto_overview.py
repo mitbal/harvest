@@ -345,7 +345,7 @@ with detail_section:
 
         col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
         with col1:
-            st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']])
+            st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], hide_index=True)
 
         with col2:
             div_bar = alt.Chart(df_train).mark_bar().encode(
