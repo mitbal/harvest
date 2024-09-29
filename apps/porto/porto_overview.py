@@ -396,14 +396,15 @@ with detail_section:
             avg_annual_increase = np.mean(df_train['inc'])
             st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(df_train['inc'] > 0)}, increase percentage {np.sum(df_train['inc'] > 0) / number_of_year*100:.2f}%')
 
-# shows future projection 25 years time
+
 future_section = st.container(border=True)
 with future_section:
     st.write('Future Projection')
-    number_of_year = 25
-
     # first method, assume flat percentage increase each year based on current yield
-    inc = st.number_input('Input annual percentage increase', value=total_yield_on_cost, min_value=1.0, max_value=15.0, step=0.1)
+
+    future_cols = st.columns(2)
+    number_of_year = future_cols[0].number_input('Number of Year', value=25, min_value=1, max_value=50)
+    inc = future_cols[1].number_input('Input annual percentage increase', value=total_yield_on_cost, min_value=1.0, max_value=15.0, step=0.1)
     futures = [0]*number_of_year
     for i in range(number_of_year):
         futures[i] = annual_dividend * (1+inc/100)**i
