@@ -312,8 +312,15 @@ def fit_linear(divs):
     df_train = pd.DataFrame(divs)
     df_train['year'] = df_train['date'].apply(lambda x: int(x.split('-')[0]))
     df_train = df_train.groupby('year')['adjDividend'].sum().to_frame().reset_index()
+    
+    # insert missing year into df_train
+    start_year = df_train.loc[0, 'year']
+    end_year = df_train.loc[len(df_train)-1, 'year']
 
-    import pendulum
+    years = list(range(start_year, end_year + 1))
+    df_temp = pd.DataFrame({'year': years, 'value': [0]*len(years)})
+    df_train = pd.merge(df_temp, df_train, on='year', how='left')
+    df_train = df_train.fillna(0)
 
     year = pendulum.today().year
     y = df_train[df_train['year'] < year]['adjDividend'].to_numpy().reshape(-1, 1)
