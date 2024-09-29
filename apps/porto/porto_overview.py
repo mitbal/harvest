@@ -356,9 +356,11 @@ with detail_section:
             st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], hide_index=True)
 
         with col2:
+            df_train['inc'] = df_train['adjDividend'].shift(1) - df_train['adjDividend']
             div_bar = alt.Chart(df_train).mark_bar().encode(
                 alt.X('year:N'),
-                alt.Y('adjDividend')
+                alt.Y('adjDividend'),
+                color=alt.condition(alt.datum['inc'] > 0, alt.value('#ff796c'), alt.value('#008631'))
             ).properties(
                 height=300,
                 width=450
@@ -367,7 +369,7 @@ with detail_section:
             pred_line = alt.Chart(df_predict).mark_line().encode(
                 alt.X('year:N'),
                 alt.Y('Prediction'),
-                color=alt.value('red')
+                color=alt.value('#87CEFA')
             )
 
             st.altair_chart(div_bar + pred_line)
@@ -390,10 +392,9 @@ with detail_section:
             consistency = number_of_year / (current_year - df_train['year'][0] +1)
             st.write(f'Number of year {number_of_year}, consistency {consistency*100:.2f}%')
 
-            st.write()
-            inc = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
-            avg_annual_increase = np.mean(inc)
-            st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(inc > 0)}, increase percentage {np.sum(inc > 0) / number_of_year*100:.2f}%')
+            df_train['inc'] = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
+            avg_annual_increase = np.mean(df_train['inc'])
+            st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {np.sum(df_train['inc'] > 0)}, increase percentage {np.sum(df_train['inc'] > 0) / number_of_year*100:.2f}%')
 
 # shows future projection 25 years time
 future_section = st.container(border=True)
