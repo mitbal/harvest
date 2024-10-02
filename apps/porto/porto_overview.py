@@ -406,7 +406,7 @@ with detail_section:
 
             df_train['inc'] = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
             avg_annual_increase = np.mean(df_train['inc'])
-            num_positive_year = np.sum(df_train['inc'] > 0)
+            num_positive_year = np.sum(df_train['inc'] > 0) + 1 # the first year is considered positive
             st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {num_positive_year}, increase percentage {num_positive_year / number_of_year*100:.2f}%')
 
 
