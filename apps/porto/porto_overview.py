@@ -198,7 +198,19 @@ with con_table:
     
     with tabs[0]:
         st.write('Current Portfolio')
-        main_event = st.dataframe(df_display, on_select='rerun', selection_mode='single-row', hide_index=True)
+
+        cfig = {
+            'yield_on_cost': st.column_config.NumberColumn(
+                'Yield on Cost (in pct)',
+                format='%.2f',
+            )
+        }
+
+        main_event = st.dataframe(df_display, 
+                                  on_select='rerun', 
+                                  selection_mode='single-row', 
+                                  hide_index=True,
+                                  column_config=cfig)
 
     with tabs[1]:
         div_bar = alt.Chart(df_display).mark_bar().encode(
