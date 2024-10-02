@@ -168,7 +168,19 @@ with full_table_section:
 
     tabs = st.tabs(['Table View', 'Scatter View'])
     with tabs[0]:
-        event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun')
+
+        cfig={
+            "yield": st.column_config.NumberColumn(
+                "Yield (in pct)",
+                help="The price of the product in USD",
+                min_value=0,
+                max_value=1000,
+                step=0.01,
+                format="%.02f",
+            )
+        }
+
+        event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
     
     with tabs[1]:
 
