@@ -259,9 +259,9 @@ with con_table:
             start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
 
             current_year = datetime.today().year
-            last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)]
-            last_year_div.loc[:, 'Symbol'] = stock
-            last_year_div.loc[:, 'Lot'] = r['current_lot']
+            last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
+            last_year_div['Symbol'] = stock
+            last_year_div['Lot'] = r['current_lot']
 
             div_lists += [last_year_div]
 
