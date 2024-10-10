@@ -1,3 +1,4 @@
+import pandas as pd
 import altair as alt
 
 def plot_quarter_income(fin_df):
@@ -51,3 +52,29 @@ def plot_candlestick(price_df):
     )
     
     return candlestick
+
+
+def plot_pe_distribution(df, pe):
+    kde = alt.Chart(df).transform_density('pe', as_=['PE', 'DENSITY'])
+    pes_dist = kde.mark_area(
+        line={'color': 'darkgreen'},
+        color=alt.Gradient(
+            gradient='linear',
+            stops=[alt.GradientStop(color='white', offset=0),
+                alt.GradientStop(color='darkgreen', offset=1)],
+            x1=1,
+            x2=1,
+            y1=1,
+            y2=0
+        ),
+    ).encode(
+        x='PE:Q',
+        y='DENSITY:Q'
+    )
+    x_zero = kde.mark_rule().encode(
+        x=alt.datum(pe),
+        color=alt.value('red'),
+        size=alt.value(1),
+    )
+   
+    return pes_dist+x_zero
