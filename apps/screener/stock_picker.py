@@ -226,17 +226,11 @@ with detail_section:
 
     st.write(cp_df.loc[stock_name, 'description'])
     
-    dividend_history_cols = st.columns(2)
+    dividend_history_cols = st.columns([2, 5, 2])
     sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
-    dividend_year_df = sdf.copy()
-    dividend_year_df['year'] = sdf['date'].apply(lambda x: x.split('-')[0])
-    yearly = dividend_year_df.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-    yearly_dividend_chart = alt.Chart(yearly).mark_bar().encode(
-        alt.X('year'),
-        alt.Y('adjDividend')
-    )
+    yearly_dividend_chart = hp.plot_dividend_history(sdf)
     dividend_history_cols[1].altair_chart(yearly_dividend_chart)
 
     fin = get_financial_data(stock_name)
