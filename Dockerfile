@@ -7,6 +7,7 @@ RUN pip3 install -r requirements.txt
 
 COPY data ./data
 COPY apps ./apps
+COPY harvest ./harvest
 COPY main.py ./main.py
 COPY home.py ./home.py
 COPY README.md ./README.md

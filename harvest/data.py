@@ -17,3 +17,9 @@ def get_sector_industry_pe(date=None, api_key=None):
     industry_df = pd.DataFrame(industry)
 
     return sector_df, industry_df
+
+def get_company_ratio(stock, api_key):
+    
+    url = f'https://financialmodelingprep.com/api/v3/ratios/{stock}?period=quarter&apikey={api_key}'
+    ratio = requests.get(url).json()
+    return pd.DataFrame(ratio)
