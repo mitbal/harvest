@@ -152,6 +152,7 @@ def plot_candlestick(daily_df):
 
 cp_df = get_company_profile(use_cache=False)
 div_df = get_historical_dividend(use_cache=True)
+sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=1)).isoformat(), api_key)
 
 final_df = compute_div_feature(cp_df, div_df)
 
@@ -239,6 +240,20 @@ with detail_section:
     dividend_history_cols[1].altair_chart(yearly_dividend_chart)
 
     fin = get_financial_data(stock_name)
+    with dividend_history_cols[2]:
+        sector_name = filtered_df.loc[stock_name, 'sector']
+        industry_name = filtered_df.loc[stock_name, 'industry']
+
+        eps_ttm = float(fin['eps'][:4].sum())
+        pe_ttm = filtered_df.loc[stock_name, 'price']/eps_ttm
+        sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
+        industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
+        
+        st.write(f'EPS TTM {eps_ttm}')
+        st.write(f'PE TTM {pe_ttm:.02f}')
+        st.write(f'{sector_name} PE {sector_pe:.02f}')
+        st.write(f'{industry_name} PE {industry_pe:.02f}')
+
     # fin_cols = st.columns(2, gap='small')
     # fin_cols[0].dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
 
