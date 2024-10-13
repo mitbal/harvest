@@ -145,7 +145,7 @@ def plot_candlestick(daily_df):
         width=1150,
         height=400
     )
-    # st.altair_chart(candlestick)
+    
     return candlestick
 
 ### End of Function definition
@@ -240,8 +240,12 @@ with detail_section:
 
         eps_ttm = float(fin['eps'][:4].sum())
         pe_ttm = filtered_df.loc[stock_name, 'price']/eps_ttm
-        sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
-        industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
+        try:
+            sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
+            industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
+        except Exception:
+            sector_pe = industry_pe = -1
+            print('sector or industry not found')
         
         st.write(f'EPS TTM {eps_ttm}')
         st.write(f'PE TTM {pe_ttm:.02f}')
