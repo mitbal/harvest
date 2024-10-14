@@ -1,6 +1,20 @@
+import os
 import datetime
 import requests
 import pandas as pd
+
+
+def get_daily_stock_price(stock, api_key=None, n_days=365):
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+
+    start_date = (datetime.datetime.today() - datetime.timedelta(days=n_days)).strftime('%Y-%m-%d')
+    url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{stock}?apikey={api_key}&from={start_date}'
+    r = requests.get(url)
+    intraday  = r.json()
+    
+    return pd.DataFrame(intraday['historical'])
+
 
 def get_sector_industry_pe(date=None, api_key=None):
 
@@ -17,6 +31,7 @@ def get_sector_industry_pe(date=None, api_key=None):
     industry_df = pd.DataFrame(industry)
 
     return sector_df, industry_df
+
 
 def get_company_ratio(stock, api_key):
     
