@@ -4,6 +4,21 @@ import requests
 import pandas as pd
 
 
+def get_all_idx_stocks(api_key=None):
+    
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+
+    url = f'https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}'
+    r = requests.get(url)
+    sl = r.json()
+
+    sdf = pd.DataFrame(sl)
+    idx = sdf[sdf['exchangeShortName'] == 'JKT'].reset_index(drop=True)
+
+    return idx
+
+
 def get_daily_stock_price(stock, api_key=None, n_days=365):
     if api_key is None:
         api_key = os.environ['FMP_API_KEY']
