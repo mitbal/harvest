@@ -24,7 +24,12 @@ def compute_div_feature(cp_df, div_df):
     for rows in df.iterrows():
 
         symbol = rows[0]
-        div = pd.DataFrame(json.loads(div_df.loc[symbol, 'historical'].replace("'", '"')))
+        try:
+            div = pd.DataFrame(json.loads(div_df.loc[symbol, 'historical'].replace("'", '"')))
+        except Exception as e:
+            print('error', symbol)
+            continue
+
         if len(div) == 0:
             continue
         
