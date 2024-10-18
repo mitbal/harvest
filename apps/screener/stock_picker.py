@@ -257,18 +257,8 @@ with detail_section:
         st.write(f'{sector_name} PE {sector_pe:.02f}')
         st.write(f'{industry_name} PE {industry_pe:.02f}')
 
-    # fin_cols = st.columns(2, gap='small')
-    # fin_cols[0].dataframe(fin[['calendarYear', 'period', 'revenue', 'netIncome', 'eps']], hide_index=True)
-
-    fin_chart = alt.Chart(fin[fin['calendarYear'] > '2016']).mark_bar().encode(
-        alt.X('period'),
-        alt.Y('netIncome'),
-        color='period',
-        column='calendarYear'
-    ).properties(
-        width=100
-    )
-    st.altair_chart(fin_chart, use_container_width=False)
+    fin_chart = hp.plot_quarter_income(fin[fin['calendarYear'] > '2016'])
+    st.altair_chart(fin_chart)
 
     daily_df = get_daily_price(stock_name)
     candlestick_chart = plot_candlestick(daily_df)
