@@ -355,8 +355,7 @@ def fit_linear(divs):
 
 
 
-detail_section = st.container(border=True)
-with detail_section:
+with st.expander('Dividend History', expanded=True):
     
     if main_event.selection['rows']:
         symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
