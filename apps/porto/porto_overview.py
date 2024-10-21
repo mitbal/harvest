@@ -379,13 +379,8 @@ with st.expander('Dividend History', expanded=True):
                 width=450
             )
 
-            pred_line = alt.Chart(df_predict).mark_line().encode(
-                alt.X('year:N'),
-                alt.Y('Prediction'),
-                color=alt.value('#87CEFA')
-            )
-
-            st.altair_chart(div_bar + pred_line)
+            regression = div_bar.transform_loess('year', 'adjDividend', bandwidth=0.7).mark_line().encode(color=alt.value('#000000'))
+            st.altair_chart(div_bar + regression)
 
         with col3:
             st.write(f'R squared: {score:.2f}')
