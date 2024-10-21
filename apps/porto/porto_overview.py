@@ -12,6 +12,8 @@ import streamlit as st
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
 
+import harvest.plot as hp
+import harvest.data as hd
 
 st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
@@ -364,25 +366,18 @@ with st.expander('Dividend History', expanded=True):
 
         score, pred, df_train, df_predict = fit_linear(divs[symbol])
 
-        col1, col2, col3 = st.columns([0.25, 0.4, 0.35])
-        with col1:
+        div_hist_cols = st.columns([4, 10, 5])
+        with div_hist_cols[0]:
             st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], hide_index=True)
 
-        with col2:
-            df_train['inc'] = df_train['adjDividend'].shift(1) - df_train['adjDividend']
-            div_bar = alt.Chart(df_train).mark_bar().encode(
-                alt.X('year:N'),
-                alt.Y('adjDividend'),
-                color=alt.condition(alt.datum['inc'] > 0, alt.value('#ff796c'), alt.value('#008631'))
-            ).properties(
-                height=300,
-                width=450
-            )
+        with div_hist_cols[1]:
+            div_df = pd.DataFrame(divs[symbol])
+            div_bar = hp.plot_dividend_history(div_df)
 
             regression = div_bar.transform_loess('year', 'adjDividend', bandwidth=0.7).mark_line().encode(color=alt.value('#000000'))
             st.altair_chart(div_bar + regression)
 
-        with col3:
+        with div_hist_cols[2]:
             st.write(f'R squared: {score:.2f}')
             st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
             
