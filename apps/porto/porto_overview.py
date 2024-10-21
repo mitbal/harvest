@@ -166,14 +166,15 @@ df['avgAnnualDivIncrease'] = incs
 
 annual_dividend = df['total_dividend'].sum()
 total_investment = df['total_invested'].sum()
+current_investment_value = (df['current_lot'] * df['last_price'] * 100).sum()
 achieve_percentage = annual_dividend / target * 100 / 1_000_000
 total_yield_on_cost = annual_dividend / total_investment * 100
 
 
 con_overall = st.container(border=True)
 with con_overall:
-    col1, col2, col3, col4 = st.columns(4, gap='small')
-    with col1:
+    overall_cols = st.columns([8,10,10,10,6], gap='small')
+    with overall_cols[0]:
         delta = total_yield_on_cost - baseline
         if delta > 0:
             text_delta = f'{delta:.2f}% above benchmark'
@@ -182,12 +183,11 @@ with con_overall:
         st.metric('Total Dividend Yield on Cost', 
                   value=f'{total_yield_on_cost:.2f} %',
                   delta=text_delta)
-    with col2:
-        st.metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
-    with col3:
-        st.metric('Total Investment', value=f'IDR {total_investment:,.0f}')
-    with col4:
-        st.metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
+    
+    overall_cols[1].metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
+    overall_cols[2].metric('Total Investment', value=f'IDR {total_investment:,.0f}')
+    overall_cols[3].metric('Current Market Value', value=f'IDR {current_investment_value:,.0f}', delta=f'{current_investment_value-total_investment:,.0f} IDR')
+    overall_cols[4].metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
 
 
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
