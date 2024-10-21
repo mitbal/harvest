@@ -412,10 +412,8 @@ with detail_section:
             st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {num_positive_year}, increase percentage {num_positive_year / number_of_year*100:.2f}%')
 
 
-future_section = st.container(border=True)
-with future_section:
-    st.write('Future Projection')
-    # first method, assume flat percentage increase each year based on current yield
+with st.expander('Future Projection', expanded=True):
+    # Assume growth based on current yield with reinvestment
 
     future_cols = st.columns(2)
     number_of_year = future_cols[0].number_input('Number of Year', value=25, min_value=1, max_value=50)
