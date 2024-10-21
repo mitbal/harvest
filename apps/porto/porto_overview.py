@@ -49,13 +49,15 @@ with st.expander('Data Input', expanded=True):
                 example_df = st.session_state['porto_df'].copy(deep=True)
             edited_df = st.data_editor(example_df, num_rows='dynamic')
 
-        target = st.number_input(
+        form_cols = st.columns(2)
+
+        target = form_cols[0].number_input(
             label='Input Target Annual Income (in million IDR)', 
             value=120, step=1, 
             format='%d'
         )
 
-        baseline = st.number_input(
+        baseline = form_cols[1].number_input(
             label='Benchmark Performance (in percent)',
             value=6.35, step=.01
         )
