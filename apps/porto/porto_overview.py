@@ -366,7 +366,7 @@ with st.expander('Dividend History', expanded=True):
 
         score, pred, df_train, df_predict = fit_linear(divs[symbol])
 
-        div_hist_cols = st.columns([4, 10, 5])
+        div_hist_cols = st.columns([3, 10, 5])
         with div_hist_cols[0]:
             st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], hide_index=True)
 
@@ -378,27 +378,26 @@ with st.expander('Dividend History', expanded=True):
             st.altair_chart(div_bar + regression)
 
         with div_hist_cols[2]:
-            st.write(f'R squared: {score:.2f}')
-            st.write(f'Prediction for Next Year Dividend: {pred:.2f}')
+
+            symbol_last_div = df[df['Symbol'] == symbol].iloc[0]['div_rate']
+            symbol_flat_inc = df[df['Symbol'] == symbol].iloc[0]['avgAnnualDivIncrease']
+            next_year_dividend = symbol_last_div + symbol_flat_inc
+            inc_rate = symbol_flat_inc / symbol_last_div * 100
+
+            st.markdown(f'Next Year Dividend Prediction: **:{'green'}[{next_year_dividend:.2f}]** IDR')
+            st.write(f'Percentage Increase from Last Year: {inc_rate:.2f} %')
             
-            last = pd.DataFrame(divs[symbol])['adjDividend'].values[0]
-            if pred > last:
-                color = 'green'
-            else:
-                color = 'red'
-
-            st.write(f'Difference compared to the previous year: **:{color}[{pred-last:.2f}]**')
-            st.write(f'Percentage difference compared to the previous year: **:{color}[{(pred-last)/last*100:.2f}%]**')
-
-            current_year = datetime.now().year
-            number_of_year = len(df_train)
-            consistency = number_of_year / (current_year - df_train['year'][0] +1)
-            st.write(f'Number of year {number_of_year}, consistency {consistency*100:.2f}%')
-
+            df_train = div_df.copy()
+            df_train['year'] = df_train['date'].apply(lambda x: int(x.split('-')[0]))
+            df_train = df_train.groupby('year')['adjDividend'].sum().to_frame().reset_index()
             df_train['inc'] = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
-            avg_annual_increase = np.mean(df_train['inc'])
+            
             num_positive_year = np.sum(df_train['inc'] > 0) + 1 # the first year is considered positive
-            st.write(f'Average annual increase {avg_annual_increase:.2f}, with number of positive year {num_positive_year}, increase percentage {num_positive_year / number_of_year*100:.2f}%')
+            num_dividend_year = df[df['Symbol'] == symbol].iloc[0]['numDividendYear']
+            pct_positive_year = num_positive_year/num_dividend_year * 100
+
+            st.write(f'Number of Positive Years (Dividend increase from the year before): {num_positive_year}')
+            st.write(f'Percentage of positive years: {pct_positive_year:.02f} %')
 
 
 with st.expander('Future Projection', expanded=True):
