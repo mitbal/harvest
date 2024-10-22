@@ -19,6 +19,19 @@ def get_all_idx_stocks(api_key=None):
     return idx
 
 
+def get_company_profile(stocks, api_key=None):
+    
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+    
+    url = f'https://financialmodelingprep.com/api/v3/profile/{','.join(stocks)}?apikey={api_key}'
+    r  = requests.get(url)
+    cp = r.json()
+
+    cp_df = pd.DataFrame(cp).set_index('symbol')
+    return cp_df
+
+
 def get_daily_stock_price(stock, api_key=None, n_days=365):
     if api_key is None:
         api_key = os.environ['FMP_API_KEY']
