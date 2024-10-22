@@ -323,48 +323,12 @@ with con_table:
                     c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
 
 
-def fit_linear(divs):
-
-    df_train = pd.DataFrame(divs)
-    df_train['year'] = df_train['date'].apply(lambda x: int(x.split('-')[0]))
-    df_train = df_train.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-    
-    # insert missing year into df_train
-    start_year = df_train.loc[0, 'year']
-    end_year = df_train.loc[len(df_train)-1, 'year']
-
-    years = list(range(start_year, end_year + 1))
-    df_temp = pd.DataFrame({'year': years, 'value': [0]*len(years)})
-    df_train = pd.merge(df_temp, df_train, on='year', how='left')
-    df_train = df_train.fillna(0)
-
-    year = pendulum.today().year
-    y = df_train[df_train['year'] < year]['adjDividend'].to_numpy().reshape(-1, 1)
-    X = np.arange(y.shape[0]).reshape(-1, 1)
-
-    weight = np.append([2*y.shape[0]], np.ones(y.shape[0]-1)) # make the first dividend as kind of intercept
-    lr = LinearRegression(fit_intercept=True)
-    lr.fit(X, y, sample_weight=weight)
-
-    X_predict = np.arange(y.shape[0]+2).reshape(-1, 1)
-    y_hat = lr.predict(X_predict)
-    
-    df_predict = pd.DataFrame()
-    df_predict['year'] = np.append(df_train['year'].values, [year+1])
-    df_predict['Prediction'] = y_hat
-
-    return lr.score(X, y), df_predict['Prediction'].values[-1], df_train, df_predict
-
-
-
 with st.expander('Dividend History', expanded=True):
     
     if main_event.selection['rows']:
         symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
 
         st.write('You select: ', symbol)
-
-        score, pred, df_train, df_predict = fit_linear(divs[symbol])
 
         div_hist_cols = st.columns([3, 10, 5])
         with div_hist_cols[0]:
