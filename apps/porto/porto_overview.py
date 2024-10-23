@@ -172,9 +172,12 @@ current_investment_value = (df['current_lot'] * df['last_price'] * 100).sum()
 achieve_percentage = annual_dividend / target * 100 / 1_000_000
 total_yield_on_cost = annual_dividend / total_investment * 100
 
+df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
+                 'yield_on_cost', 'yield_on_price', 'total_dividend', 'numDividendYear', 'avgAnnualDivIncrease']].copy(deep=True)
 
-con_overall = st.container(border=True)
-with con_overall:
+
+# Overall summary
+with st.container(border=True):
     overall_cols = st.columns([8,10,10,10,6], gap='small')
     with overall_cols[0]:
         delta = total_yield_on_cost - baseline
@@ -191,12 +194,8 @@ with con_overall:
     overall_cols[3].metric('Current Market Value', value=f'IDR {current_investment_value:,.0f}', delta=f'{current_investment_value-total_investment:,.0f} IDR')
     overall_cols[4].metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
 
-
-df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
-                 'yield_on_cost', 'yield_on_price', 'total_dividend', 'numDividendYear', 'avgAnnualDivIncrease']].copy(deep=True)
-
-con_table = st.container(border=True)
-with con_table:
+# Table List
+with st.container(border=True):
 
     tabs = st.tabs(['Table View', 'Bar Chart View', 'Sectoral View', 'Calendar View'])
     
@@ -322,7 +321,7 @@ with con_table:
                     c.write(calendar.month_name[i])
                     c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
 
-
+# Detailed single stock
 with st.expander('Dividend History', expanded=True):
     
     if main_event.selection['rows']:
@@ -363,7 +362,7 @@ with st.expander('Dividend History', expanded=True):
             st.write(f'Number of Positive Years (Dividend increase from the year before): {num_positive_year}')
             st.write(f'Percentage of positive years: {pct_positive_year:.02f} %')
 
-
+# Project future earnings
 with st.expander('Future Projection', expanded=True):
     # Assume growth based on current yield with reinvestment
 
