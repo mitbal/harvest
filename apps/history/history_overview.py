@@ -10,7 +10,6 @@ import yfinance as yf
 import plotly.graph_objects as go
 
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, ColumnsAutoSizeMode, JsCode
 
 st.set_page_config(layout='wide')
 st.title('Historical Insight')
@@ -66,23 +65,7 @@ with con:
         df_display['Dividend'] = df['Price'].astype('float')
         df_display['Total'] = df['Total Dividend'].astype('float')
 
-        k_sep_formatter = JsCode("""
-            function(params) {
-                return (params.value == null) ? params.value : params.value.toLocaleString(); 
-            }
-        """)
-
-        builder = GridOptionsBuilder.from_dataframe(df_display)
-        builder.configure_column('Dividend', header_name='Dividend (IDR)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=1)
-        builder.configure_column('Total', header_name='Total (IDR)', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-        
-        grid_options = builder.build()
-        AgGrid(df_display, 
-               height=300,
-               gridOptions=grid_options,
-               allow_unsafe_jscode=True,
-               columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
-
+        st.dataframe(df_display)
 
 ## Second section, summarization
 con2 = st.container(border=True)
@@ -94,20 +77,9 @@ with con2:
 
     col1, col2 = st.columns([0.3, 0.7])
     with col1:
+        st.dataframe(df_summary)
 
-        builder = GridOptionsBuilder.from_dataframe(df_summary)
-        builder.configure_column('Total Dividend', header_name='Total Dividend', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-        builder.configure_column('Date', header_name='Count', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0)
-        
-        grid_options = builder.build()
-        AgGrid(df_summary, 
-               height=310,
-               gridOptions=grid_options,
-               allow_unsafe_jscode=True,
-               columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS)
-    
     with col2:
-
         bar_plot = alt.Chart(df_summary).mark_bar().encode(
             x='Stock',
             y='Total Dividend'
@@ -222,15 +194,7 @@ with con6:
         stock = st.selectbox('Select Stock', stock_list) 
         filt = df_display[df_display['Stock'] == stock][['Date', 'Lot', 'Dividend', 'Total']].reset_index().drop(columns='index')
         
-        builder = GridOptionsBuilder.from_dataframe(filt)
-        builder.configure_column('Dividend', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-        builder.configure_column('Total', type=['numericColumn', 'numberColumnFilter', 'customNumericFormat'], precision=0, valueFormatter=k_sep_formatter)
-        
-        grid_options = builder.build()
-        AgGrid(filt,
-               height=200,
-               gridOptions=grid_options,
-               allow_unsafe_jscode=True)
+        st.dataframe(filt)
 
     with col2:
         history = yf.Ticker(stock+'.JK').history(period='1y').reset_index()
