@@ -65,7 +65,7 @@ with con:
         df_display['Dividend'] = df['Price'].astype('float')
         df_display['Total'] = df['Total Dividend'].astype('float')
 
-        st.dataframe(df_display)
+        st.dataframe(df_display, hide_index=True)
 
 ## Second section, summarization
 con2 = st.container(border=True)
@@ -77,7 +77,7 @@ with con2:
 
     col1, col2 = st.columns([0.3, 0.7])
     with col1:
-        st.dataframe(df_summary)
+        st.dataframe(df_summary, hide_index=True)
 
     with col2:
         bar_plot = alt.Chart(df_summary).mark_bar().encode(
@@ -167,8 +167,8 @@ with con5:
     st.write('Sector Analysis')
     col1, col2 = st.columns(2)
     with col1:
-        st.dataframe(agg_sector)
-        st.dataframe(agg_industry)
+        st.dataframe(agg_sector, hide_index=True)
+        st.dataframe(agg_industry, hide_index=True)
 
     with col2:
         plot_sectors = alt.Chart(agg_sector).mark_arc().encode(
@@ -194,7 +194,7 @@ with con6:
         stock = st.selectbox('Select Stock', stock_list) 
         filt = df_display[df_display['Stock'] == stock][['Date', 'Lot', 'Dividend', 'Total']].reset_index().drop(columns='index')
         
-        st.dataframe(filt)
+        st.dataframe(filt, hide_index=True)
 
     with col2:
         history = yf.Ticker(stock+'.JK').history(period='1y').reset_index()
