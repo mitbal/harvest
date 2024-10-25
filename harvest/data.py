@@ -24,7 +24,8 @@ def get_company_profile(stocks, api_key=None):
     if api_key is None:
         api_key = os.environ['FMP_API_KEY']
     
-    url = f'https://financialmodelingprep.com/api/v3/profile/{','.join(stocks)}?apikey={api_key}'
+    stock_param = ','.join(stocks)
+    url = f'https://financialmodelingprep.com/api/v3/profile/{stock_param}?apikey={api_key}'
     r  = requests.get(url)
     cp = r.json()
 
