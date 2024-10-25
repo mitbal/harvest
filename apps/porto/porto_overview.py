@@ -347,7 +347,7 @@ with st.expander('Dividend History', expanded=True):
             next_year_dividend = symbol_last_div + symbol_flat_inc
             inc_rate = symbol_flat_inc / symbol_last_div * 100
 
-            st.markdown(f'Next Year Dividend Prediction: **:{'green'}[{next_year_dividend:.2f}]** IDR')
+            st.markdown(f'Next Year Dividend Prediction: **:{"green"}[{next_year_dividend:.2f}]** IDR')
             st.write(f'Percentage Increase from Last Year: {inc_rate:.2f} %')
             
             df_train = div_df.copy()
