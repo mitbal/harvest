@@ -3,14 +3,11 @@ import os
 
 import lesley
 import calendar
-import requests
-import pendulum
 import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
 from datetime import datetime
-from sklearn.linear_model import LinearRegression
 
 import harvest.plot as hp
 import harvest.data as hd
@@ -100,39 +97,20 @@ api_key = os.environ['FMP_API_KEY']
 @st.cache_data
 def get_company_profile_data(porto):
 
-    stocks = ','.join([s+'.JK' for s in porto['Symbol']])
-    company_profile_url = f'https://financialmodelingprep.com/api/v3/profile/{stocks}?apikey={api_key}'
-    cpr = requests.get(company_profile_url)
+    stocks = [x+'.JK' for x in porto['Symbol'].to_list()]
+    cp_df = hd.get_company_profile(stocks)
     
-    cp_df = pd.DataFrame(cpr.json())
-    cp_df['Symbol'] = cp_df['symbol'].apply(lambda x: x[:-3])
+    cp_df['Symbol'] = [x[:-3] for x in cp_df.index.to_list()]
     df = porto.merge(cp_df[['Symbol', 'price', 'sector', 'lastDiv']])
     df.rename(columns={'lastDiv': 'div_rate', 'price': 'last_price'}, inplace=True)
 
     return df
 
+
 @st.cache_data
 def get_dividend_data(porto):
-    divs = []
-    for i in range(int(len(porto)/5)+1):
-        stock_list = [s+'.JK' for s in porto['Symbol'][i*5:(i+1)*5]]
-        stocks = ','.join(stock_list)
-        dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stocks}?apikey={api_key}'
-        dr = requests.get(dividend_history_url)
-        drj = dr.json()
-        
-        if len(stock_list) > 1:
-            div = drj['historicalStockList']
-        else:
-            if drj:
-               div = [drj]
-        divs.append(div)
 
-    div_df = pd.concat([pd.DataFrame(div) for div in divs])
-    div_df.set_index('symbol', inplace=True)
-    divs = {x[:-3]: y for x, y in zip(div_df.index, div_df['historical'])}
-
-    return divs
+    return hd.get_dividend_history(porto['Symbol'].to_list())
 
 
 if st.session_state['porto_df'] is None:
