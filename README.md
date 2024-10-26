@@ -1,5 +1,5 @@
 ### What is it?
-Panen Dividen is a sophisticated analytics tool designed to optimize your dividend investment strategy. It offers comprehensive insights into past performance metrics and provides predictive analysis for future yield potential.
+Panen Dividen (https://harvest-dividend.up.railway.app/) is a sophisticated analytics tool designed to optimize your dividend investment strategy. It offers comprehensive insights into past performance metrics and provides predictive analysis for future yield potential.
 
 ### How to use?
 This app currently has 3 modules.
