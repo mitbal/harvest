@@ -117,6 +117,12 @@ with con3:
 
         st.altair_chart(plot_month, use_container_width=True)
 
+    select_year = st.selectbox('Select Year', df['year'].unique())
+    select_month = st.selectbox('Select Month', list(calendar.month_name)[1:], 0)
+
+    st.dataframe(df[(df['year'] == select_year-1) & (df['month_name'] == select_month)])
+    st.dataframe(df[(df['year'] == select_year) & (df['month_name'] == select_month)])
+
 
 ## fourth section, dividend calendar
 con4 = st.container(border=True)
