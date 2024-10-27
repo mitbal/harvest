@@ -120,8 +120,12 @@ with con3:
     select_year = st.selectbox('Select Year', df['year'].unique())
     select_month = st.selectbox('Select Month', list(calendar.month_name)[1:], 0)
 
-    st.dataframe(df[(df['year'] == select_year-1) & (df['month_name'] == select_month)])
-    st.dataframe(df[(df['year'] == select_year) & (df['month_name'] == select_month)])
+    last_year_df = df[(df['year'] == select_year-1) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
+    curr_year_df = df[(df['year'] == select_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
+
+    month_cols = st.columns(2)
+    month_cols[0].dataframe(last_year_df, hide_index=True)
+    month_cols[1].dataframe(curr_year_df, hide_index=True)
 
 
 ## fourth section, dividend calendar
