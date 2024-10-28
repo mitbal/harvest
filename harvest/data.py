@@ -67,3 +67,31 @@ def get_company_ratio(stock, api_key):
     url = f'https://financialmodelingprep.com/api/v3/ratios/{stock}?period=quarter&apikey={api_key}'
     ratio = requests.get(url).json()
     return pd.DataFrame(ratio)
+
+
+def get_dividend_history(stocks, api_key=None):
+    
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+
+    divs = []
+    for i in range(int(len(stocks)/5)+1):
+        stock_list = [s+'.JK' for s in stocks[i*5:(i+1)*5]]
+        stocks_param = ','.join(stock_list)
+        dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stocks_param}?apikey={api_key}'
+        dr = requests.get(dividend_history_url)
+        drj = dr.json()
+        
+        if len(stock_list) > 1:
+            div = drj['historicalStockList']
+        else:
+            if drj:
+               div = [drj]
+        divs.append(div)
+    
+    div_df = pd.concat([pd.DataFrame(div) for div in divs])
+    div_df.set_index('symbol', inplace=True)
+    divs = {x[:-3]: y for x, y in zip(div_df.index, div_df['historical'])}
+
+    return divs
+
