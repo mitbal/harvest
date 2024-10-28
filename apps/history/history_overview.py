@@ -14,15 +14,19 @@ import streamlit as st
 st.set_page_config(layout='wide')
 st.title('Historical Insight')
 
-uploaded_file = st.file_uploader('Choose a file')
-if uploaded_file:
-    st.session_state['history_file'] = uploaded_file
 
-if st.session_state['history_file'] != 'EMPTY':
-    st.session_state['history_file'].seek(0)
-    df = pd.read_csv(st.session_state['history_file'], delimiter=';')
-else:
+## Handle input and cache
+if 'history_df' not in st.session_state:
+    st.session_state['history_df'] = None
+
+uploaded_file = st.file_uploader('Choose a file', type='csv')
+if uploaded_file:
+    st.session_state['history_df'] = pd.read_csv(uploaded_file, delimiter=';')
+
+if st.session_state['history_df'] is None:
     st.stop()
+
+df = st.session_state['history_df'].copy()
 
 
 ## First section, overall 
