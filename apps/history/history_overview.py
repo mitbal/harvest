@@ -121,11 +121,17 @@ with con3:
 
         st.altair_chart(plot_month, use_container_width=True)
 
-    select_year = st.selectbox('Select Year', df['year'].unique())
-    select_month = st.selectbox('Select Month', list(calendar.month_name)[1:], 0)
+    param_cols = st.columns(3)
+    first_year_param = df['year'].unique().tolist()
+    select_first_year = param_cols[0].selectbox('Select First Year', first_year_param)
 
-    last_year_df = df[(df['year'] == select_year-1) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
-    curr_year_df = df[(df['year'] == select_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
+    second_year_param = first_year_param.copy()
+    second_year_param.remove(select_first_year)
+    select_second_year = param_cols[1].selectbox('Select Second Year', second_year_param)
+    select_month = param_cols[2].selectbox('Select Month', list(calendar.month_name)[1:], 0)
+
+    last_year_df = df[(df['year'] == select_first_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
+    curr_year_df = df[(df['year'] == select_second_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
 
     month_cols = st.columns(2)
     month_cols[0].dataframe(last_year_df, hide_index=True)
