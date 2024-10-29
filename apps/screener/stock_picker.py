@@ -56,19 +56,9 @@ def compute_div_feature(cp_df, div_df):
 @st.cache_data
 def get_company_profile(use_cache=False):
     
-    url = f'https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}'
-    r = requests.get(url)
-    sl = r.json()
+    bei = hd.get_all_idx_stocks(api_key=api_key)
+    cp_df = hd.get_company_profile(bei['symbol'], api_key=api_key)
 
-    sdf = pd.DataFrame(sl)
-    bei = sdf[sdf['exchangeShortName'] == 'JKT'].reset_index(drop=True)
-
-    stocks = ','.join(bei['symbol'])
-    company_profile_url = f'https://financialmodelingprep.com/api/v3/profile/{stocks}?apikey={api_key}'
-    r = requests.get(company_profile_url)
-    cp = r.json()
-
-    cp_df = pd.DataFrame(cp).set_index('symbol')
     return cp_df
 
 
