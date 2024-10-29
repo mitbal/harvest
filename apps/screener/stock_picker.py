@@ -37,7 +37,7 @@ def compute_div_feature(cp_df, div_df):
         agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
         inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
         inc_pct = inc_flat / agg_year['adjDividend'] * 100
-        avg_flat_annual_increase = np.mean(inc_flat)
+        avg_flat_annual_increase = np.mean(inc_flat[-4:])
         # avg_pct_annual_increase = np.nanmedian(inc_pct)
         avg_pct_annual_increase = np.clip(avg_flat_annual_increase / df.loc[symbol, 'lastDiv'] * 100, 0, 100)
         df.loc[symbol, 'avgFlatAnnualDivIncrease'] = avg_flat_annual_increase
@@ -47,7 +47,7 @@ def compute_div_feature(cp_df, div_df):
         df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
     
     # patented dividend score
-    df['DScore'] = df['yield'] * df['avgPctAnnualDivIncrease'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2)
+    df['DScore'] = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
                'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
