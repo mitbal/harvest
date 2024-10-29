@@ -105,44 +105,6 @@ def get_daily_price(stock):
     return pd.DataFrame(intraday['historical'])
 
 
-def plot_candlestick(daily_df):
-    open_close_color = alt.condition(
-            "datum.open <= datum.close",
-            alt.value("#06982d"),
-            alt.value("#ae1325")
-    )
-
-    base = alt.Chart(daily_df).encode(
-        alt.X('date:T',
-          axis=alt.Axis(
-              format='%m/%Y',
-              labelAngle=-45
-          )
-        ),
-        color=open_close_color
-    )
-
-    rule = base.mark_rule().encode(
-        alt.Y(
-            'low:Q',
-            title='Price',
-            scale=alt.Scale(zero=False),
-        ),
-        alt.Y2('high:Q')
-    )
-
-    bar = base.mark_bar().encode(
-        alt.Y('open:Q'),
-        alt.Y2('close:Q')
-    )
-
-    candlestick = (rule + bar).properties(
-        width=1150,
-        height=400
-    )
-    
-    return candlestick
-
 ### End of Function definition
 
 cp_df = get_company_profile(use_cache=False)
@@ -251,5 +213,5 @@ with detail_section:
     st.altair_chart(fin_chart)
 
     daily_df = get_daily_price(stock_name)
-    candlestick_chart = plot_candlestick(daily_df)
+    candlestick_chart = hp.plot_candlestick(daily_df)
     st.altair_chart(candlestick_chart)
