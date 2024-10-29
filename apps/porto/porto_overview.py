@@ -25,7 +25,7 @@ with st.expander('Data Input', expanded=True):
     with st.form('abc'):
 
         if method == 'Upload CSV':
-            uploaded_file = st.file_uploader("Choose a file")
+            uploaded_file = st.file_uploader('Choose a file', type='csv')
 
             if uploaded_file:
                 st.session_state['porto_file'] = uploaded_file
