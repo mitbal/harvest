@@ -72,14 +72,6 @@ def get_historical_dividend(use_cache=True):
     return div_df
 
 
-def get_financial_data(stock):
-    period = 'quarter' # or 'annual'
-    url = f'https://financialmodelingprep.com/api/v3/income-statement/{stock}?period={period}&apikey={api_key}'
-    r = requests.get(url)
-    fs = r.json()
-    return pd.DataFrame(fs)
-
-
 def calc_statistics(full, market_cap_filter, dividend_filter):
 
     num_of_all_stocks = len(full)
@@ -190,7 +182,7 @@ with detail_section:
     yearly_dividend_chart = hp.plot_dividend_history(sdf)
     dividend_history_cols[1].altair_chart(yearly_dividend_chart)
 
-    fin = get_financial_data(stock_name)
+    fin = hd.get_financial_data(stock_name)
     with dividend_history_cols[2]:
         sector_name = filtered_df.loc[stock_name, 'sector']
         industry_name = filtered_df.loc[stock_name, 'industry']
