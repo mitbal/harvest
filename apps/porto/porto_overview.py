@@ -184,6 +184,14 @@ with st.container(border=True):
             'yield_on_cost': st.column_config.NumberColumn(
                 'Yield on Cost (in pct)',
                 format='%.2f',
+            ),
+            'yield_on_price': st.column_config.NumberColumn(
+                'Yield on Price (in pct)',
+                format='%.2f',
+            ),
+            'div_rate': st.column_config.NumberColumn(
+                'Last Dividend Paid',
+                format='%.0f'
             )
         }
 
