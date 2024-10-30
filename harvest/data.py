@@ -95,3 +95,13 @@ def get_dividend_history(stocks, api_key=None):
 
     return divs
 
+
+def get_financial_data(stock, period='quarter', api_key=None):
+
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+
+    url = f'https://financialmodelingprep.com/api/v3/income-statement/{stock}?period={period}&apikey={api_key}'
+    r = requests.get(url)
+    fs = r.json()
+    return pd.DataFrame(fs)
