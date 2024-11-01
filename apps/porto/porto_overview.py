@@ -46,7 +46,7 @@ with st.expander('Data Input', expanded=True):
                 )
             else:
                 example_df = st.session_state['porto_df'].copy(deep=True)
-            edited_df = st.data_editor(example_df, num_rows='dynamic')
+            edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True)
 
         form_cols = st.columns(2)
 
