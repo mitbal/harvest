@@ -116,6 +116,8 @@ def get_dividend_data(porto):
 if st.session_state['porto_df'] is None:
     st.stop()
 
+
+st.session_state['porto_df'].dropna(inplace=True)
 df = get_company_profile_data(st.session_state['porto_df'])
 divs = get_dividend_data(st.session_state['porto_df'])
 
