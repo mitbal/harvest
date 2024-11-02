@@ -125,9 +125,9 @@ with full_table_section:
         cfig={
             "yield": st.column_config.NumberColumn(
                 "Yield (in pct)",
-                help="The price of the product in USD",
+                help="The dividend yield on the current price",
                 min_value=0,
-                max_value=1000,
+                max_value=100,
                 step=0.01,
                 format="%.02f",
             )
