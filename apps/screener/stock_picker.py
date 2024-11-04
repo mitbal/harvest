@@ -160,20 +160,23 @@ with full_table_section:
         ).interactive()
         sp_event = st.altair_chart(sp, on_select='rerun')
 
+if len(event.selection['rows']) > 0:
+    row_idx = event.selection['rows'][0]
+    stock = filtered_df.iloc[row_idx]
+    stock_name = stock.name
+elif sp_event.selection['point']:
+    row_idx = sp_event.selection['point'][0]
+    stock = filtered_df.loc[row_idx['Emiten']+'.JK']
+    stock_name = row_idx['Emiten']+'.JK'
+else:
+    st.stop()
+
+# Company profile
+with st.expander('Company Profile', expanded=False):
+    st.write(cp_df.loc[stock_name, 'description'])
+
 detail_section = st.container(border=True)
 with detail_section:
-    if len(event.selection['rows']) > 0:
-        row_idx = event.selection['rows'][0]
-        stock = filtered_df.iloc[row_idx]
-        stock_name = stock.name
-    elif sp_event.selection['point']:
-        row_idx = sp_event.selection['point'][0]
-        stock = filtered_df.loc[row_idx['Emiten']+'.JK']
-        stock_name = row_idx['Emiten']+'.JK'
-    else:
-        st.stop()
-
-    st.write(cp_df.loc[stock_name, 'description'])
     
     dividend_history_cols = st.columns([2, 5, 2])
     sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
