@@ -98,7 +98,10 @@ def plot_dividend_history(div_df):
     
     # plot the dividend green if it is increased from last year, and red if it is decreased
     df_train['inc'] = df_train['adjDividend'].shift(1) - df_train['adjDividend']
-    div_bar = alt.Chart(df_train).mark_bar().encode(
+    div_bar = alt.Chart(df_train).mark_bar(
+        cornerRadiusTopLeft=5, 
+        cornerRadiusTopRight=5
+    ).encode(
         alt.X('year:N'),
         alt.Y('adjDividend'),
         color=alt.condition(alt.datum['inc'] > 0, alt.value('#ff796c'), alt.value('#008631'))
