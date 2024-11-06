@@ -15,7 +15,7 @@ def plot_quarter_income(fin_df):
     return chart
 
 
-def plot_candlestick(price_df):
+def plot_candlestick(price_df, volume=False, width=1000, height=300):
     open_close_color = alt.condition(
         'datum.open <= datum.close',
         alt.value("#06982d"),
