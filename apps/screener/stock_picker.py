@@ -175,9 +175,7 @@ else:
 with st.expander('Company Profile', expanded=False):
     st.write(cp_df.loc[stock_name, 'description'])
 
-detail_section = st.container(border=True)
-with detail_section:
-    
+with st.expander('Dividend History', expanded=False):
     dividend_history_cols = st.columns([2, 5, 2])
     sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
