@@ -1,11 +1,25 @@
 import pandas as pd
 import altair as alt
 
-def plot_quarter_income(fin_df):
+def plot_financial(fin_df, period='quarter', metric='netIncome'):
+    
+    if period == 'quarter':
+        return plot_quarter_income(fin_df, metric)
+    else:
+        return plot_yearly_income(fin_df, metric)
 
+def plot_yearly_income(fin_df, metric):
     chart = alt.Chart(fin_df).mark_bar().encode(
+        x=alt.X('calendarYear'),
+        y=alt.Y(f'sum({metric}):Q'),
+    )
+    return chart
+
+def plot_quarter_income(fin_df, metric):
+
+    chart = alt.Chart(fin_df[fin_df['calendarYear'] > '2016']).mark_bar().encode(
         x=alt.X('period'),
-        y=alt.Y('netIncome'),
+        y=alt.Y(metric),
         color='period',
         column='calendarYear'
     ).properties(

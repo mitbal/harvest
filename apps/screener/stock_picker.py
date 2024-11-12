@@ -202,7 +202,10 @@ with st.expander('Dividend History', expanded=False):
         st.write(f'{sector_name} PE {sector_pe:.02f}')
         st.write(f'{industry_name} PE {industry_pe:.02f}')
 
-    fin_chart = hp.plot_quarter_income(fin[fin['calendarYear'] > '2016'])
+with st.expander('Financial Information', expanded=False):
+    metric = st.radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
+    period = st.radio('Select Period', ['quarter', 'annual'], horizontal=True)
+    fin_chart = hp.plot_financial(fin, period=period, metric=metric)
     st.altair_chart(fin_chart)
 
     daily_df = get_daily_price(stock_name)
