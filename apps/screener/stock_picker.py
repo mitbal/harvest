@@ -208,6 +208,18 @@ with st.expander('Financial Information', expanded=False):
     fin_chart = hp.plot_financial(fin, period=period, metric=metric)
     st.altair_chart(fin_chart)
 
-    daily_df = get_daily_price(stock_name)
-    candlestick_chart = hp.plot_candlestick(daily_df)
-    st.altair_chart(candlestick_chart)
+with st.expander('Price Movement', expanded=False):
+        daily_df = hd.get_daily_stock_price(stock_name, n_days=765)
+        candlestick_chart = hp.plot_candlestick(daily_df)
+        st.altair_chart(candlestick_chart)
+
+with st.expander('Valuation Analysis', expanded=False):
+    daily_df['pe'] = daily_df['close'] / eps_ttm
+    pe_dist_chart = hp.plot_pe_distribution(daily_df, pe_ttm)
+    st.altair_chart(pe_dist_chart)
+    
+    pe_hist = alt.Chart(daily_df).mark_line().encode(
+        x = 'date:T', 
+        y = 'pe'
+    )
+    st.altair_chart(pe_hist)
