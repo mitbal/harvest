@@ -214,12 +214,14 @@ with st.expander('Price Movement', expanded=False):
         st.altair_chart(candlestick_chart)
 
 with st.expander('Valuation Analysis', expanded=False):
+    val_cols = st.columns(2)
+
     daily_df['pe'] = daily_df['close'] / eps_ttm
     pe_dist_chart = hp.plot_pe_distribution(daily_df, pe_ttm)
-    st.altair_chart(pe_dist_chart)
+    val_cols[0].altair_chart(pe_dist_chart)
     
     pe_hist = alt.Chart(daily_df).mark_line().encode(
         x = 'date:T', 
         y = 'pe'
     )
-    st.altair_chart(pe_hist)
+    val_cols[1].altair_chart(pe_hist)
