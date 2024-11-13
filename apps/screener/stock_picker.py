@@ -210,7 +210,7 @@ with st.expander('Financial Information', expanded=False):
 
 with st.expander('Price Movement', expanded=False):
         daily_df = hd.get_daily_stock_price(stock_name, n_days=765)
-        candlestick_chart = hp.plot_candlestick(daily_df)
+        candlestick_chart = hp.plot_candlestick(daily_df, width=1000, height=300)
         st.altair_chart(candlestick_chart)
 
 with st.expander('Valuation Analysis', expanded=False):

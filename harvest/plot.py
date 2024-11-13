@@ -63,7 +63,7 @@ def plot_candlestick(price_df, width=1000, height=300):
         height=height
     )
 
-    view = alt.Chart(price_df).mark_line().encode(
+    view = alt.Chart(price_df).mark_bar().encode(
         x=alt.X('date:T'),
         y='volume'
     ).properties(
