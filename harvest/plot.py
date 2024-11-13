@@ -29,7 +29,7 @@ def plot_quarter_income(fin_df, metric):
     return chart
 
 
-def plot_candlestick(price_df, volume=False, width=1000, height=300):
+def plot_candlestick(price_df, width=1000, height=300):
     open_close_color = alt.condition(
         'datum.open <= datum.close',
         alt.value("#06982d"),
@@ -59,19 +59,19 @@ def plot_candlestick(price_df, volume=False, width=1000, height=300):
     )
 
     candlestick = alt.layer(rule, bar).properties(
-        width=1150,
-        height=400
+        width=width,
+        height=height
     )
 
     view = alt.Chart(price_df).mark_line().encode(
         x=alt.X('date:T'),
         y='volume'
     ).properties(
-        width=1150,
+        width=width,
         height=50
     )
     view = view.add_selection(interval)
-
+    
     return candlestick & view
 
 
