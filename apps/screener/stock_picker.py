@@ -214,7 +214,7 @@ with st.expander('Price Movement', expanded=False):
         st.altair_chart(candlestick_chart)
 
 with st.expander('Valuation Analysis', expanded=False):
-    val_cols = st.columns(2)
+    val_cols = st.columns(3, gap='large')
 
     daily_df['pe'] = daily_df['close'] / eps_ttm
     pe_dist_chart = hp.plot_pe_distribution(daily_df, pe_ttm)
@@ -225,3 +225,11 @@ with st.expander('Valuation Analysis', expanded=False):
         y = 'pe'
     )
     val_cols[1].altair_chart(pe_hist)
+
+    with val_cols[2]:
+        ci = daily_df['pe'].quantile([.05, .95]).values
+        st.markdown(f'''
+            Current PE: {daily_df['close'].values[-1] / eps_ttm:.2f}\n
+            Mean PE (last 3 year): {daily_df['pe'].mean():.2f}\n
+            95% Confidence Interval range: {ci[0]:.2f} - {ci[1]:.2f}
+        ''')
