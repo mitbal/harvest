@@ -36,14 +36,12 @@ def plot_candlestick(price_df, volume=False, width=1000, height=300):
         alt.value("#ae1325")
     )
 
+    # brush = alt.selection_interval(value={'y': [20, 40]})
+    interval = alt.selection_interval(encodings=['x'])
+
     base = alt.Chart(price_df).encode(
-        alt.X('date:T',
-            axis=alt.Axis(
-                # format='%m/%Y',
-                labelAngle=-45
-            )
-        ),
-        color=open_close_color
+        alt.X('date:T', scale=alt.Scale(domain=interval)),
+        color=open_close_color,
     )
 
     rule = base.mark_rule().encode(
@@ -60,12 +58,21 @@ def plot_candlestick(price_df, volume=False, width=1000, height=300):
         alt.Y2('close:Q')
     )
 
-    candlestick = (rule + bar).properties(
+    candlestick = alt.layer(rule, bar).properties(
         width=1150,
         height=400
     )
-    
-    return candlestick
+
+    view = alt.Chart(price_df).mark_line().encode(
+        x=alt.X('date:T'),
+        y='volume'
+    ).properties(
+        width=1150,
+        height=50
+    )
+    view = view.add_selection(interval)
+
+    return candlestick & view
 
 
 def plot_pe_distribution(df, pe):
