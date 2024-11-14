@@ -10,6 +10,7 @@ COPY apps ./apps
 COPY harvest ./harvest
 COPY main.py ./main.py
 COPY home.py ./home.py
+COPY add_ga.py ./add_ga.py
 COPY README.md ./README.md
 COPY .streamlit/config.toml ./.streamlit/config.toml
 
