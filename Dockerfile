@@ -2,10 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt install build-essential -y --no-install-recommends
+RUN apt-get update && apt-get install build-essential -y --no-install-recommends
 
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
+RUN pip install -r requirements.txt
 
 COPY data ./data
 COPY apps ./apps
