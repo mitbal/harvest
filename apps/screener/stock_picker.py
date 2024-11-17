@@ -203,8 +203,10 @@ with st.expander('Dividend History', expanded=False):
         st.write(f'{industry_name} PE {industry_pe:.02f}')
 
 with st.expander('Financial Information', expanded=False):
-    metric = st.radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
-    period = st.radio('Select Period', ['quarter', 'annual'], horizontal=True)
+    fin_cols = st.columns(4)
+    period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
+    metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
+    
     fin_chart = hp.plot_financial(fin, period=period, metric=metric)
     st.altair_chart(fin_chart)
 
