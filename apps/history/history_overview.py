@@ -21,13 +21,14 @@ if 'history_df' not in st.session_state:
 
 uploaded_file = st.file_uploader('Choose a file', type='csv')
 if uploaded_file:
-    st.session_state['history_df'] = pd.read_csv(uploaded_file, delimiter=';')
+    st.session_state['history_df'] = pd.read_csv(uploaded_file, delimiter=',', thousands=',')
 
 if st.session_state['history_df'] is None:
     st.stop()
 
 df = st.session_state['history_df'].copy()
-
+df['Date'] = df['Date'].apply(lambda x : datetime.strptime(x, '%d %b %Y'))
+# df['Total Dividend'].astype('int')
 
 ## First section, overall 
 con = st.container(border=True)
