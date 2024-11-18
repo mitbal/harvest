@@ -28,7 +28,6 @@ if st.session_state['history_df'] is None:
 
 df = st.session_state['history_df'].copy()
 df['Date'] = df['Date'].apply(lambda x : datetime.strptime(x, '%d %b %Y'))
-# df['Total Dividend'].astype('int')
 
 ## First section, overall 
 con = st.container(border=True)
@@ -51,13 +50,13 @@ with con:
         cola, colb = st.columns(2)
         with cola:
             first_date = df['Date'].values[-1]
-            st.metric(label='First Transaction Date', value=first_date)
+            st.metric(label='First Transaction Date', value=f'{first_date}')
 
         with colb:
             last_date = df['Date'][0]
-            st.metric(label='Last Transaction Date', value=last_date)
+            st.metric(label='Last Transaction Date', value=f'{last_date}')
 
-        duration = datetime.strptime(last_date, '%Y-%m-%d') - datetime.strptime(first_date, '%Y-%m-%d')
+        duration = last_date - first_date
         years = int(duration.days / 365)
         months = int((duration.days % 365) / 30)
         days = ((duration.days % 365) % 30)
@@ -66,8 +65,7 @@ with con:
     with col2:
         st.write('List of transactions')
 
-        df_display = df[['Date', 'Stock', 'Lot']].copy(deep=True)
-        df_display['Dividend'] = df['Price'].astype('float')
+        df_display = df[['Date', 'Stock', 'Lot', 'Dividend']].copy(deep=True)
         df_display['Total'] = df['Total Dividend'].astype('float')
 
         st.dataframe(df_display, hide_index=True)
@@ -76,8 +74,10 @@ with con:
 con2 = st.container(border=True)
 with con2:
 
-    df['year'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').year)
-    df['month'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').month)
+    # df['year'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').year)
+    df['year'] = df['Date'].apply(lambda x: x.year)
+    df['month'] = df['Date'].apply(lambda x: x.month)
+    # df['month'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').month)
     df_summary = df.groupby('Stock').agg({'Total Dividend': 'sum', 'Date': 'count'}).reset_index()
 
     col1, col2 = st.columns([0.3, 0.7])
@@ -131,13 +131,24 @@ with con3:
     select_second_year = param_cols[1].selectbox('Select Second Year', second_year_param)
     select_month = param_cols[2].selectbox('Select Month', list(calendar.month_name)[1:], 0)
 
-    last_year_df = df[(df['year'] == select_first_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
-    curr_year_df = df[(df['year'] == select_second_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Price', 'Total Dividend']]
+    last_year_df = df[(df['year'] == select_first_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Dividend', 'Total Dividend']]
+    curr_year_df = df[(df['year'] == select_second_year) & (df['month_name'] == select_month)][['Date', 'Stock', 'Lot', 'Dividend', 'Total Dividend']]
 
-    month_cols = st.columns(2)
-    month_cols[0].dataframe(last_year_df, hide_index=True)
-    month_cols[1].dataframe(curr_year_df, hide_index=True)
+    month_cols = st.columns([1, 2, 2])
+    month_cols[1].dataframe(last_year_df, hide_index=True)
+    month_cols[2].dataframe(curr_year_df, hide_index=True)
 
+    mdf = pd.DataFrame({
+        'Year': [select_second_year, select_first_year],
+        'Total Dividend': [curr_year_df['Total Dividend'].sum(), last_year_df['Total Dividend'].sum()]
+    })
+
+    mc = alt.Chart(mdf).mark_bar().encode(
+        x = 'Year:O',
+        y = 'sum(Total Dividend)',
+        color = 'Year:N'
+    )
+    month_cols[0].altair_chart(mc)
 
 ## fourth section, dividend calendar
 con4 = st.container(border=True)
