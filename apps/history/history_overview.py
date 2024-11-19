@@ -70,14 +70,11 @@ with con:
 
         st.dataframe(df_display, hide_index=True)
 
-## Second section, summarization
-con2 = st.container(border=True)
-with con2:
 
-    # df['year'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').year)
+with st.expander('Stock Aggregation', expanded=True):
+
     df['year'] = df['Date'].apply(lambda x: x.year)
     df['month'] = df['Date'].apply(lambda x: x.month)
-    # df['month'] = df['Date'].apply(lambda x: datetime.strptime(x, '%Y-%m-%d').month)
     df_summary = df.groupby('Stock').agg({'Total Dividend': 'sum', 'Date': 'count'}).reset_index()
 
     col1, col2 = st.columns([0.3, 0.7])
@@ -92,10 +89,7 @@ with con2:
         st.altair_chart(bar_plot, use_container_width=True)
 
 
-## Now year on year analysis
-con3 = st.container(border=True)
-with con3:
-
+with st.expander('Year on Year Comparison', expanded=True):
     col1, col2 = st.columns(2)
     with col1:
 
@@ -150,10 +144,8 @@ with con3:
     )
     month_cols[0].altair_chart(mc)
 
-## fourth section, dividend calendar
-con4 = st.container(border=True)
-with con4:
 
+with st.expander('Dividend Calendar', expanded=True):
     div_cols = st.columns(2)
     with div_cols[0]:
         year_list = df['year'].unique()
@@ -177,10 +169,7 @@ with con4:
     st.altair_chart(heatmap_chart)
 
 
-# Section 5, Sector and Industries Analysis
-con5 = st.container(border=True)
-with con5:
-
+with st.expander('Sector and Industry Analysis', expanded=True):
     sectors = {}
     industries = {}
     for s in df['Stock'].unique():
@@ -216,10 +205,7 @@ with con5:
         st.altair_chart(plot_industries, use_container_width=True)
 
 
-# Last section, single stock analysis
-con6 = st.container(border=True)
-with con6:
-
+with st.expander('Single Stock View', expanded=True):
     col1, col2 = st.columns([0.35, 0.65])
     with col1:
         stock_list = np.sort(df['Stock'].unique())
