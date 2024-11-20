@@ -45,3 +45,6 @@ Date;Stock;Lot;Price;Total Dividend
 2024-07-12;IPCC;102;62.39;636378
 2024-07-12;BIRD;101;91;919100
 ```
+
+##### Acknowledgment
+Data provided by Financial Modeling Prep https://financialmodelingprep.com/developer/docs/ 
