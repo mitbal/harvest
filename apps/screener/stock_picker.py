@@ -171,7 +171,7 @@ elif sp_event.selection['point']:
 else:
     st.stop()
 
-# Company profile
+
 with st.expander('Company Profile', expanded=False):
     st.write(cp_df.loc[stock_name, 'description'])
 
@@ -224,14 +224,14 @@ with st.expander('Valuation Analysis', expanded=False):
     
     pe_hist = alt.Chart(daily_df).mark_line().encode(
         x = 'date:T', 
-        y = 'pe'
+        y = alt.Y('pe').scale(zero=False)
     )
     val_cols[1].altair_chart(pe_hist)
 
     with val_cols[2]:
         ci = daily_df['pe'].quantile([.05, .95]).values
         st.markdown(f'''
-            Current PE: {daily_df['close'].values[-1] / eps_ttm:.2f}\n
+            Current PE: {pe_ttm:.2f}\n
             Mean PE (last 3 year): {daily_df['pe'].mean():.2f}\n
             95% Confidence Interval range: {ci[0]:.2f} - {ci[1]:.2f}
         ''')
