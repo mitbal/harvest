@@ -30,7 +30,7 @@ def compute_div_feature(cp_df, div_df):
             print('error', symbol)
             continue
 
-        if len(div) == 0:
+        if df.loc[symbol, 'lastDiv'] == 0:
             continue
         
         div['year'] = [x.year for x in pd.to_datetime(div['date'])]
