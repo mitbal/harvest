@@ -101,7 +101,7 @@ def plot_pe_distribution(df, pe):
     return pes_dist+x_zero
 
 
-def plot_dividend_history(div_df):
+def plot_dividend_history(div_df, fit_model=False, extrapolote=False, n_future_years=0, last_val=0, inc_val=0):
 
     # aggregate to yearly basis for stock that paid interim during the year
     dividend_year_df = div_df.copy()
@@ -130,5 +130,27 @@ def plot_dividend_history(div_df):
         height=450,
         width=600
     )
+
+    if extrapolote:
+        ext_years = list(range(end_year+1, end_year+1+n_future_years))
+        ext_values = [last_val+(i+1)*inc_val for i in range(n_future_years)]
+
+        ext_df = pd.DataFrame({'year': ext_years, 'adjDividend': ext_values})
+        div_bar2 = alt.Chart(ext_df).mark_bar(
+            cornerRadiusTopLeft=5, 
+            cornerRadiusTopRight=5
+        ).encode(
+            alt.X('year:N'),
+            alt.Y('adjDividend')
+        ).properties(
+            height=450,
+            width=600
+        )
+
+        div_bar = div_bar + div_bar2
+
+    if fit_model:
+        regression = div_bar.transform_loess('year', 'adjDividend', bandwidth=0.7).mark_line().encode(color=alt.value('#000000'))
+        div_bar = div_bar + regression
 
     return div_bar
