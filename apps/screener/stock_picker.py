@@ -170,7 +170,7 @@ elif sp_event.selection['point']:
     stock_name = row_idx['Emiten']+'.JK'
 else:
     st.stop()
-
+fin = hd.get_financial_data(stock_name)
 
 with st.expander('Company Profile', expanded=False):
     st.write(cp_df.loc[stock_name, 'description'])
@@ -217,6 +217,18 @@ with st.expander('Price Movement', expanded=False):
 
 with st.expander('Valuation Analysis', expanded=False):
     val_cols = st.columns(3, gap='large')
+
+    sector_name = filtered_df.loc[stock_name, 'sector']
+    industry_name = filtered_df.loc[stock_name, 'industry']
+
+    eps_ttm = float(fin['eps'][:4].sum())
+    pe_ttm = filtered_df.loc[stock_name, 'price']/eps_ttm
+    try:
+        sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
+        industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
+    except Exception:
+        sector_pe = industry_pe = -1
+        print('sector or industry not found')
 
     daily_df['pe'] = daily_df['close'] / eps_ttm
     pe_dist_chart = hp.plot_pe_distribution(daily_df, pe_ttm)
