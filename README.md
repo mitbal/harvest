@@ -3,7 +3,7 @@ Panen Dividen (https://harvest-dividend.up.railway.app/) is a sophisticated anal
 
 If you find this app to be remotely useful and help you on your financial independent journey, please consider donation to support the development.
 
-<img src="https://raw.githubusercontent.com/mitbal/harvest/refs/heads/master/asset/trakteer_icon.png" width="13%"> [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/mitbal)
+<a href="https://trakteer.id/mitbal" target="_blank"><img id="wse-buttons-preview" src="https://cdn.trakteer.id/images/embed/trbtn-red-1.png?date=18-11-2023" height="40" style="border:0px;height:40px;" alt="Trakteer Saya"></a> [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/mitbal)
 
 You can report any bug or post feature request on the github issue
 [![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/mitbal/harvest)](https://github.com/mitbal/harvest/issues) 
