@@ -101,6 +101,15 @@ def plot_pe_distribution(df, pe):
     return pes_dist+x_zero
 
 
+def plot_pe_timeseries(pe_df):
+
+    chart = alt.Chart(pe_df).mark_line().encode(
+        x = 'date:T',
+        y = alt.Y('pe').scale(zero=False)
+    )
+    return chart
+
+
 def plot_dividend_history(div_df, fit_model=False, extrapolote=False, n_future_years=0, last_val=0, inc_val=0):
 
     # aggregate to yearly basis for stock that paid interim during the year
