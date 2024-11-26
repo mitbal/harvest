@@ -27,7 +27,7 @@ if st.session_state['history_df'] is None:
     st.stop()
 
 df = st.session_state['history_df'].copy()
-df['Date'] = df['Date'].apply(lambda x : datetime.strptime(x, '%d %b %Y'))
+df['Date'] = pd.to_datetime(df['Date']).dt.date
 
 ## First section, overall 
 con = st.container(border=True)
