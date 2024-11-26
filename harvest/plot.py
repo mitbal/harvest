@@ -110,7 +110,7 @@ def plot_pe_timeseries(pe_df):
     return chart
 
 
-def plot_dividend_history(div_df, fit_model=False, extrapolote=False, n_future_years=0, last_val=0, inc_val=0):
+def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=0, inc_val=0):
 
     # aggregate to yearly basis for stock that paid interim during the year
     dividend_year_df = div_df.copy()
@@ -157,9 +157,5 @@ def plot_dividend_history(div_df, fit_model=False, extrapolote=False, n_future_y
         )
 
         div_bar = div_bar + div_bar2
-
-    if fit_model:
-        regression = div_bar.transform_loess('year', 'adjDividend', bandwidth=0.7).mark_line().encode(color=alt.value('#000000'))
-        div_bar = div_bar + regression
 
     return div_bar
