@@ -315,18 +315,21 @@ with st.expander('Dividend History', expanded=True):
     if main_event.selection['rows']:
         symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
 
-        st.write('You select: ', symbol)
-
         div_hist_cols = st.columns([3, 10, 5])
         with div_hist_cols[0]:
             st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], hide_index=True)
 
         with div_hist_cols[1]:
             div_df = pd.DataFrame(divs[symbol])
-            div_bar = hp.plot_dividend_history(div_df)
+            stats = hd.calc_div_stats(hd.preprocess_div(div_df))
 
-            regression = div_bar.transform_loess('year', 'adjDividend', bandwidth=0.7).mark_line().encode(color=alt.value('#000000'))
-            st.altair_chart(div_bar + regression)
+            div_bar = hp.plot_dividend_history(div_df,
+                                               extrapolote=True,
+                                               n_future_years=5,
+                                               last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
+                                               inc_val=stats['historical_mean_flat'])
+
+            st.altair_chart(div_bar)
 
         with div_hist_cols[2]:
 
