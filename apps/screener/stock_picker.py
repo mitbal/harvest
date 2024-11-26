@@ -176,31 +176,18 @@ with st.expander('Company Profile', expanded=False):
     st.write(cp_df.loc[stock_name, 'description'])
 
 with st.expander('Dividend History', expanded=False):
-    dividend_history_cols = st.columns([2, 5, 2])
+    dividend_history_cols = st.columns([3, 10, 4])
     sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
-    yearly_dividend_chart = hp.plot_dividend_history(sdf)
-    dividend_history_cols[1].altair_chart(yearly_dividend_chart)
+    stats = hd.calc_div_stats(hd.preprocess_div(sdf))
 
-    fin = hd.get_financial_data(stock_name)
-    with dividend_history_cols[2]:
-        sector_name = filtered_df.loc[stock_name, 'sector']
-        industry_name = filtered_df.loc[stock_name, 'industry']
-
-        eps_ttm = float(fin['eps'][:4].sum())
-        pe_ttm = filtered_df.loc[stock_name, 'price']/eps_ttm
-        try:
-            sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
-            industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
-        except Exception:
-            sector_pe = industry_pe = -1
-            print('sector or industry not found')
-        
-        st.write(f'EPS TTM {eps_ttm}')
-        st.write(f'PE TTM {pe_ttm:.02f}')
-        st.write(f'{sector_name} PE {sector_pe:.02f}')
-        st.write(f'{industry_name} PE {industry_pe:.02f}')
+    yearly_dividend_chart = hp.plot_dividend_history(sdf, 
+                                                     extrapolote=True, 
+                                                     n_future_years=5, 
+                                                     last_val=cp_df.loc[stock_name, 'lastDiv'], 
+                                                     inc_val=stats['historical_mean_flat'])
+    dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
 with st.expander('Financial Information', expanded=False):
     fin_cols = st.columns(4)
