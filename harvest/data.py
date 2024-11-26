@@ -105,3 +105,44 @@ def get_financial_data(stock, period='quarter', api_key=None):
     r = requests.get(url)
     fs = r.json()
     return pd.DataFrame(fs)
+
+
+def preprocess_div(div_df):
+    """
+    Aggregate dividend payment in yearly basis (in case there is/are one or more interim)
+    and fill in the year where it does not pay dividend with 0
+    """
+    div_year_df = div_df.copy()
+    div_year_df['year'] = div_df.apply(lambda x: int(x['date'].split('-')[0]), axis=1)
+    div_year_df = div_year_df.groupby('year')['adjDividend'].sum().to_frame().reset_index()
+    
+    start_year = div_year_df.loc[0, 'year']
+    end_year = div_year_df.loc[len(div_year_df)-1, 'year']
+
+    years = list(range(start_year, end_year + 1))
+    df_temp = pd.DataFrame({'year': years, 'value': [0]*len(years)})
+    full_div_df = pd.merge(df_temp, div_year_df, on='year', how='left')
+    full_div_df = full_div_df.fillna(0)
+
+    return full_div_df
+
+
+def calc_div_stats(div_df):
+
+    stats = {}
+    
+    div_df['inc_flat'] = div_df['adjDividend'] - div_df['adjDividend'].shift(1)
+    div_df['inc_pct'] = div_df['inc_flat'] / div_df['adjDividend'].shift(1) * 100
+
+    stats['historical_mean_flat'] = div_df['inc_flat'].mean()
+    stats['div_inc_2y_mean_flat'] = div_df['inc_flat'][-2:].mean()
+    stats['div_inc_5y_mean_flat'] = div_df['inc_flat'][-5:].mean()
+    stats['exponential_weighted_mean_flat'] = div_df['inc_flat'].ewm(com=0.5).mean().mean()
+
+    stats['historical_mean_pct'] = div_df['inc_pct'].mean()
+    stats['div_inc_2y_mean_pct'] = div_df['inc_pct'][-2:].mean()
+    stats['div_inc_5y_mean_pct'] = div_df['inc_pct'][-5:].mean()
+    stats['exponential_weighted_mean_pct'] = div_df['inc_pct'].ewm(com=0.5).mean().mean()
+
+    return stats
+
