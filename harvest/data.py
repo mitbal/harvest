@@ -146,7 +146,7 @@ def calc_div_stats(div_df):
     stats['div_inc_5y_mean_pct'] = div_df['inc_pct'][-5:].mean()
     stats['exponential_weighted_mean_pct'] = div_df['inc_pct'].ewm(com=0.5).mean().mean()
 
-    stats['num_positive_year'] = np.sum(div_df['inc'] > 0) + 1 #the first year is considered positive
+    stats['num_positive_year'] = np.sum(div_df['inc_flat'] > 0) + 1 #the first year is considered positive
     stats['num_dividend_year'] = len(div_df)
     stats['pct_positive_year'] = stats['num_positive_year'] / stats['num_dividend_year'] * 100
 
