@@ -152,3 +152,18 @@ def calc_div_stats(div_df):
 
     return stats
 
+
+def calc_pe_history(price_df, fin_df):
+
+    pdf = price_df[['date', 'close']]
+    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf = pdf.sort_values('date')
+
+    edf = fin_df[['date', 'eps']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
+    edf['date'] = pd.to_datetime(edf['date'])
+    edf = edf.sort_values('date')
+
+    pe_df = pd.merge_asof(pdf, edf, on='date', direction='backward')
+    pe_df['pe'] = pe_df['close'] / pe_df['eps']
+
+    return pe_df
