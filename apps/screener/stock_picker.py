@@ -217,20 +217,17 @@ with st.expander('Valuation Analysis', expanded=False):
         sector_pe = industry_pe = -1
         print('sector or industry not found')
 
-    daily_df['pe'] = daily_df['close'] / eps_ttm
-    pe_dist_chart = hp.plot_pe_distribution(daily_df, pe_ttm)
+    pe_df = hd.calc_pe_history(daily_df, fin)
+    pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart)
-    
-    pe_hist = alt.Chart(daily_df).mark_line().encode(
-        x = 'date:T', 
-        y = alt.Y('pe').scale(zero=False)
-    )
-    val_cols[1].altair_chart(pe_hist)
+
+    pe_ts_chart = hp.plot_pe_timeseries(pe_df)
+    val_cols[1].altair_chart(pe_ts_chart)
 
     with val_cols[2]:
-        ci = daily_df['pe'].quantile([.05, .95]).values
+        ci = pe_df['pe'].quantile([.05, .95]).values
         st.markdown(f'''
             Current PE: {pe_ttm:.2f}\n
-            Mean PE (last 3 year): {daily_df['pe'].mean():.2f}\n
+            Mean PE (last 3 year): {pe_df['pe'].mean():.2f}\n
             95% Confidence Interval range: {ci[0]:.2f} - {ci[1]:.2f}
         ''')
