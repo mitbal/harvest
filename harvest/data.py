@@ -4,7 +4,7 @@ import requests
 
 import numpy as np
 import pandas as pd
-
+import vectorbt as vbt
 
 def get_all_idx_stocks(api_key=None):
     
@@ -167,3 +167,9 @@ def calc_pe_history(price_df, fin_df):
     pe_df['pe'] = pe_df['close'] / pe_df['eps']
 
     return pe_df
+
+
+def make_labels(price_df, threshold):
+
+    labels = vbt.LEXLB.run(price_df, threshold)
+    return labels
