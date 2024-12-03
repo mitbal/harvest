@@ -155,7 +155,7 @@ def calc_div_stats(div_df):
 
 def calc_pe_history(price_df, fin_df):
 
-    pdf = price_df[['date', 'close']]
+    pdf = price_df[['date', 'close']].copy()
     pdf['date'] = pd.to_datetime(pdf['date'])
     pdf = pdf.sort_values('date')
 
