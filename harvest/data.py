@@ -1,6 +1,7 @@
 import os
 import datetime
 import requests
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -167,6 +168,27 @@ def calc_pe_history(price_df, fin_df):
     pe_df['pe'] = pe_df['close'] / pe_df['eps']
 
     return pe_df
+
+
+def calc_pe_stats(pe_df):
+    
+    stats = {}
+
+    last_date = pe_df['date'].max()
+    periods = [2, 3, 10]
+
+    for p in periods:
+        start_date = last_date - timedelta(days=p*365)
+        pe_period = pe_df[pe_df['date'] > start_date].reset_index(drop=True).copy()
+
+        mean = pe_period['pe'].mean()
+        ci = pe_period['pe'].quantile([.05, 0.95]).values
+
+        stats[f'last_{p}y_mean'] = mean
+        stats[f'last_{p}y_min_ci'] = ci[0]
+        stats[f'last_{p}y_max_ci'] = ci[1]
+
+    return stats
 
 
 def make_labels(price_df, threshold):
