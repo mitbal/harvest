@@ -159,3 +159,22 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
         div_bar = div_bar + div_bar2
 
     return div_bar
+
+
+def plot_labels(price_df, label_df):
+    
+    price_chart = alt.Chart(price_df).mark_line().encode(
+        x='date:T',
+        y='close'
+    )
+
+    buy_chart = alt.Chart(label_df).mark_rule().encode(
+        x='date:T',
+        color=alt.value('green')
+    )
+    sell_chart = alt.Chart(label_df).mark_rule().encode(
+        x='sell_date:T',
+        color=alt.value('red')
+    )
+
+    return price_chart + buy_chart + sell_chart
