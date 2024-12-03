@@ -171,5 +171,20 @@ def calc_pe_history(price_df, fin_df):
 
 def make_labels(price_df, threshold):
 
-    labels = vbt.LEXLB.run(price_df, threshold)
+    labels = vbt.LEXLB.run(price_df, threshold, threshold).labels
     return labels
+
+def calc_labels_stats(price_df, labels):
+    
+    buy = price_df[np.where(labels == -1, True, False)]
+    sell = price_df[np.where(labels == 1, True, False)]
+
+    buy['date'] = pd.to_datetime(buy['date'])
+    sell['date'] = pd.to_datetime(sell['date'])
+    sell['sell_date'] = sell['date']
+
+    trades = pd.merge_asof(buy[['date', 'close']], sell[['date', 'close', 'sell_date']], on='date', direction='forward', suffixes=['_buy', '_sell'])
+    trades['gain'] = (trades['close_sell'] / trades['close_buy'])*100 - 100
+    trades['duration'] = trades['sell_date'] - trades['date']
+
+    return trades
