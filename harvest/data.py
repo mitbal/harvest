@@ -1,7 +1,6 @@
 import os
 import datetime
 import requests
-from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -178,7 +177,7 @@ def calc_pe_stats(pe_df):
     periods = [2, 3, 10]
 
     for p in periods:
-        start_date = last_date - timedelta(days=p*365)
+        start_date = last_date - datetime.timedelta(days=p*365)
         pe_period = pe_df[pe_df['date'] > start_date].reset_index(drop=True).copy()
 
         mean = pe_period['pe'].mean()
