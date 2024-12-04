@@ -7,6 +7,7 @@ seaborn==0.13.2
 st_pages==0.5.0
 pendulum==3.0.0
 yfinance==0.2.40
+vectorbt==0.26.2
 streamlit==1.36.0
 matplotlib==3.9.1
 scikit_learn==1.5.1
