@@ -159,12 +159,15 @@ def calc_pe_history(price_df, fin_df):
     pdf['date'] = pd.to_datetime(pdf['date'])
     pdf = pdf.sort_values('date')
 
-    edf = fin_df[['date', 'eps']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
+    usdidr = 15_836
+    fin_df['converted_eps'] = fin_df.apply(lambda x: x['eps']*usdidr if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+
+    edf = fin_df[['date', 'converted_eps']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     edf['date'] = pd.to_datetime(edf['date'])
     edf = edf.sort_values('date')
 
     pe_df = pd.merge_asof(pdf, edf, on='date', direction='backward')
-    pe_df['pe'] = pe_df['close'] / pe_df['eps']
+    pe_df['pe'] = pe_df['close'] / pe_df['converted_eps']
 
     return pe_df
 
