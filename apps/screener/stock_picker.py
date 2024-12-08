@@ -189,6 +189,14 @@ with st.expander('Dividend History', expanded=False):
                                                      inc_val=stats['historical_mean_flat'])
     dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
+    with dividend_history_cols[2]:
+        last_div = filtered_df.loc[stock.name, 'lastDiv']
+        curr_price = filtered_df.loc[stock.name, 'price']
+        next_div = last_div + stats['historical_mean_flat']
+        next_yield = next_div / curr_price * 100
+        st.write(f'Next year dividend payment: {next_div:0.2f} IDR')
+        st.write(f'Yield on current price: {next_yield:0.2f}%')
+
 with st.expander('Financial Information', expanded=False):
     fin_cols = st.columns(4)
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
