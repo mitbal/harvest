@@ -165,7 +165,7 @@ def plot_labels(price_df, label_df):
     
     price_chart = alt.Chart(price_df).mark_line().encode(
         x='date:T',
-        y='close'
+        y=alt.Y('close').scale(zero=False)
     )
 
     buy_chart = alt.Chart(label_df).mark_rule().encode(
