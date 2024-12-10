@@ -177,4 +177,20 @@ def plot_labels(price_df, label_df):
         color=alt.value('red')
     )
 
-    return price_chart + buy_chart + sell_chart
+    return (price_chart + buy_chart + sell_chart).properties(
+        height=450,
+        width=1000
+    ).interactive()
+
+
+def plot_rsi(rsi_df):
+
+    chart = alt.Chart(rsi_df).mark_line().encode(
+        x='date:T',
+        y='rsi'
+    ).properties(
+        height=100,
+        width=1000
+    ).interactive()
+
+    return chart
