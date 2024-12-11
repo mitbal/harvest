@@ -194,3 +194,21 @@ def plot_rsi(rsi_df):
     ).interactive()
 
     return chart
+
+
+def plot_bbands(bband_df):
+    
+    cols = ('BBL', 'BBM', 'BBU')
+    bband_cols = [x for x in bband_df.columns.values.tolist() if x.startswith(cols)]
+
+    m = bband_df[['date']+bband_cols].melt('date')
+    c = alt.Chart(m).mark_line().encode(
+        x='date:T',
+        y='value',
+        color='variable'
+    ).properties(
+        height=450,
+        width=1000
+    ).interactive()
+
+    return c
