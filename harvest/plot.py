@@ -212,3 +212,21 @@ def plot_bbands(bband_df):
     ).interactive()
 
     return c
+
+
+def plot_supertrend(st_df):
+
+    cols = ('SUPERTl', 'SUPERTs')
+    bband_cols = [x for x in st_df.columns.values.tolist() if x.startswith(cols)]
+
+    m = st_df[['date']+bband_cols].melt('date')
+    c = alt.Chart(m).mark_line().encode(
+        x='date:T',
+        y='value',
+        color=alt.Color('variable').scale(range=('green', 'red'))
+    ).properties(
+        height=450,
+        width=1000
+    ).interactive()
+
+    return c
