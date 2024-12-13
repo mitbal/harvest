@@ -211,8 +211,8 @@ def make_labels(price_df, threshold):
 
 def calc_labels_stats(price_df, labels):
     
-    buy = price_df[np.where(labels == -1, True, False)]
-    sell = price_df[np.where(labels == 1, True, False)]
+    buy = price_df[np.where(labels == -1, True, False)].copy()
+    sell = price_df[np.where(labels == 1, True, False)].copy()
 
     buy['date'] = pd.to_datetime(buy['date'])
     sell['date'] = pd.to_datetime(sell['date'])
