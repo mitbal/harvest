@@ -2,10 +2,26 @@ import pickle
 import logging
 
 from tqdm import tqdm
+from prefect import flow, task
 
 import harvest.data as hd
 
+@flow
+def download_all():
 
+    idxs = hd.get_all_idx_stocks()
+    stock_list = idxs['symbol'].to_list()
+    
+    cp_df = hd.get_company_profile(stock_list)
+    cp_df.to_csv('data/company_profiles.csv', index=False)
+
+    prices = download_prices(stock_list)
+
+    financials = download_financials(stock_list)
+
+    dividends = download_dividends(stock_list)
+
+@task
 def download_prices(stock_list):
 
     prices = {}
@@ -17,7 +33,7 @@ def download_prices(stock_list):
 
     return prices
 
-
+@task
 def download_financials(stock_list):
     
     financials = {}
@@ -29,7 +45,7 @@ def download_financials(stock_list):
 
     return financials
 
-
+@task
 def download_dividends(stock_list):
 
     dividends = hd.get_dividend_history(stock_list)
@@ -42,13 +58,4 @@ def download_dividends(stock_list):
 
 if __name__ == '__main__':
     
-    idxs = hd.get_all_idx_stocks()
-    stock_list = idxs['symbol'].to_list()
-    
-    cp_df = hd.get_company_profile(stock_list)
-
-    prices = download_prices(stock_list)
-
-    financials = download_financials(stock_list)
-
-    dividends = download_dividends(stock_list)
+    download_all()
