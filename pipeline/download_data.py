@@ -1,8 +1,9 @@
 import pickle
-import logging
+from datetime import timedelta
 
 from tqdm import tqdm
 from prefect import flow, task
+from prefect.cache_policies import INPUTS
 
 import harvest.data as hd
 
@@ -13,7 +14,7 @@ def download_all(start_from):
     stock_list = idxs['symbol'].to_list()
     
     cp_df = hd.get_company_profile(stock_list)
-    cp_df.to_csv('data/company_profiles.csv', index=False)
+    cp_df.to_csv('data/company_profiles.csv')
 
     prices = download_prices(stock_list, start_from=start_from)
     with open('data/prices.pkl', 'wb') as f:
@@ -28,14 +29,22 @@ def download_prices(stock_list, start_from=None):
 
     prices = {}
     for stock in tqdm(stock_list):
-        prices[stock] = download_single_price(stock, start_from)
+        future = download_single_price.submit(stock, start_from)
+        result = future.result()
+        if result is not None:
+            prices[stock] = result
 
     return prices
 
-@task
+@task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
 def download_single_price(stock, start_from):
     print(f'download {stock}')
-    return hd.get_daily_stock_price(stock, start_from=start_from)
+    try:
+        price = hd.get_daily_stock_price(stock, start_from=start_from)
+        return price
+    except Exception as e:
+        print(f'Error downloading {stock}: {e}')
+        return None
 
 @task
 def download_financials(stock_list):
