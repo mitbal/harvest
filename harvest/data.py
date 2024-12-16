@@ -35,11 +35,14 @@ def get_company_profile(stocks, api_key=None):
     return cp_df
 
 
-def get_daily_stock_price(stock, api_key=None, n_days=365):
+def get_daily_stock_price(stock, api_key=None, n_days=365, start_from=None):
     if api_key is None:
         api_key = os.environ['FMP_API_KEY']
 
-    start_date = (datetime.datetime.today() - datetime.timedelta(days=n_days)).strftime('%Y-%m-%d')
+    if start_from is None:
+        start_date = (datetime.datetime.today() - datetime.timedelta(days=n_days)).strftime('%Y-%m-%d')
+    else:
+        start_date = start_from
     url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{stock}?apikey={api_key}&from={start_date}'
     r = requests.get(url)
     intraday  = r.json()
