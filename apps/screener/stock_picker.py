@@ -216,8 +216,6 @@ with st.expander('Valuation Analysis', expanded=False):
     sector_name = filtered_df.loc[stock_name, 'sector']
     industry_name = filtered_df.loc[stock_name, 'industry']
 
-    eps_ttm = float(fin['eps'][:4].sum())
-    pe_ttm = filtered_df.loc[stock_name, 'price']/eps_ttm
     try:
         sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
         industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
@@ -226,6 +224,7 @@ with st.expander('Valuation Analysis', expanded=False):
         print('sector or industry not found')
 
     pe_df = hd.calc_pe_history(daily_df, fin)
+    pe_ttm = pe_df['pe'].values[-1]
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart)
 
