@@ -228,30 +228,31 @@ def calc_labels_stats(price_df, labels):
     return trades
 
 
-def calc_valuation(price_dict, fin_dict):
+def calc_valuation(stock_list, price_dict, fin_dict):
     
     pe_dict = {}
-    for s in price_dict.keys():
-        pe_dict[s] = calc_pe_history(price_dict[s], fin_dict[s])
-
     pe_stats_dict = {}
-    for s in price_dict.keys():
-        pe_stats_dict[s] = calc_pe_stats(pe_dict[s])
+    rev_growth_dict = {}
+    for stock in stock_list:
+        price_df = price_dict[stock]
+        fin_df = fin_dict[stock]
 
+        if len(price_df) > 0 and len(fin_df) > 0:
+            pe_dict[stock] = calc_pe_history(price_df, fin_df)
+            pe_stats_dict[stock] = calc_pe_stats(pe_dict[stock])
+
+            rev_growth = calc_growth_stats(fin_dict[stock], 'revenue')
+            rev_growth_dict[stock] = rev_growth
+    
     pe_stats_df = pd.DataFrame(pe_stats_dict).transpose()
-    current_pe = [pe_dict[s]['pe'].values[-1] for s in pe_dict.keys()]
+    rev_growth_df = pd.DataFrame(rev_growth_dict).transpose()
+
     watchlist = pe_stats_df.copy()
-    watchlist['current_pe'] = current_pe
-    watchlist['target'] = watchlist['last_2y_mean'] / watchlist['current_pe'] - 1
+    proc_stock_list = list(pe_dict.keys())
+    watchlist['current_pe'] = [pe_dict[s]['pe'].values[-1] for s in proc_stock_list]
+    watchlist['target'] = (watchlist['last_2y_mean'] / watchlist['current_pe']) - 1
     watchlist['risk'] = 1 - watchlist['last_2y_min_ci'] / watchlist['current_pe']
     watchlist['upside'] = watchlist['last_2y_max_ci'] / watchlist['current_pe'] - 1
 
-    rev_growth_dict = {}
-    for stock in price_dict.keys():
-        rev_growth = calc_growth_stats(fin_dict[stock], 'revenue')
-        rev_growth_dict[stock] = rev_growth
-
-    rev_growth_df = pd.DataFrame(rev_growth_dict).transpose()
-    sl = rev_growth_df.join(watchlist)
-
-    return sl
+    val_df = rev_growth_df.join(watchlist)
+    return val_df
