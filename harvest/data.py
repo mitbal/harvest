@@ -81,7 +81,7 @@ def get_dividend_history(stocks, api_key=None):
 
     divs = []
     for i in range(int(len(stocks)/5)+1):
-        stock_list = [s+'.JK' for s in stocks[i*5:(i+1)*5]]
+        stock_list = [s for s in stocks[i*5:(i+1)*5]]
         stocks_param = ','.join(stock_list)
         dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stocks_param}?apikey={api_key}'
         dr = requests.get(dividend_history_url)
@@ -96,7 +96,7 @@ def get_dividend_history(stocks, api_key=None):
     
     div_df = pd.concat([pd.DataFrame(div) for div in divs])
     div_df.set_index('symbol', inplace=True)
-    divs = {x[:-3]: y for x, y in zip(div_df.index, div_df['historical'])}
+    divs = {x: y for x, y in zip(div_df.index, div_df['historical'])}
 
     return divs
 
