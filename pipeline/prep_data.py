@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 import harvest.data as hd
 
-def calc_all():
+def compute_all():
 
     cp = pd.read_csv('data/company_profiles.csv')
     stock_list = cp[cp['isActivelyTrading']]['symbol'].tolist()
@@ -15,6 +15,16 @@ def calc_all():
     
     with open('data/financials.pkl', 'rb') as f:
         fin_dict = pickle.load(f)
+
+    feat_dict = compute_features(stock_list, price_dict, fin_dict)
+    with open('data/features.pkl', 'wb') as f:
+        pickle.dump(feat_dict, f)
+
+    val_table = compute_valuation(stock_list, price_dict, fin_dict)
+    val_table.to_csv('data/valuation.csv', index_label='stock')
+
+
+def compute_features(stock_list, price_dict, fin_dict):
 
     feat_dict = {}
     for stock in tqdm(stock_list):
@@ -40,9 +50,12 @@ def calc_all():
         except Exception as e:
             print(f'error {stock}: {e}')
 
-    with open('data/features.pkl', 'wb') as f:
-        pickle.dump(feat_dict, f)
+
+def compute_valuation(stock_list, price_dict, fin_dict):
+
+    val_table = hd.calc_valuation(stock_list, price_dict, fin_dict)
+    return val_table
 
 if __name__ == '__main__':
 
-    calc_all()
+    compute_all()
