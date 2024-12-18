@@ -113,8 +113,8 @@ def get_company_profile_data(porto):
 
 @st.cache_data
 def get_dividend_data(porto):
-
-    return hd.get_dividend_history(porto['Symbol'].to_list())
+    stock_list = [x+'.JK' for x in porto['Symbol']]
+    return hd.get_dividend_history(stock_list)
 
 
 if st.session_state['porto_df'] is None:
@@ -136,7 +136,7 @@ incs = []
 years = []
 for symbol in df['Symbol']:
 
-    div = pd.DataFrame(divs[symbol])
+    div = pd.DataFrame(divs[symbol+'.JK'])
     if len(div) == 0:
         incs += [0]
         years += [0]
@@ -255,7 +255,7 @@ with st.container(border=True):
         for index, row in df.iterrows():
 
             r = row.to_dict()
-            stock = r['Symbol']
+            stock = r['Symbol']+'.JK'
             if len(divs[stock]) == 0:
                 continue
             div_df = pd.DataFrame(divs[stock])
@@ -318,13 +318,13 @@ with st.expander('Dividend History', expanded=True):
     
     if main_event.selection['rows']:
         symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
+        div_df = pd.DataFrame(divs[symbol+'.JK'])
 
         div_hist_cols = st.columns([3, 10, 5])
         with div_hist_cols[0]:
-            st.dataframe(pd.DataFrame(divs[symbol])[['date', 'adjDividend']], hide_index=True)
+            st.dataframe(div_df[['date', 'adjDividend']], hide_index=True)
 
         with div_hist_cols[1]:
-            div_df = pd.DataFrame(divs[symbol])
             stats = hd.calc_div_stats(hd.preprocess_div(div_df))
 
             div_bar = hp.plot_dividend_history(div_df,
