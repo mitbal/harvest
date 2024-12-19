@@ -1,8 +1,13 @@
+import time
+
 import pickle
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from sklearn.ensemble import GradientBoostingClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+
 
 def train_all():
 
@@ -17,12 +22,13 @@ def train_all():
     with open('data/features.pkl', 'rb') as f:
         feat_dict = pickle.load(f)
 
-    for stock in feat_dict.keys():
+    feat_stats = pd.read_csv('data/feat_stats.csv')
+    stock_list = feat_stats[(feat_stats['avg_pe'] > 0) & (feat_stats['avg_value'] > 10_000_000_000)]['stock'].values.tolist()
+
+    for stock in stock_list:
         feat_df = feat_dict[stock]
         train_df = feat_df[train_start_date:train_end_date]
         full_train = pd.concat([full_train, train_df])
-
-    gbc = GradientBoostingClassifier()
 
     X = full_train.loc[:, full_train.columns != 'flag'].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
     y = full_train['flag']
@@ -31,10 +37,26 @@ def train_all():
         return 20 if x in [-1, 1] else 1
     weights = [get_weight(x) for x in y]
 
-    gbc.fit(X, y, sample_weight=weights)
+    models_dict = {
+        'gbc': GradientBoostingClassifier(),
+        # 'xgb': XGBClassifier(),
+        'lgbm': LGBMClassifier()
+    }
+    for model_name, model in models_dict.items():
+        model = train_single(model, X, y, weights)
+        with open(f'data/{model_name}.pkl', 'wb') as f:
+            pickle.dump(model, f)
 
-    with open('data/gbc.pkl', 'wb') as f:
-        pickle.dump(gbc, f)
+
+def train_single(model, X, y, sample_weights):
+    print(f'Start training {model}')
+    start_time = time.time()
+    model.fit(X, y, sample_weight=sample_weights)
+    end_time = time.time()
+
+    print(f'Total training time: {end_time - start_time}')
+
+    return model
 
 if __name__ == '__main__':
 
