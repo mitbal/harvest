@@ -14,26 +14,38 @@ def eval_all():
     with open('data/features.pkl', 'rb') as f:
         feat_dict = pickle.load(f)
     
-    # with open('data/lgbm.pkl', 'rb') as f:
-    with open('data/gbc.pkl', 'rb') as f:
-        gbc = pickle.load(f)
-    
+    model_dict = {
+        'gbc': 'data/gbc.pkl',
+        'lgbm': 'data/lgbm.pkl'
+    }
+
     test_start_date = '2024-01-01'
     test_end_date = '2024-12-31'
-
     feat_stats = pd.read_csv('data/feat_stats.csv')
     stock_list = feat_stats[(feat_stats['avg_pe'] > 0) & (feat_stats['avg_value'] > 10_000_000_000)]['stock'].values.tolist()
+    for model_name, model_path in model_dict.items():
+
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
+
+        ret_dict = eval_single_model(model, feat_dict, stock_list, test_start_date, test_end_date)
+        
+        with open(f'data/return_{model_name}.pkl', 'wb') as f:
+            pickle.dump(ret_dict, f)
+
+
+def eval_single_model(model, feat_dict, stock_list, start_date, end_date):
+    print(f'evaluating {model}...')
 
     ret_dict = {}
     for stock in tqdm(stock_list):
         feat_df = feat_dict[stock]
-        test_df = feat_df[test_start_date:test_end_date]
+        test_df = feat_df[start_date:end_date]
         
-        stats = eval_single_stock(gbc, test_df)
+        stats = eval_single_stock(model, test_df)
         ret_dict[stock] = stats
-    
-    with open('data/return_gbm.pkl', 'wb') as f:
-        pickle.dump(ret_dict, f)
+        print(f'{stock} alpha {stats["real_alpha"]:.2f}')
+    return ret_dict
 
 
 def eval_single_stock(model, test_df):
