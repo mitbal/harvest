@@ -256,3 +256,10 @@ def calc_valuation(stock_list, price_dict, fin_dict):
 
     val_df = rev_growth_df.join(watchlist)
     return val_df
+
+
+def calc_return(price, entry, exits):
+    
+    pf = vbt.Portfolio.from_signals(price, entries=entry, exits=exits, freq='D')
+    stats = pf.stats()
+    return stats
