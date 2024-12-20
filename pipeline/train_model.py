@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
+from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import GradientBoostingClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
@@ -32,18 +33,27 @@ def train_all():
 
     X = full_train.loc[:, full_train.columns != 'flag'].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
     y = full_train['flag']
+    y_label = ['buy' if x == -1 else 'sell' if x == 1 else 'hold' for x in y]
+
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y_label)
 
     def get_weight(x):
-        return 20 if x in [-1, 1] else 1
+        return 25 if x in [-1, 1] else 1
     weights = [get_weight(x) for x in y]
 
     models_dict = {
-        'gbc': GradientBoostingClassifier(),
-        # 'xgb': XGBClassifier(),
-        'lgbm': LGBMClassifier()
+        'xgb': XGBClassifier(
+            learning_rate=0.1,
+            n_estimators=1000,
+            max_depth=5,
+            min_child_weight=2),
+        'lgbm': LGBMClassifier(
+            num_iterations=1000
+        )
     }
     for model_name, model in models_dict.items():
-        model = train_single(model, X, y, weights)
+        model = train_single(model, X, y_encoded, weights)
         with open(f'data/{model_name}.pkl', 'wb') as f:
             pickle.dump(model, f)
 
