@@ -21,8 +21,12 @@ def download_all(start_from):
         pickle.dump(prices, f)
 
     financials = download_financials(stock_list)
+    with open('data/financials.pkl', 'wb') as f:
+        pickle.dump(financials, f)
 
     dividends = download_dividends(stock_list)
+    with open('data/dividends.pkl', 'wb') as f:
+        pickle.dump(dividends, f)
 
 @flow
 def download_prices(stock_list, start_from=None):
@@ -38,33 +42,37 @@ def download_prices(stock_list, start_from=None):
 
 @task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
 def download_single_price(stock, start_from):
-    print(f'download {stock}')
+    print(f'download price {stock}')
     try:
         price = hd.get_daily_stock_price(stock, start_from=start_from)
         return price
     except Exception as e:
-        print(f'Error downloading {stock}: {e}')
+        print(f'Error downloading price {stock}: {e}')
         return None
 
-@task
+@flow
 def download_financials(stock_list):
     
     financials = {}
     for stock in tqdm(stock_list):
-        financials[stock] = hd.get_financial_data(stock, period='quarter')
-
-    with open('data/financials.pkl', 'wb') as f:
-        pickle.dump(financials, f)
+        financials[stock] = download_single_fin(stock)
 
     return financials
+
+@task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
+def download_single_fin(stock):
+    print(f'download financial report {stock}')
+    try:
+        fin = hd.get_financial_data(stock, period='quarter')
+        return fin
+    except Exception as e:
+        print(f'Error downloading financial report {stock}: {e}')
+        return None
 
 @task
 def download_dividends(stock_list):
 
     dividends = hd.get_dividend_history(stock_list)
-
-    with open('data/dividends.pkl', 'wb') as f:
-        pickle.dump(dividends, f)
 
     return dividends
 
