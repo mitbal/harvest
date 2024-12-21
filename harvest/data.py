@@ -258,8 +258,7 @@ def calc_valuation(stock_list, price_dict, fin_dict):
     return val_df
 
 
-def calc_return(price, entry, exits):
+def calc_return(price, entry, exits, sl_stop=None, tp_stop=None):
     
-    pf = vbt.Portfolio.from_signals(price, entries=entry, exits=exits, freq='D')
-    stats = pf.stats()
-    return stats
+    pf = vbt.Portfolio.from_signals(price, entries=entry, exits=exits, freq='D', sl_stop=sl_stop, tp_stop=tp_stop)
+    return pf
