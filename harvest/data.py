@@ -219,15 +219,18 @@ def calc_growth_stats(fin_df, metric='revenue'):
     
     return stats
 
+
 def make_labels(price_df, threshold):
 
     labels = vbt.LEXLB.run(price_df, threshold, threshold).labels
+    labels = ['buy' if x == -1 else 'sell' if x == 1 else 'hold' for x in labels]
     return labels
+
 
 def calc_labels_stats(price_df, labels):
     
-    buy = price_df[np.where(labels == -1, True, False)].copy()
-    sell = price_df[np.where(labels == 1, True, False)].copy()
+    buy = price_df[np.where(labels == 'buy', True, False)].copy()
+    sell = price_df[np.where(labels == 'sell', True, False)].copy()
 
     buy['date'] = pd.to_datetime(buy['date'])
     sell['date'] = pd.to_datetime(sell['date'])
