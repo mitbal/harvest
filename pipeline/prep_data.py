@@ -75,7 +75,7 @@ def compute_feature_stats(feat_dict):
         stats['count_entry_labels'] = (feat_df['trade_signal'] == 'buy').sum()
         stats['avg_value'] = (feat_df['volume']*feat_df['close']).mean()
         stats['avg_pe'] = feat_df['pe'].mean()
-        stats['avg_daily_return'] = feat_df['pct_change'].mean()
+        stats['avg_daily_return'] = feat_df['daily_return'].mean()
 
         stats_dict[stock] = stats
     
@@ -91,18 +91,14 @@ def compute_labels(stock_list, price_dict):
 
         # buy sell flag based on local minima and maxima
         labels = hd.make_labels(prices['close'], threshold=0.15)
-        y_label = ['buy' if x == -1 else 'sell' if x == 1 else 'hold' for x in labels]
-        label_df = labels.to_frame()
-        label_df.columns = ['flag']
-        label_df['trade_signal'] = y_label
+        label_df = prices[['close']].copy()
+        label_df['trade_signal'] = labels
 
         # day trading signal, buy today at close price and sell tomorrow
-        label_df['pct_change'] = (prices['close'] / prices['close'].shift(1) - 1) * 100
-        
-        # buy signal if within five days, there are opportunity to gain at least 5%
-        
+        label_df['pct_change'] = (label_df['close'] / label_df['close'].shift(1) - 1) * 100
+        label_df['daily_return'] = label_df['pct_change'].shift(-1)
 
-        labels_dict[stock] = label_df[['trade_signal', 'pct_change']]
+        labels_dict[stock] = label_df[['trade_signal', 'daily_return']]
 
     return labels_dict
 
