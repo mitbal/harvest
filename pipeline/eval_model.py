@@ -3,9 +3,6 @@ import pickle
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-import vectorbt as vbt
-
-from sklearn.ensemble import GradientBoostingClassifier
 
 import harvest.data as hd
 
@@ -57,17 +54,19 @@ def eval_single_model(model, feat_dict, stock_list, start_date, end_date):
 
 def eval_single_stock(model, test_df):
 
-    X = test_df.loc[:, test_df.columns != 'flag'].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
+    X = test_df.loc[:, ~test_df.columns.isin(['trade_signal', 'daily_return'])].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
     pred = model.predict(X) - 1
 
     entry = (pred == -1)
     exits = (pred == 1)
-    model_stats = hd.calc_return(test_df['close'], entry, exits)
+    pf = hd.calc_return(test_df['close'], entry, exits)
+    model_stats = pf.stats()
     model_stats['real_alpha'] = model_stats['Total Return [%]'] - model_stats['Benchmark Return [%]']
 
-    entry = (test_df['flag'] == -1)
-    exits = (test_df['flag'] == 1)
-    ideal_stats = hd.calc_return(test_df['close'], entry, exits)
+    entry = (test_df['trade_signal'] == 'buy')
+    exits = (test_df['trade_signal'] == 'sell')
+    pf = hd.calc_return(test_df['close'], entry, exits)
+    ideal_stats = pf.stats()
 
     model_stats['ideal_alpha_diff'] = ideal_stats['Total Return [%]'] - model_stats['Total Return [%]']
     return model_stats
