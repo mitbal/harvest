@@ -95,10 +95,11 @@ def compute_labels(stock_list, price_dict):
         label_df['trade_signal'] = labels
 
         # day trading signal, buy today at close price and sell tomorrow
-        label_df['pct_change'] = (label_df['close'] / label_df['close'].shift(1) - 1) * 100
-        label_df['daily_return'] = label_df['pct_change'].shift(-1)
+        label_df['return_1d'] = label_df['close'].pct_change(-1).shift(-1) * 100
+        label_df['return_5d'] = label_df['close'].pct_change(-5).shift(-5) * 100
+        label_df['return_20d'] = label_df['close'].pct_change(-20).shift(-20) * 100
 
-        labels_dict[stock] = label_df[['trade_signal', 'daily_return']]
+        labels_dict[stock] = label_df[['trade_signal', 'return_1d', 'return_5d', 'return_20d']]
 
     return labels_dict
 
