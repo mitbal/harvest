@@ -1,0 +1,26 @@
+# Config file for model training
+name = 'stockholm_model'
+label = 'trade_signal'
+
+[training]
+start_date = '2012-01-01'
+end_date = '2022-12-31'
+
+[evaluation]
+start_date = '2024-01-01'
+end_date = '2024-12-31'
+
+[[models]]
+type = 'XGBClassifier'
+
+[models.hyperparameters]
+learning_rate = 0.1
+n_estimators = 1000
+max_depth = 5
+min_child_weight = 2
+
+[[models]]
+type = 'LGBMClassifier'
+
+[models.hyperparameters]
+n_estimators = 1000
