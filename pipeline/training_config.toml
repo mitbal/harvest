@@ -1,6 +1,14 @@
 # Config file for model training
 name = 'stockholm_model'
 label = 'trade_signal'
+features = [
+    'RSI_14', 'SUPERT_7_3.0', 'SUPERTd_7_3.0', 'SUPERTl_7_3.0',
+    'SUPERTs_7_3.0', 'BBL_5_2.0', 'BBM_5_2.0', 'BBU_5_2.0',
+    'BBB_5_2.0', 'BBP_5_2.0', 'STOCHRSIk_14_14_3_3',
+    'STOCHRSId_14_14_3_3', 'open', 'high', 'low', 'close', 'volume',
+    'pe'
+]
+pos_weight = 25
 
 [training]
 start_date = '2012-01-01'
