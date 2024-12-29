@@ -1,4 +1,5 @@
 import pickle
+import tomllib
 
 import numpy as np
 import pandas as pd
@@ -8,28 +9,33 @@ import harvest.data as hd
 
 def eval_all():
 
+    with open('pipeline/training_config.toml', 'rb') as f:
+        config = tomllib.load(f)
+
     with open('data/features.pkl', 'rb') as f:
         feat_dict = pickle.load(f)
     
-    model_dict = {
-        'lgbm': 'data/lgbm.pkl',
-        'xgb': 'data/xgb.pkl'
-    }
+    # model_dict = {
+    #     'lgbm': 'data/lgbm.pkl',
+    #     'xgb': 'data/xgb.pkl'
+    # }
 
-    test_start_date = '2024-01-01'
-    test_end_date = '2024-12-31'
+    test_start_date = config['evaluation']['start_date']
+    test_end_date = config['evaluation']['end_date']
     feat_stats_df = pd.read_csv('data/feat_stats.csv')
     val_df = pd.read_csv('data/valuation.csv')
 
     att_df = feat_stats_df.merge(val_df, on='stock')
     stock_list = att_df[(att_df['avg_value'] > 10_000_000_000) & (att_df['current_pe'] > 0) & (att_df['target'] > 0.03) & (att_df['current_pe'] < 30)]['stock'].values.tolist()
 
-    for model_name, model_path in model_dict.items():
+    # for model_name, model_path in model_dict.items():
+    for m in config['models']:
 
-        with open(model_path, 'rb') as f:
+        model_name = m['type']
+        with open(f'data/{model_name}.pkl', 'rb') as f:
             model = pickle.load(f)
 
-        ret_dict = eval_single_model(model, feat_dict, stock_list, test_start_date, test_end_date)
+        ret_dict = eval_single_model(model, feat_dict, stock_list, test_start_date, test_end_date, config)
         ret_df = pd.DataFrame(ret_dict).transpose()
         print(f'{model_name} total_return: {ret_df["Total Return [%]"].sum()}')
         print(f'{model_name} real alpha: {ret_df["real_alpha"].sum()}')
@@ -39,7 +45,7 @@ def eval_all():
             pickle.dump(ret_dict, f)
 
 
-def eval_single_model(model, feat_dict, stock_list, start_date, end_date):
+def eval_single_model(model, feat_dict, stock_list, start_date, end_date, config):
     print(f'evaluating {model}...')
 
     ret_dict = {}
@@ -47,14 +53,14 @@ def eval_single_model(model, feat_dict, stock_list, start_date, end_date):
         feat_df = feat_dict[stock]
         test_df = feat_df[start_date:end_date]
         
-        stats = eval_single_stock(model, test_df)
+        stats = eval_single_stock(model, test_df, config)
         ret_dict[stock] = stats
     return ret_dict
 
 
-def eval_single_stock(model, test_df):
+def eval_single_stock(model, test_df, config):
 
-    X = test_df.loc[:, ~test_df.columns.isin(['trade_signal', 'daily_return'])].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
+    X = test_df.loc[:, config['features']].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
     pred = model.predict(X) - 1
 
     entry = (pred == -1)
