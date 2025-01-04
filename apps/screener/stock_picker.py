@@ -33,7 +33,12 @@ def compute_div_feature(cp_df, div_df):
         if df.loc[symbol, 'lastDiv'] == 0:
             continue
         
-        div['year'] = [x.year for x in pd.to_datetime(div['date'])]
+        try:
+            div['year'] = [x.year for x in pd.to_datetime(div['date'])]
+        except Exception as e:
+            print('error', symbol)
+            continue
+        
         agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
         inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
         inc_pct = inc_flat / agg_year['adjDividend'] * 100
