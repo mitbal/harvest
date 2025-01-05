@@ -1,5 +1,8 @@
+import json
 import pickle
+from datetime import datetime
 
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import pandas_ta as ta
@@ -11,6 +14,7 @@ def compute_all():
 
     cp = pd.read_csv('data/company_profiles.csv')
     stock_list = cp[cp['isActivelyTrading']]['symbol'].tolist()
+    cp.set_index('symbol', inplace=True)
 
     with open('data/prices.pkl', 'rb') as f:
         price_dict = pickle.load(f)
@@ -36,6 +40,13 @@ def compute_all():
 
     feat_stats = compute_feature_stats(combined_dict)
     feat_stats.to_csv('data/feat_stats.csv', index_label='stock')
+
+    with open('data/dividends.pkl', 'rb') as f:
+        div_dict = pickle.load(f)
+
+    # print(div_dict)
+    div_stats = compute_div_score(cp, fin_dict, div_dict)
+    div_stats.to_csv('data/div_score.csv', index_label='stock')
 
 
 def compute_features(stock_list, price_dict, fin_dict):
@@ -75,7 +86,7 @@ def compute_feature_stats(feat_dict):
         stats['count_entry_labels'] = (feat_df['trade_signal'] == 'buy').sum()
         stats['avg_value'] = (feat_df['volume']*feat_df['close']).mean()
         stats['avg_pe'] = feat_df['pe'].mean()
-        stats['avg_daily_return'] = feat_df['daily_return'].mean()
+        stats['avg_daily_return'] = feat_df['return_1d'].mean()
 
         stats_dict[stock] = stats
     
@@ -108,6 +119,46 @@ def compute_valuation(stock_list, price_dict, fin_dict):
 
     val_table = hd.calc_valuation(stock_list, price_dict, fin_dict)
     return val_table
+
+
+def compute_div_score(cp_df, fin_dict, div_dict):
+    
+    df = cp_df[cp_df['isActivelyTrading']].copy()
+    df['yield'] = df['lastDiv'] / df['price'] * 100
+
+    stock_list = df.index.tolist()
+    for symbol in stock_list:
+
+        if df.loc[symbol, 'lastDiv'] == 0:
+            continue
+
+        try:
+            div_df = pd.DataFrame(div_dict[symbol])
+        except Exception as e:
+            print('error', symbol)
+            continue
+
+        div_df = hd.preprocess_div(div_df)
+        # div_stats = hd.calc_div_stats(div_df)
+        
+        agg_year = div_df.groupby('year')['adjDividend'].sum().to_frame().reset_index()
+        inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
+        inc_pct = inc_flat / agg_year['adjDividend'] * 100
+        avg_flat_annual_increase = np.mean(inc_flat[-4:])
+        # avg_pct_annual_increase = np.nanmedian(inc_pct)
+        avg_pct_annual_increase = np.clip(avg_flat_annual_increase / df.loc[symbol, 'lastDiv'] * 100, 0, 100)
+        df.loc[symbol, 'avgFlatAnnualDivIncrease'] = avg_flat_annual_increase
+        df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
+        df.loc[symbol, 'numDividendYear'] = len(agg_year)
+        df.loc[symbol, 'positiveYear'] = np.sum(inc_flat > 0)
+        df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
+    
+    # patented dividend score
+    df['DScore'] = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100
+
+    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
+               'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
+
 
 if __name__ == '__main__':
 
