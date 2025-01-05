@@ -1,6 +1,9 @@
 import os
 import json
+import time
 import requests
+
+import redis
 import numpy as np
 import pandas as pd
 import altair as alt
@@ -14,6 +17,7 @@ st.title('Jajan Saham')
 
 # get list of all stocks
 api_key = os.environ['FMP_API_KEY']
+redis_url = os.environ['REDIS_URL']
 
 @st.cache_data
 def compute_div_feature(cp_df, div_df):
@@ -38,7 +42,7 @@ def compute_div_feature(cp_df, div_df):
         except Exception as e:
             print('error', symbol)
             continue
-        
+
         agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
         inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
         inc_pct = inc_flat / agg_year['adjDividend'] * 100
@@ -102,13 +106,38 @@ def get_daily_price(stock):
     return pd.DataFrame(intraday['historical'])
 
 
+@st.cache_resource
+def connect_redis(redis_url):
+    r = redis.from_url(redis_url)
+    return r
+
+
+@st.cache_data(ttl=60*60*24)
+def get_div_score_table():
+
+    # try from cache from redis first
+    r = connect_redis(redis_url)
+    rjson = r.get('div_score')
+    if rjson is not None:
+        final_df = pd.DataFrame(json.loads(json.loads(rjson)))
+    else:    
+        # if not found in cache, compute from scratch
+        print('redis error, computing dividend score from scratch')
+        div_df = get_historical_dividend(use_cache=True)
+        final_df = compute_div_feature(cp_df, div_df)
+
+    return final_df.set_index('stock')
+
 ### End of Function definition
 
+start = time.time()
+
 cp_df = get_company_profile(use_cache=False)
-div_df = get_historical_dividend(use_cache=True)
+final_df = get_div_score_table()
 sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=1)).isoformat(), api_key)
 
-final_df = compute_div_feature(cp_df, div_df)
+end = time.time()
+print(f'Elapsed time {end-start}')
 
 full_table_section = st.container(border=True)
 with full_table_section:
@@ -122,7 +151,7 @@ with full_table_section:
     final_df['Emiten'] = [x[:-3] for x in final_df.index]
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
-                            & (final_df['lastDiv'] > 0)].reset_index().set_index('symbol').sort_values('DScore', ascending=False)
+                            & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
 
     tabs = st.tabs(['Table View', 'Scatter View'])
     with tabs[0]:
@@ -178,11 +207,12 @@ else:
 fin = hd.get_financial_data(stock_name)
 
 with st.expander('Company Profile', expanded=False):
+    cp_df = hd.get_company_profile([stock_name])
     st.write(cp_df.loc[stock_name, 'description'])
 
 with st.expander('Dividend History', expanded=False):
     dividend_history_cols = st.columns([3, 10, 4])
-    sdf = pd.DataFrame(json.loads(div_df.loc[stock.name, 'historical'].replace("'", '"')))
+    sdf = pd.DataFrame(hd.get_dividend_history([stock.name])[stock.name])
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
     stats = hd.calc_div_stats(hd.preprocess_div(sdf))
@@ -190,7 +220,7 @@ with st.expander('Dividend History', expanded=False):
     yearly_dividend_chart = hp.plot_dividend_history(sdf, 
                                                      extrapolote=True, 
                                                      n_future_years=5, 
-                                                     last_val=cp_df.loc[stock_name, 'lastDiv'], 
+                                                     last_val=final_df.loc[stock_name, 'lastDiv'], 
                                                      inc_val=stats['historical_mean_flat'])
     dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
