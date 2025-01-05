@@ -28,6 +28,19 @@ def download_all(start_from):
     with open('data/dividends.pkl', 'wb') as f:
         pickle.dump(dividends, f)
 
+    # download alternative data
+    gold = download_single_price('GCUSD', start_from)
+    gold.to_csv('data/gold.csv', index=False)
+
+    oil = download_single_price('CLUSD', start_from)
+    oil.to_csv('data/oil.csv', index=False)
+
+    dollar = download_single_price('USDIDR', start_from)
+    dollar.to_csv('data/dollar.csv', index=False)
+
+    btc = download_single_price('BTCUSD', start_from)
+    btc.to_csv('data/btc.csv', index=False)
+
 @flow
 def download_prices(stock_list, start_from=None):
 
