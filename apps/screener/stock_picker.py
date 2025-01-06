@@ -18,6 +18,7 @@ st.title('Jajan Saham')
 # get list of all stocks
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
+print(redis_url)
 
 @st.cache_data
 def compute_div_feature(cp_df, div_df):
@@ -119,13 +120,14 @@ def get_div_score_table():
     r = connect_redis(redis_url)
     rjson = r.get('div_score')
     if rjson is not None:
-        final_df = pd.DataFrame(json.loads(json.loads(rjson)))
+        final_df = pd.DataFrame(json.loads(rjson))
     else:    
         # if not found in cache, compute from scratch
         print('redis error, computing dividend score from scratch')
         div_df = get_historical_dividend(use_cache=True)
         final_df = compute_div_feature(cp_df, div_df)
 
+    final_df.rename(columns={'symbol': 'stock'}, inplace=True)
     return final_df.set_index('stock')
 
 ### End of Function definition
