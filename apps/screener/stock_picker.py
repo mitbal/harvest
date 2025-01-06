@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import requests
 
 import redis
 import numpy as np
@@ -15,10 +14,8 @@ import harvest.data as hd
 
 st.title('Jajan Saham')
 
-# get list of all stocks
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
-print(redis_url)
 
 @st.cache_data
 def compute_div_feature(cp_df, div_df):
@@ -98,15 +95,6 @@ def calc_statistics(full, market_cap_filter, dividend_filter):
     return text
 
 
-def get_daily_price(stock):
-    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{stock}?apikey={api_key}&from={start_date}'
-    r = requests.get(url)
-    intraday  = r.json()
-    
-    return pd.DataFrame(intraday['historical'])
-
-
 @st.cache_resource
 def connect_redis(redis_url):
     r = redis.from_url(redis_url)
@@ -124,19 +112,30 @@ def get_div_score_table():
     else:    
         # if not found in cache, compute from scratch
         print('redis error, computing dividend score from scratch')
+        cp_df = get_company_profile(use_cache=False)
         div_df = get_historical_dividend(use_cache=True)
         final_df = compute_div_feature(cp_df, div_df)
 
     final_df.rename(columns={'symbol': 'stock'}, inplace=True)
     return final_df.set_index('stock')
 
+
+@st.cache_data
+def get_specific_stock_detail(stock_name):
+
+    fin = hd.get_financial_data(stock_name)
+    cp_df = hd.get_company_profile([stock_name])
+    sdf = pd.DataFrame(hd.get_dividend_history([stock.name])[stock.name])
+    sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=1)).isoformat(), api_key)
+
+    return fin, cp_df, sdf, sector_df, industry_df
+
+
 ### End of Function definition
 
 start = time.time()
 
-cp_df = get_company_profile(use_cache=False)
 final_df = get_div_score_table()
-sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=1)).isoformat(), api_key)
 
 end = time.time()
 print(f'Elapsed time {end-start}')
@@ -206,19 +205,17 @@ elif sp_event.selection['point']:
     stock_name = row_idx['Emiten']+'.JK'
 else:
     st.stop()
-fin = hd.get_financial_data(stock_name)
 
-with st.expander('Company Profile', expanded=False):
-    cp_df = hd.get_company_profile([stock_name])
+fin, cp_df, sdf, sector_df, industry_df = get_specific_stock_detail(stock_name)
+
+with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
 
 with st.expander('Dividend History', expanded=False):
     dividend_history_cols = st.columns([3, 10, 4])
-    sdf = pd.DataFrame(hd.get_dividend_history([stock.name])[stock.name])
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
     stats = hd.calc_div_stats(hd.preprocess_div(sdf))
-
     yearly_dividend_chart = hp.plot_dividend_history(sdf, 
                                                      extrapolote=True, 
                                                      n_future_years=5, 
