@@ -44,7 +44,6 @@ def compute_all():
     with open('data/dividends.pkl', 'rb') as f:
         div_dict = pickle.load(f)
 
-    # print(div_dict)
     div_stats = compute_div_score(cp, fin_dict, div_dict)
     div_stats.to_csv('data/div_score.csv', index_label='stock')
 
@@ -139,18 +138,12 @@ def compute_div_score(cp_df, fin_dict, div_dict):
             continue
 
         div_df = hd.preprocess_div(div_df)
-        # div_stats = hd.calc_div_stats(div_df)
+        div_stats = hd.calc_div_stats(div_df)
         
-        agg_year = div_df.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-        inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
-        inc_pct = inc_flat / agg_year['adjDividend'] * 100
-        avg_flat_annual_increase = np.mean(inc_flat[-4:])
-        # avg_pct_annual_increase = np.nanmedian(inc_pct)
-        avg_pct_annual_increase = np.clip(avg_flat_annual_increase / df.loc[symbol, 'lastDiv'] * 100, 0, 100)
-        df.loc[symbol, 'avgFlatAnnualDivIncrease'] = avg_flat_annual_increase
-        df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
-        df.loc[symbol, 'numDividendYear'] = len(agg_year)
-        df.loc[symbol, 'positiveYear'] = np.sum(inc_flat > 0)
+        df.loc[symbol, 'avgFlatAnnualDivIncrease'] = div_stats['historical_mean_flat']
+        df.loc[symbol, 'avgPctAnnualDivIncrease'] = div_stats['historical_mean_pct']
+        df.loc[symbol, 'numDividendYear'] = div_stats['num_dividend_year']
+        df.loc[symbol, 'positiveYear'] = div_stats['num_positive_year']
         df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
     
     # patented dividend score
