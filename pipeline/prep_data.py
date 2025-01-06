@@ -1,7 +1,9 @@
+import os
 import json
 import pickle
 from datetime import datetime
 
+import redis
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -46,6 +48,15 @@ def compute_all():
 
     div_stats = compute_div_score(cp, fin_dict, div_dict)
     div_stats.to_csv('data/div_score.csv', index_label='stock')
+    store_df_to_redis('div_score', div_stats)
+
+
+def store_df_to_redis(key, df):
+
+    url = os.environ['REDIS_URL']
+    r = redis.from_url(url)
+    df_json = json.dumps(df.reset_index().to_dict(orient='records'))
+    r.set(key, df_json)
 
 
 def compute_features(stock_list, price_dict, fin_dict):
