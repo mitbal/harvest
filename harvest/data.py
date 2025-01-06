@@ -210,13 +210,22 @@ def calc_pe_stats(pe_df):
 
 def calc_growth_stats(fin_df, metric='revenue'):
 
-    rolling_revenue = fin_df[['date', 'revenue']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
+    rolling_metric = fin_df[['date', metric]].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
 
     stats = {}
     periods = [2, 5, 10]
     for p in periods:
-        stats[f'mean_{p}y_{metric}_growth'] = ((rolling_revenue[metric] / rolling_revenue.shift(4)[metric])[::-1][::3][:p].mean() -1)*100
+        stats[f'mean_{p}y_{metric}_growth'] = ((rolling_metric[metric] / rolling_metric.shift(4)[metric])[::-1][::3][:p].mean() -1)*100
     
+    return stats
+
+
+def calc_fin_stats(fin_df):
+
+    stats = {}
+    stats = stats | calc_growth_stats(fin_df, metric='revenue')
+    stats = stats | calc_growth_stats(fin_df, metric='netIncome')
+
     return stats
 
 
