@@ -143,24 +143,30 @@ def compute_div_score(cp_df, fin_dict, div_dict):
             continue
 
         try:
+            fin_df = fin_dict[symbol]
+            fin_stats = hd.calc_fin_stats(fin_df)
+            df.loc[symbol, 'revenueGrowth'] = fin_stats['mean_10y_revenue_growth']
+            df.loc[symbol, 'netIncomeGrowth'] = fin_stats['mean_10y_netIncome_growth']
+                    
             div_df = pd.DataFrame(div_dict[symbol])
+            div_df = hd.preprocess_div(div_df)
+            div_stats = hd.calc_div_stats(div_df)
+            
+            df.loc[symbol, 'avgFlatAnnualDivIncrease'] = div_stats['historical_mean_flat']
+            df.loc[symbol, 'avgPctAnnualDivIncrease'] = div_stats['historical_mean_pct']
+            df.loc[symbol, 'numDividendYear'] = div_stats['num_dividend_year']
+            df.loc[symbol, 'positiveYear'] = div_stats['num_positive_year']
+            df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
+
         except Exception as e:
             print('error', symbol)
             continue
-
-        div_df = hd.preprocess_div(div_df)
-        div_stats = hd.calc_div_stats(div_df)
-        
-        df.loc[symbol, 'avgFlatAnnualDivIncrease'] = div_stats['historical_mean_flat']
-        df.loc[symbol, 'avgPctAnnualDivIncrease'] = div_stats['historical_mean_pct']
-        df.loc[symbol, 'numDividendYear'] = div_stats['num_dividend_year']
-        df.loc[symbol, 'positiveYear'] = div_stats['num_positive_year']
-        df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
     
     # patented dividend score
     df['DScore'] = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100
 
-    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
+    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
+               'revenueGrowth', 'netIncomeGrowth', 
                'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
 
 
