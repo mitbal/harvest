@@ -163,7 +163,7 @@ def compute_div_score(cp_df, fin_dict, div_dict):
             continue
     
     # patented dividend score
-    df['DScore'] = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100
+    df['DScore'] = hd.calc_div_score(df)
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
                'revenueGrowth', 'netIncomeGrowth', 
