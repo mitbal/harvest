@@ -173,7 +173,8 @@ def calc_div_score(df):
     score = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] \
             * (df['numDividendYear'] / (df['numOfYear']+25)/2) \
             * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100 \
-    
+            * df['revenueGrowth']/100 \
+            
     return score
             
 
