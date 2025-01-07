@@ -168,6 +168,15 @@ def calc_div_stats(div_df):
     return stats
 
 
+def calc_div_score(df):
+
+    score = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] \
+            * (df['numDividendYear'] / (df['numOfYear']+25)/2) \
+            * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100 \
+    
+    return score
+            
+
 def calc_pe_history(price_df, fin_df):
 
     pdf = price_df[['date', 'close']].copy()
