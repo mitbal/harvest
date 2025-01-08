@@ -226,8 +226,12 @@ def calc_growth_stats(fin_df, metric='revenue'):
     stats = {}
     periods = [2, 5, 10]
     for p in periods:
-        stats[f'mean_{p}y_{metric}_growth'] = ((rolling_metric[metric] / rolling_metric.shift(4)[metric])[::-1][::3][:p].mean() -1)*100
-    
+        growth = (rolling_metric[metric] / rolling_metric.shift(4)[metric])[::-1] -1
+        growth = growth[:p*4].dropna()
+        
+        stats[f'median_{p}y_{metric}_growth'] = np.median(growth) *100
+        stats[f'trim_mean_{p}y_{metric}_growth'] = (scipy.stats.trim_mean(growth, 0.1)) *100
+
     return stats
 
 
