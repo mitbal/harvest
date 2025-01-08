@@ -133,33 +133,34 @@ def compute_valuation(stock_list, price_dict, fin_dict):
 
 def compute_div_score(cp_df, fin_dict, div_dict):
     
-    df = cp_df[cp_df['isActivelyTrading']].copy()
+    df = cp_df[(cp_df['isActivelyTrading']) & (cp_df['lastDiv'] != 0)].copy()
     df['yield'] = df['lastDiv'] / df['price'] * 100
 
     stock_list = df.index.tolist()
     for symbol in stock_list:
 
-        if df.loc[symbol, 'lastDiv'] == 0:
-            continue
-
         try:
             fin_df = fin_dict[symbol]
             fin_stats = hd.calc_fin_stats(fin_df)
-            df.loc[symbol, 'revenueGrowth'] = fin_stats['mean_10y_revenue_growth']
-            df.loc[symbol, 'netIncomeGrowth'] = fin_stats['mean_10y_netIncome_growth']
+            df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
+            df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
                     
             div_df = pd.DataFrame(div_dict[symbol])
             div_df = hd.preprocess_div(div_df)
             div_stats = hd.calc_div_stats(div_df)
             
-            df.loc[symbol, 'avgFlatAnnualDivIncrease'] = div_stats['historical_mean_flat']
+            div_incs = np.array([div_stats['historical_mean_flat'],
+                                div_stats['div_inc_5y_mean_flat']])
+            div_incs = np.nan_to_num(div_incs, nan=0.0)
+            
+            df.loc[symbol, 'avgFlatAnnualDivIncrease'] = np.min(div_incs)
             df.loc[symbol, 'avgPctAnnualDivIncrease'] = div_stats['historical_mean_pct']
             df.loc[symbol, 'numDividendYear'] = div_stats['num_dividend_year']
             df.loc[symbol, 'positiveYear'] = div_stats['num_positive_year']
             df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
 
         except Exception as e:
-            print('error', symbol)
+            print(f'error {e}', symbol)
             continue
     
     # patented dividend score
@@ -167,7 +168,7 @@ def compute_div_score(cp_df, fin_dict, div_dict):
 
     return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
                'revenueGrowth', 'netIncomeGrowth', 
-               'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
+               'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']]
 
 
 if __name__ == '__main__':
