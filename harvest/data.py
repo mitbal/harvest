@@ -2,6 +2,7 @@ import os
 import datetime
 import requests
 
+import scipy
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
@@ -170,10 +171,10 @@ def calc_div_stats(div_df):
 
 def calc_div_score(df):
 
-    score = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] \
-            * (df['numDividendYear'] / (df['numOfYear']+25)/2) \
-            * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100 \
-            * df['revenueGrowth']/100 \
+    score = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*5)/df['price'] \
+            * ((df['numDividendYear']*2) / (25+df['numOfYear'])) \
+            * ((df['positiveYear']*2 / (25+df['numOfYear']))) \
+            * (1+(df['revenueGrowth']*0.5)*5)*df['lastDiv'] / 100
             
     return score
             
