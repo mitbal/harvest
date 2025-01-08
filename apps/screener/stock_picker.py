@@ -172,7 +172,7 @@ with full_table_section:
     
     with tabs[1]:
 
-        attributes = ['yield', 'avgPctAnnualDivIncrease', 'mktCap', 'DScore']
+        attributes = ['yield', 'avgFlatAnnualDivIncrease', 'mktCap', 'DScore']
 
         scatter_cols = st.columns(2)
         x_axis = scatter_cols[0].selectbox('Select X Axis', attributes)
@@ -215,18 +215,18 @@ with st.expander('Dividend History', expanded=False):
     dividend_history_cols = st.columns([3, 10, 4])
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
-    stats = hd.calc_div_stats(hd.preprocess_div(sdf))
     yearly_dividend_chart = hp.plot_dividend_history(sdf, 
                                                      extrapolote=True, 
                                                      n_future_years=5, 
                                                      last_val=final_df.loc[stock_name, 'lastDiv'], 
-                                                     inc_val=stats['historical_mean_flat'])
+                                                     inc_val=final_df.loc[stock_name, 'avgFlatAnnualDivIncrease'])
     dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
     with dividend_history_cols[2]:
         last_div = filtered_df.loc[stock.name, 'lastDiv']
+        inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
         curr_price = filtered_df.loc[stock.name, 'price']
-        next_div = last_div + stats['historical_mean_flat']
+        next_div = last_div + inc_val
         next_yield = next_div / curr_price * 100
         st.write(f'Next year dividend payment: {next_div:0.2f} IDR')
         st.write(f'Yield on current price: {next_yield:0.2f}%')
