@@ -233,20 +233,12 @@ def plot_supertrend(st_df):
     return c
 
 
-def plot_dividend_calendar(divs, cp, year=2024):
+def plot_dividend_calendar(div_df, show_next_year=False):
 
-    div_df = pd.DataFrame()
-    for key, val in divs.items():
-        temp = pd.DataFrame(val)
-        temp['ticker'] = key
-        div_df = pd.concat([div_df, temp])
-    div_df.reset_index(drop=True, inplace=True)
-    div_df['date'] = pd.to_datetime(div_df['date'])
-
-    div_year = div_df[div_df['date'].dt.year == year]
-    merged = div_year.merge(cp, left_on='ticker', right_on='symbol')
-    merged['yield'] = merged['adjDividend'] / merged['price'] * 100
-
-    cal = lesley.calendar_plot(merged['date'], merged['yield'], 
-                               show_date=True, cmap='Greens', domain=[2, 3, 5, 10, 20, 50, 100])
+    if show_next_year:
+        div_df['date'] = div_df['date'].apply(lambda x: x.replace(year=x.year+1))
+    
+    cal = lesley.calendar_plot(div_df['date'], div_df['yield'], 
+                               show_date=True, cmap='Greens', domain=[2, 3, 5, 10, 20, 50, 100],
+                               )
     return cal
