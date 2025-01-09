@@ -32,13 +32,16 @@ for i in range(3):
 
         month_df = df[df.date.dt.month == idx].copy().reset_index(drop=True)
         month_df.sort_values(by='yield', ascending=False, inplace=True)
-        month_df.reset_index(drop=True, inplace=True)
-        month_df.set_index('symbol', inplace=True)
-        month_df['ranking'] = list(range(len(month_df)))
+
+        month_df['rank'] = list(range(1, len(month_df)+1))
         month_df['div_yield'] = month_df['yield'].apply(lambda x: f'{x:2.2f}%')
-        month_df['ex_date'] = month_df['date'].dt.strftime('%b %d')
+        month_df['ex_date'] = month_df['date'].dt.strftime('%d %b')
+        month_df['symbol'] = month_df['symbol'].apply(lambda x: x[:-3])
+        month_df.rename(columns={'symbol': 'stock',
+                                 'adjDividend': 'dividend'}, inplace=True)
 
         row_cols[j].write(f'{calendar.month_name[idx]}')
-        row_cols[j].dataframe(month_df[['ranking', 'ex_date', 'adjDividend', 'price', 'div_yield']], height=210)
+        row_cols[j].dataframe(hide_index=True, 
+                              data=month_df[['rank', 'stock', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
         idx += 1
     
