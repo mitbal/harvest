@@ -23,6 +23,17 @@ def get_all_idx_stocks(api_key=None):
     return idx
 
 
+def get_all_sp500_stocks(api_key=None):
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+
+    url = f'https://financialmodelingprep.com/api/v3/sp500_constituent?apikey={api_key}'
+    r = requests.get(url)
+    
+    sp_df = pd.DataFrame(r.json())
+    return sp_df
+
+
 def get_company_profile(stocks, api_key=None):
     
     if api_key is None:
