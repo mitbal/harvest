@@ -41,6 +41,10 @@ def download_all(start_from):
     btc = download_single_price('BTCUSD', start_from)
     btc.to_csv('data/btc.csv', index=False)
 
+    spy = download_single_price('SPY', start_from)
+    spy.to_csv('data/spy.csv', index=False)
+
+
 @flow
 def download_prices(stock_list, start_from=None):
 
