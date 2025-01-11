@@ -8,24 +8,30 @@ from prefect.cache_policies import INPUTS
 import harvest.data as hd
 
 @flow
-def download_all(start_from):
+def download_all(start_from, exch='jkse'):
 
-    idxs = hd.get_all_idx_stocks()
+    if exch == 'jkse':
+        idxs = hd.get_all_idx_stocks()
+    elif exch == 'sp500':
+        idxs = hd.get_all_sp500_stocks()
+    else:
+        raise ValueError('exch must be either jkse or sp500')
+    
     stock_list = idxs['symbol'].to_list()
     
     cp_df = hd.get_company_profile(stock_list)
-    cp_df.to_csv('data/company_profiles.csv')
+    cp_df.to_csv(f'data/{exch}/company_profiles.csv')
 
     prices = download_prices(stock_list, start_from=start_from)
-    with open('data/prices.pkl', 'wb') as f:
+    with open(f'data/{exch}/prices.pkl', 'wb') as f:
         pickle.dump(prices, f)
 
     financials = download_financials(stock_list)
-    with open('data/financials.pkl', 'wb') as f:
+    with open(f'data/{exch}/financials.pkl', 'wb') as f:
         pickle.dump(financials, f)
 
     dividends = download_dividends(stock_list)
-    with open('data/dividends.pkl', 'wb') as f:
+    with open(f'data/{exch}/dividends.pkl', 'wb') as f:
         pickle.dump(dividends, f)
 
     # download alternative data
@@ -96,4 +102,5 @@ def download_dividends(stock_list):
 
 if __name__ == '__main__':
     
-    download_all(start_from='2000-01-01')
+    download_all(start_from='2000-01-01', exch='jkse')
+    # download_all(start_from='2000-01-01', exch='sp500')
