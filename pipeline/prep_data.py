@@ -12,16 +12,16 @@ import pandas_ta as ta
 import harvest.data as hd
 
 
-def compute_all():
+def compute_all(exch='jkse'):
 
-    cp = pd.read_csv('data/company_profiles.csv')
+    cp = pd.read_csv(f'data/{exch}/company_profiles.csv')
     stock_list = cp[cp['isActivelyTrading']]['symbol'].tolist()
     cp.set_index('symbol', inplace=True)
 
-    with open('data/prices.pkl', 'rb') as f:
+    with open(f'data/{exch}/prices.pkl', 'rb') as f:
         price_dict = pickle.load(f)
     
-    with open('data/financials.pkl', 'rb') as f:
+    with open(f'data/{exch}/financials.pkl', 'rb') as f:
         fin_dict = pickle.load(f)
 
     feat_dict = compute_features(stock_list, price_dict, fin_dict)
@@ -34,29 +34,64 @@ def compute_all():
             combined_dict[stock] = combined_df 
         except:
             print(f'error {stock}')   
-    with open('data/features.pkl', 'wb') as f:
+    with open(f'data/{exch}/features.pkl', 'wb') as f:
         pickle.dump(combined_dict, f)
 
     val_table = compute_valuation(stock_list, price_dict, fin_dict)
-    val_table.to_csv('data/valuation.csv', index_label='stock')
+    val_table.to_csv(f'data/{exch}/valuation.csv', index_label='stock')
 
     feat_stats = compute_feature_stats(combined_dict)
-    feat_stats.to_csv('data/feat_stats.csv', index_label='stock')
+    feat_stats.to_csv(f'data/{exch}/feat_stats.csv', index_label='stock')
 
-    with open('data/dividends.pkl', 'rb') as f:
+    with open(f'data/{exch}/dividends.pkl', 'rb') as f:
         div_dict = pickle.load(f)
 
     div_stats = compute_div_score(cp, fin_dict, div_dict)
-    div_stats.to_csv('data/div_score.csv', index_label='stock')
-    store_df_to_redis('div_score', div_stats)
+    div_stats.to_csv(f'data/{exch}/div_score.csv', index_label='stock')
+    store_df_to_redis(f'{exch}_div_score', div_stats.reset_index())
+
+    # prepare dividend calendar data
+    div_cal = prep_div_cal(cp, div_dict, filter=400_000_000_000)
+    div_cal.to_csv(f'data/{exch}/div_cal.csv', index=False)
+    store_df_to_redis(f'{exch}_div_cal', div_cal)
 
 
 def store_df_to_redis(key, df):
 
     url = os.environ['REDIS_URL']
     r = redis.from_url(url)
-    df_json = json.dumps(df.reset_index().to_dict(orient='records'))
+    df_json = json.dumps(df.to_dict(orient='records'))
     r.set(key, df_json)
+
+
+def prep_div_cal(cp, div_dict, filter):
+
+    cp = cp[cp['mktCap'] >= filter].copy()
+    cp.reset_index(drop=False, inplace=True)
+
+    year = 2024
+    div_df = pd.DataFrame()
+    for key, val in div_dict.items():
+        if key in ['GGRP.JK', 'IKBI.JK']:
+            continue
+        temp = pd.DataFrame(val)
+        temp['ticker'] = key
+
+        if key in ['ISAT.JK', 'KDSI.JK']:
+            temp['adjDividend'] = temp['adjDividend'] / 4
+
+        div_df = pd.concat([div_df, temp])
+    div_df.reset_index(drop=True, inplace=True)
+    div_df['date'] = pd.to_datetime(div_df['date'])
+
+    div_year = div_df[div_df['date'].dt.year == year]
+    merged = div_year.merge(cp[['symbol', 'price']], left_on='ticker', right_on='symbol')
+    merged['yield'] = merged['adjDividend'] / merged['price'] * 100
+
+    div_2024 = merged[['date', 'symbol', 'adjDividend', 'price']].copy()
+    div_2024['date'] = div_2024['date'].dt.strftime('%Y-%m-%d')
+
+    return div_2024
 
 
 def compute_features(stock_list, price_dict, fin_dict):
@@ -173,4 +208,5 @@ def compute_div_score(cp_df, fin_dict, div_dict):
 
 if __name__ == '__main__':
 
-    compute_all()
+    compute_all(exch='jkse')
+    # compute_all(exch='sp500')
