@@ -12,9 +12,12 @@ import harvest.data as hd
 
 st.title('Dividend Calendar 2025')
 
+key = 'jkse_div_cal'
+# key = 'sp500_div_cal'
+
 url = os.environ['REDIS_URL']
 r = redis.from_url(url)
-j = r.get('div_hist_2024')
+j = r.get(key)
 df = pd.DataFrame(json.loads(j))
 df['date'] = pd.to_datetime(df['date'])
 df['yield'] = df['adjDividend'] / df['price'] * 100
