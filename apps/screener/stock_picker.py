@@ -102,11 +102,11 @@ def connect_redis(redis_url):
 
 
 @st.cache_data(ttl=60*60*24)
-def get_div_score_table():
+def get_div_score_table(key='jkse_div_score'):
 
     # try from cache from redis first
     r = connect_redis(redis_url)
-    rjson = r.get('div_score')
+    rjson = r.get(key)
     if rjson is not None:
         final_df = pd.DataFrame(json.loads(rjson))
     else:    
@@ -135,7 +135,9 @@ def get_specific_stock_detail(stock_name):
 
 start = time.time()
 
-final_df = get_div_score_table()
+final_df = get_div_score_table('jkse_div_score')
+# final_df = get_div_score_table('sp500_div_score')
+
 
 end = time.time()
 print(f'Elapsed time {end-start}')
