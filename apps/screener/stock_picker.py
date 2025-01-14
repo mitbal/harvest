@@ -125,10 +125,12 @@ def get_specific_stock_detail(stock_name):
 
     fin = hd.get_financial_data(stock_name)
     cp_df = hd.get_company_profile([stock_name])
+    start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
+    price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
     sdf = pd.DataFrame(hd.get_dividend_history([stock.name])[stock.name])
-    sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=1)).isoformat(), api_key)
+    sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
 
-    return fin, cp_df, sdf, sector_df, industry_df
+    return fin, cp_df, price_df, sdf, sector_df, industry_df
 
 
 ### End of Function definition
@@ -208,7 +210,7 @@ elif sp_event.selection['point']:
 else:
     st.stop()
 
-fin, cp_df, sdf, sector_df, industry_df = get_specific_stock_detail(stock_name)
+fin, cp_df, price_df, sdf, sector_df, industry_df = get_specific_stock_detail(stock_name)
 
 with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
@@ -242,9 +244,8 @@ with st.expander('Financial Information', expanded=False):
     st.altair_chart(fin_chart)
 
 with st.expander('Price Movement', expanded=False):
-        daily_df = hd.get_daily_stock_price(stock_name, n_days=765)
-        candlestick_chart = hp.plot_candlestick(daily_df, width=1000, height=300)
-        st.altair_chart(candlestick_chart.interactive())
+    candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
+    st.altair_chart(candlestick_chart.interactive())
 
 with st.expander('Valuation Analysis', expanded=False):
     val_cols = st.columns(3, gap='large')
@@ -259,7 +260,7 @@ with st.expander('Valuation Analysis', expanded=False):
         sector_pe = industry_pe = -1
         print('sector or industry not found')
 
-    pe_df = hd.calc_pe_history(daily_df, fin)
+    pe_df = hd.calc_pe_history(price_df, fin)
     pe_ttm = pe_df['pe'].values[-1]
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart)
