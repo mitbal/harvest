@@ -1,4 +1,5 @@
 import os
+import io
 import datetime
 import requests
 
@@ -6,6 +7,7 @@ import scipy
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
+import PIL.Image as Image
 
 
 def get_all_idx_stocks(api_key=None):
@@ -134,6 +136,16 @@ def get_shares_outstanding(stock, api_key=None):
     r = requests.get(url)
     fs = r.json()
     return pd.DataFrame(fs)
+
+
+def get_company_logo(stock, api_key=None):
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+    url = f'https://financialmodelingprep.com/image-stock/{stock}.png?apikey={api_key}'
+    r = requests.get(url)
+    img = Image.open(io.BytesIO(r.content))
+
+    return img
 
 
 def preprocess_div(div_df):
