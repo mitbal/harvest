@@ -123,6 +123,8 @@ def get_div_score_table(key='jkse_div_score'):
 @st.cache_data
 def get_specific_stock_detail(stock_name):
 
+    n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
+
     fin = hd.get_financial_data(stock_name)
     cp_df = hd.get_company_profile([stock_name])
     start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
@@ -130,7 +132,7 @@ def get_specific_stock_detail(stock_name):
     sdf = pd.DataFrame(hd.get_dividend_history([stock.name])[stock.name])
     sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
 
-    return fin, cp_df, price_df, sdf, sector_df, industry_df
+    return fin, cp_df, price_df, sdf, sector_df, industry_df, n_share
 
 
 ### End of Function definition
@@ -210,7 +212,7 @@ elif sp_event.selection['point']:
 else:
     st.stop()
 
-fin, cp_df, price_df, sdf, sector_df, industry_df = get_specific_stock_detail(stock_name)
+fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_detail(stock_name)
 
 with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
@@ -260,7 +262,7 @@ with st.expander('Valuation Analysis', expanded=False):
         sector_pe = industry_pe = -1
         print('sector or industry not found')
 
-    pe_df = hd.calc_pe_history(price_df, fin)
+    pe_df = hd.calc_pe_history(price_df, fin, n_shares=n_share)
     pe_ttm = pe_df['pe'].values[-1]
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart)
