@@ -202,14 +202,17 @@ def calc_div_score(df):
     return score
             
 
-def calc_pe_history(price_df, fin_df):
+def calc_pe_history(price_df, fin_df, n_shares=None, curr_df=None):
 
     pdf = price_df[['date', 'close']].copy()
     pdf['date'] = pd.to_datetime(pdf['date'])
     pdf = pdf.sort_values('date')
 
-    usdidr = 15_836
-    fin_df['converted_eps'] = fin_df.apply(lambda x: x['eps']*usdidr if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+    usdidr = 16_276
+    if n_shares is not None:
+        fin_df['converted_eps'] = fin_df.apply(lambda x: x['netIncome']/n_shares*usdidr if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+    else:
+        fin_df['converted_eps'] = fin_df.apply(lambda x: x['eps']*usdidr if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
 
     edf = fin_df[['date', 'converted_eps']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     edf['date'] = pd.to_datetime(edf['date'])
