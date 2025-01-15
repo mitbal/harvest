@@ -1,6 +1,7 @@
 import pickle
 from datetime import timedelta
 
+import pandas as pd
 from tqdm import tqdm
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
@@ -34,6 +35,9 @@ def download_all(start_from, exch='jkse'):
     with open(f'data/{exch}/dividends.pkl', 'wb') as f:
         pickle.dump(dividends, f)
 
+    shares = download_shares_outstanding(stock_list)
+    shares.to_csv(f'data/{exch}/shares.csv', index=False)
+
     # download alternative data
     gold = download_single_price('GCUSD', start_from)
     gold.to_csv('data/gold.csv', index=False)
@@ -49,6 +53,18 @@ def download_all(start_from, exch='jkse'):
 
     spy = download_single_price('SPY', start_from)
     spy.to_csv('data/spy.csv', index=False)
+
+@task
+def download_shares_outstanding(stock_list):
+
+    shares = []
+    for stock in tqdm(stock_list):
+        print(f'download shares {stock}')
+        share = hd.get_shares_outstanding(stock)
+        shares += [pd.DataFrame(share)]
+    share_df = pd.concat(shares)
+
+    return share_df
 
 
 @flow
