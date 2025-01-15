@@ -277,3 +277,7 @@ with st.expander('Valuation Analysis', expanded=False):
             Mean PE (last 3 year): {pe_df['pe'].mean():.2f}\n
             95% Confidence Interval range: {ci[0]:.2f} - {ci[1]:.2f}
         ''')
+        if industry_pe != -1:
+            st.write(f'Industry {industry_name} PE: {industry_pe:.2f}')
+        if sector_pe != -1:
+            st.write(f'Sector {sector_name} PE: {sector_pe:.2f}')
