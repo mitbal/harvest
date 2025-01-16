@@ -274,7 +274,7 @@ with st.expander('Valuation Analysis', expanded=False):
         ci = pe_df['pe'].quantile([.05, .95]).values
         st.markdown(f'''
             Current PE: {pe_ttm:.2f}\n
-            Mean PE (last 3 year): {pe_df['pe'].mean():.2f}\n
+            Mean PE (last 5 year): {pe_df['pe'].mean():.2f}\n
             95% Confidence Interval range: {ci[0]:.2f} - {ci[1]:.2f}
         ''')
         if industry_pe != -1:
