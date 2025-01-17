@@ -135,7 +135,8 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
     ).encode(
         alt.X('year:N'),
         alt.Y('adjDividend'),
-        color=alt.condition(alt.datum['inc'] > 0, alt.value('#ff796c'), alt.value('#008631'))
+        color=alt.condition(alt.datum['inc'] > 0, alt.value('#ff796c'), alt.value('#008631')),
+        tooltip=['year', alt.Tooltip('adjDividend', format='.2f')]
     ).properties(
         height=450,
         width=600
@@ -151,7 +152,8 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
             cornerRadiusTopRight=5
         ).encode(
             alt.X('year:N'),
-            alt.Y('adjDividend')
+            alt.Y('adjDividend'),
+            tooltip=['year', alt.Tooltip('adjDividend', format='.2f')]
         ).properties(
             height=450,
             width=600
