@@ -54,6 +54,10 @@ def download_all(start_from, exch='jkse'):
     spy = download_single_price('SPY', start_from)
     spy.to_csv('data/spy.csv', index=False)
 
+    jkse = download_single_price('^JKSE', start_from)
+    jkse.to_csv('data/jkse.csv', index=False)
+
+
 @task
 def download_shares_outstanding(stock_list):
 
