@@ -106,7 +106,11 @@ def plot_pe_timeseries(pe_df):
 
     chart = alt.Chart(pe_df).mark_line().encode(
         x = 'date:T',
-        y = alt.Y('pe').scale(zero=False)
+        y = alt.Y('pe').scale(zero=False),
+        tooltip=(
+            alt.Tooltip('date:T'),
+            alt.Tooltip('pe:Q', format='.2f')
+        )
     )
     return chart
 
