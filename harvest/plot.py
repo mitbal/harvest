@@ -77,6 +77,7 @@ def plot_candlestick(price_df, width=1000, height=300):
 
 
 def plot_pe_distribution(df, pe):
+
     kde = alt.Chart(df).transform_density('pe', as_=['PE', 'DENSITY'])
     pes_dist = kde.mark_area(
         line={'color': 'darkgreen'},
@@ -91,7 +92,10 @@ def plot_pe_distribution(df, pe):
         ),
     ).encode(
         x='PE:Q',
-        y='DENSITY:Q'
+        y=alt.Y('DENSITY:Q', title='', axis=alt.Axis(tickSize=0, domain=False, labelAngle=0, labelFontSize=0)),
+        tooltip=(
+            alt.Tooltip('PE:Q', format='.2f'),
+        )
     )
     x_zero = kde.mark_rule().encode(
         x=alt.datum(pe),
