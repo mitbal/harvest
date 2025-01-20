@@ -154,8 +154,12 @@ with full_table_section:
     minimum_market_cap = filter_cols[0].number_input('Minimum Market Capitalization (in Billion Rupiah)', value=1000, min_value=100, max_value=1000_1000)
     minimum_year = filter_cols[1].number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
 
+    is_syariah = st.toggle('Syariah Only?')
+
     st.markdown(calc_statistics(final_df, minimum_market_cap, minimum_year))
     final_df['Emiten'] = [x[:-3] for x in final_df.index]
+    if is_syariah:
+        final_df = final_df[final_df['is_syariah'] == True]
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
