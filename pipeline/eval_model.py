@@ -7,12 +7,12 @@ from tqdm import tqdm
 
 import harvest.data as hd
 
-def eval_all():
+def eval_all(exch='jkse'):
 
     with open('pipeline/training_config.toml', 'rb') as f:
         config = tomllib.load(f)
 
-    with open('data/features.pkl', 'rb') as f:
+    with open(f'data/{exch}/features.pkl', 'rb') as f:
         feat_dict = pickle.load(f)
     
     # model_dict = {
@@ -22,8 +22,8 @@ def eval_all():
 
     test_start_date = config['evaluation']['start_date']
     test_end_date = config['evaluation']['end_date']
-    feat_stats_df = pd.read_csv('data/feat_stats.csv')
-    val_df = pd.read_csv('data/valuation.csv')
+    feat_stats_df = pd.read_csv(f'data/{exch}/feat_stats.csv')
+    val_df = pd.read_csv(f'data/{exch}/valuation.csv')
 
     att_df = feat_stats_df.merge(val_df, on='stock')
     stock_list = att_df[(att_df['avg_value'] > 10_000_000_000) & (att_df['current_pe'] > 0) & (att_df['target'] > 0.03) & (att_df['current_pe'] < 30)]['stock'].values.tolist()
@@ -32,7 +32,7 @@ def eval_all():
     for m in config['models']:
 
         model_name = m['type']
-        with open(f'data/{model_name}.pkl', 'rb') as f:
+        with open(f'data/{exch}/{model_name}.pkl', 'rb') as f:
             model = pickle.load(f)
 
         ret_dict = eval_single_model(model, feat_dict, stock_list, test_start_date, test_end_date, config)
@@ -41,7 +41,7 @@ def eval_all():
         print(f'{model_name} real alpha: {ret_df["real_alpha"].sum()}')
         print(f'{model_name} ideal alpha diff: {ret_df["ideal_alpha_diff"].sum()}')
         
-        with open(f'data/return_{model_name}.pkl', 'wb') as f:
+        with open(f'data/{exch}/return_{model_name}.pkl', 'wb') as f:
             pickle.dump(ret_dict, f)
 
 
@@ -61,11 +61,20 @@ def eval_single_model(model, feat_dict, stock_list, start_date, end_date, config
 def eval_single_stock(model, test_df, config):
 
     X = test_df.loc[:, config['features']].replace([np.inf, -np.inf], np.nan, inplace=False).fillna(0)
-    pred = model.predict(X) - 1
+    
+    if config['type'] != 'regression':
+        pred = model.predict(X) - 1
+        entry = (pred == -1)
+        exits = (pred == 1)
+        pf = hd.calc_return(test_df['close'], entry, exits)
+    
+    else:
+        pred = model.predict(X)
+        entry = (pred > 0.1)
+        # exits = (pred < 0)
+        exits = [0]*len(pred)
+        pf = hd.calc_return(test_df['close'], entry, exits, tp_stop=0.1, sl_stop=0.05)
 
-    entry = (pred == -1)
-    exits = (pred == 1)
-    pf = hd.calc_return(test_df['close'], entry, exits)
     model_stats = pf.stats()
     model_stats['real_alpha'] = model_stats['Total Return [%]'] - model_stats['Benchmark Return [%]']
 
@@ -77,7 +86,6 @@ def eval_single_stock(model, test_df, config):
     model_stats['ideal_alpha_diff'] = ideal_stats['Total Return [%]'] - model_stats['Total Return [%]']
     return model_stats
 
-
 if __name__ == '__main__':
 
-    eval_all()
+    eval_all(exch='jkse')
