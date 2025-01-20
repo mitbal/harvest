@@ -12,15 +12,31 @@ import harvest.data as hd
 
 st.title('Dividend Calendar 2025')
 
-key = 'jkse_div_cal'
-# key = 'sp500_div_cal'
+exch = 'jkse'
+# exch = 'sp500'
+div_cal_key = f'{exch}_div_cal'
+div_score_key = f'{exch}_div_score'
 
 url = os.environ['REDIS_URL']
 r = redis.from_url(url)
-j = r.get(key)
-df = pd.DataFrame(json.loads(j))
+
+@st.cache_data
+def get_data_from_redis(key):
+    j = r.get(key)
+    return pd.DataFrame(json.loads(j))
+
+
+df = get_data_from_redis(div_cal_key)
 df['date'] = pd.to_datetime(df['date'])
 df['yield'] = df['adjDividend'] / df['price'] * 100
+
+div_score_df = get_data_from_redis(div_score_key)
+div_score_df = div_score_df[['symbol', 'is_syariah']]
+
+is_syariah = st.toggle('Syariah Only?')
+if is_syariah:
+    df = df.merge(div_score_df, on='symbol', how='left')
+    df = df[df.is_syariah == True]
 
 cal = hp.plot_dividend_calendar(df, show_next_year=True)
 st.altair_chart(cal)
