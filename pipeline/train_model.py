@@ -8,9 +8,9 @@ from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 
 
-def train_all(exch='jkse'):
+def train_all(exch='jkse', model_codename='oslo'):
 
-    with open('pipeline/training_config.toml', 'rb') as f:
+    with open(f'pipeline/{model_codename}_config.toml', 'rb') as f:
         config = tomllib.load(f)
 
     with open(f'data/{exch}/features.pkl', 'rb') as f:
@@ -32,7 +32,7 @@ def train_all(exch='jkse'):
         elif m['type'] == 'LGBMRegressor':
             model = LGBMRegressor(**m['hyperparameters'])
         model = train_single(model, X, y, weights)
-        with open(f'data/{exch}/{m['type']}.pkl', 'wb') as f:
+        with open(f'data/{exch}/{model_codename}_{m['type']}.pkl', 'wb') as f:
             pickle.dump(model, f)
 
 
@@ -72,5 +72,7 @@ def train_single(model, X, y, sample_weights):
 
 if __name__ == '__main__':
 
-    train_all(exch='jkse')
+    train_all(exch='jkse', model_codename='oslo')
+    train_all(exch='jkse', model_codename='stockholm')
+    train_all(exch='jkse', model_codename='copenhagen')
     # train_all(exch='sp500')
