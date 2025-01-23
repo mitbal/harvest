@@ -15,6 +15,11 @@ import harvest.data as hd
 def compute_all(exch='jkse'):
 
     cp = pd.read_csv(f'data/{exch}/company_profiles.csv')
+    syariah = pd.read_csv(f'data/{exch}/syariah.csv', sep=';')
+    syariah['symbol'] = syariah['Kode'].apply(lambda x: x+'.JK')
+    cp = cp.merge(syariah, on='symbol', how='left')
+    cp['is_syariah'] = ~cp['Kode'].isnull()
+
     stock_list = cp[cp['isActivelyTrading']]['symbol'].tolist()
     cp.set_index('symbol', inplace=True)
 
@@ -201,7 +206,7 @@ def compute_div_score(cp_df, fin_dict, div_dict):
     # patented dividend score
     df['DScore'] = hd.calc_div_score(df)
 
-    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
+    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'is_syariah',
                'revenueGrowth', 'netIncomeGrowth', 
                'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']]
 
