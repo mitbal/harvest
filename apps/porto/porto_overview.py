@@ -374,6 +374,7 @@ with st.expander('Future Projection', expanded=True):
         x=alt.X('years'),
         y=alt.Y('returns'),
         color=alt.condition(alt.datum['achieved'], alt.value('#008631'), alt.value('#87CEFA')),
+        tooltip=['years', alt.Tooltip('returns', format=',.0f')]
     ).properties(
         width=1000
     )
