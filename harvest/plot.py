@@ -1,4 +1,5 @@
 import lesley
+import numpy as np
 import pandas as pd
 import altair as alt
 
@@ -243,12 +244,16 @@ def plot_supertrend(st_df):
     return c
 
 
-def plot_dividend_calendar(div_df, show_next_year=False):
+def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
 
     if show_next_year:
         div_df['date'] = div_df['date'].apply(lambda x: x.replace(year=x.year+1))
     
+    domain = [2, 3, 5, 10, 20, 50, 100]
+    if sl != 'JKSE':
+        domain = np.array(domain) / 10
+    
     cal = lesley.calendar_plot(div_df['date'], div_df['yield'], 
-                               show_date=True, cmap='Greens', domain=[2, 3, 5, 10, 20, 50, 100],
+                               show_date=True, cmap='Greens', domain=domain,
                                )
     return cal
