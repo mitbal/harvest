@@ -12,8 +12,20 @@ import harvest.data as hd
 
 st.title('Dividend Calendar 2025')
 
-exch = 'jkse'
-# exch = 'sp500'
+sl = st.segmented_control(label='Stock List', 
+                         options=['JKSE', 'S&P500'],
+                         selection_mode='single',
+                         default='JKSE')
+    
+if sl is None:
+    print('Please select one of the options above')
+    st.stop()
+
+if sl == 'JKSE':
+    exch = 'jkse'
+else:
+    exch = 'sp500'
+
 div_cal_key = f'{exch}_div_cal'
 div_score_key = f'{exch}_div_score'
 
@@ -31,14 +43,19 @@ df['date'] = pd.to_datetime(df['date'])
 df['yield'] = df['adjDividend'] / df['price'] * 100
 
 div_score_df = get_data_from_redis(div_score_key)
-div_score_df = div_score_df[['symbol', 'is_syariah']]
 
-is_syariah = st.toggle('Syariah Only?')
-if is_syariah:
-    df = df.merge(div_score_df, on='symbol', how='left')
-    df = df[df.is_syariah == True]
+if sl == 'JKSE':
+    show_next_year = True
+    div_score_df = div_score_df[['symbol', 'is_syariah']]
+    is_syariah = st.toggle('Syariah Only?')
+    if is_syariah:
+        df = df.merge(div_score_df, on='symbol', how='left')
+        df = df[df.is_syariah == True]
+else:
+    show_next_year = False
 
-cal = hp.plot_dividend_calendar(df, show_next_year=True)
+# st.dataframe(df)
+cal = hp.plot_dividend_calendar(df, show_next_year=False, sl=sl)
 st.altair_chart(cal)
 
 idx = 1
@@ -55,7 +72,8 @@ for i in range(3):
         month_df['rank'] = list(range(1, len(month_df)+1))
         month_df['div_yield'] = month_df['yield'].apply(lambda x: f'{x:2.2f}%')
         month_df['ex_date'] = month_df['date'].dt.strftime('%d %b')
-        month_df['symbol'] = month_df['symbol'].apply(lambda x: x[:-3])
+        if sl == 'JKSE':
+            month_df['symbol'] = month_df['symbol'].apply(lambda x: x[:-3])
         month_df.rename(columns={'symbol': 'stock',
                                  'adjDividend': 'dividend'}, inplace=True)
 
