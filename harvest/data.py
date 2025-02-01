@@ -202,17 +202,22 @@ def calc_div_score(df):
     return score
             
 
-def calc_pe_history(price_df, fin_df, n_shares=None, curr_df=None):
+def calc_pe_history(price_df, fin_df, n_shares=None, currency='IDR', exchange_rate=16_276):
 
     pdf = price_df[['date', 'close']].copy()
     pdf['date'] = pd.to_datetime(pdf['date'])
     pdf = pdf.sort_values('date')
 
-    usdidr = 16_276
     if n_shares is not None:
-        fin_df['converted_eps'] = fin_df.apply(lambda x: x['netIncome']/n_shares*usdidr if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+        if currency == 'IDR':
+            fin_df['converted_eps'] = fin_df.apply(lambda x: x['netIncome']/n_shares*exchange_rate if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+        else:
+            fin_df['converted_eps'] = fin_df['eps']
     else:
-        fin_df['converted_eps'] = fin_df.apply(lambda x: x['eps']*usdidr if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+        if currency == 'IDR':
+            fin_df['converted_eps'] = fin_df.apply(lambda x: x['eps']*exchange_rate if x['reportedCurrency'] == 'USD' else x['eps'], axis=1)
+        else:
+            fin_df['converted_eps'] = fin_df['eps']
 
     edf = fin_df[['date', 'converted_eps']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     edf['date'] = pd.to_datetime(edf['date'])
