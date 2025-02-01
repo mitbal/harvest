@@ -137,34 +137,49 @@ def get_specific_stock_detail(stock_name):
 
 ### End of Function definition
 
-start = time.time()
-
-final_df = get_div_score_table('jkse_div_score')
-# final_df = get_div_score_table('sp500_div_score')
-
-
-end = time.time()
-print(f'Elapsed time {end-start}')
-
 full_table_section = st.container(border=True)
 with full_table_section:
 
     st.write('Filter')
+
+    sl = st.segmented_control(label='Stock List', 
+                         options=['JKSE', 'S&P500'],
+                         selection_mode='single',
+                         default='JKSE')
+    
+    if sl is None:
+        print('Please select one of the options above')
+        st.stop()
+
+    if sl == 'JKSE':
+        key = 'jkse_div_score'
+        mcap_value = 1000
+        currency = 'IDR'
+    else:
+        key = 'sp500_div_score'
+        mcap_value = 100
+        currency = 'USD'
+
+    start = time.time()
+    final_df = get_div_score_table(key)
+
+    end = time.time()
+    print(f'Elapsed time {end-start}')
+
     filter_cols = st.columns(2)
-    minimum_market_cap = filter_cols[0].number_input('Minimum Market Capitalization (in Billion Rupiah)', value=1000, min_value=100, max_value=1000_1000)
+    minimum_market_cap = filter_cols[0].number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
     minimum_year = filter_cols[1].number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
 
-    is_syariah = st.toggle('Syariah Only?')
+    if sl == 'JKSE':
+        is_syariah = st.toggle('Syariah Only?')
+        if is_syariah:
+            final_df = final_df[final_df['is_syariah'] == True]
 
-    st.markdown(calc_statistics(final_df, minimum_market_cap, minimum_year))
-    final_df['Emiten'] = [x[:-3] for x in final_df.index]
-    if is_syariah:
-        final_df = final_df[final_df['is_syariah'] == True]
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
 
-    tabs = st.tabs(['Table View', 'Scatter View'])
+    tabs = st.tabs(['Table View'])
     with tabs[0]:
 
         cfig={
@@ -179,40 +194,11 @@ with full_table_section:
         }
 
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
-    
-    with tabs[1]:
-
-        attributes = ['yield', 'avgFlatAnnualDivIncrease', 'mktCap', 'DScore']
-
-        scatter_cols = st.columns(2)
-        x_axis = scatter_cols[0].selectbox('Select X Axis', attributes)
-        minus_one_attribute = attributes[:]
-        minus_one_attribute.remove(x_axis)
-        y_axis = scatter_cols[1].selectbox('Select Y Axis', minus_one_attribute)
-        point_selection = alt.selection_point(name='point')
-
-        sp = alt.Chart(filtered_df).mark_point().encode(
-            x=alt.X(x_axis, scale=alt.Scale(type='log')),
-            y=alt.Y(y_axis, scale=alt.Scale()),
-            tooltip='Emiten',
-            color='sector',
-            opacity=alt.condition(point_selection, alt.value(1), alt.value(0.2))
-        ).add_selection(
-            point_selection
-        ).properties(
-            height=400,
-            width=1000
-        ).interactive()
-        sp_event = st.altair_chart(sp, on_select='rerun')
 
 if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
-elif sp_event.selection['point']:
-    row_idx = sp_event.selection['point'][0]
-    stock = filtered_df.loc[row_idx['Emiten']+'.JK']
-    stock_name = row_idx['Emiten']+'.JK'
 else:
     st.stop()
 
@@ -266,7 +252,7 @@ with st.expander('Valuation Analysis', expanded=False):
         sector_pe = industry_pe = -1
         print('sector or industry not found')
 
-    pe_df = hd.calc_pe_history(price_df, fin, n_shares=n_share)
+    pe_df = hd.calc_pe_history(price_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart)
