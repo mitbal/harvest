@@ -8,12 +8,18 @@ st.set_page_config(
 )
 
 st.title('Panen Dividen')
-st_lottie(animation_source='https://lottie.host/632869fc-4f0f-4707-84ff-00c73c591eed/QEtuVsuLs5.json',
-          height=200)
+
+cols = st.columns([0.35, 0.65])
+
+with cols[0]:
+    st_lottie(animation_source='https://lottie.host/632869fc-4f0f-4707-84ff-00c73c591eed/QEtuVsuLs5.json',
+              height=380)
 
 with open('README.md', 'r') as f:
     desc = f.read()
-st.markdown(desc, unsafe_allow_html=True)
+
+with cols[1]:
+    st.markdown(desc, unsafe_allow_html=True)
 
 if 'porto_file' not in st.session_state:
     st.session_state['porto_file'] = 'EMPTY'
