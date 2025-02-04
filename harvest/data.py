@@ -304,15 +304,21 @@ def calc_valuation(stock_list, price_dict, fin_dict):
     pe_stats_dict = {}
     rev_growth_dict = {}
     for stock in stock_list:
-        price_df = price_dict[stock]
-        fin_df = fin_dict[stock]
+        try:
+            price_df = price_dict[stock]
+            fin_df = fin_dict[stock]
 
-        if len(price_df) > 0 and len(fin_df) > 0:
             pe_dict[stock] = calc_pe_history(price_df, fin_df)
             pe_stats_dict[stock] = calc_pe_stats(pe_dict[stock])
 
             rev_growth = calc_growth_stats(fin_dict[stock], 'revenue')
             rev_growth_dict[stock] = rev_growth
+
+        except Exception as e:
+            print(f'Error {e} data for {stock}')
+            continue
+
+        # if len(price_df) > 0 and len(fin_df) > 0:
     
     pe_stats_df = pd.DataFrame(pe_stats_dict).transpose()
     rev_growth_df = pd.DataFrame(rev_growth_dict).transpose()
