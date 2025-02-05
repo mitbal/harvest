@@ -14,20 +14,85 @@ import streamlit as st
 st.set_page_config(layout='wide')
 st.title('Historical Insight')
 
+with st.expander('Data Input', expanded=True):
+    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], horizontal=True)
+
+    with st.form('abc'):
+
+        if method == 'Upload CSV':
+            uploaded_file = st.file_uploader('Choose a file', type='csv')
+
+            if uploaded_file:
+                st.session_state['history_file'] = uploaded_file
+            
+        elif method == 'Paste Raw':
+            raw = st.text_area('Paste the Raw Data Here')
+        
+        elif method == 'Form':
+            if st.session_state['history_df'] is None:
+                example_df = pd.DataFrame(
+                    [
+                        {'Stock': 'ASII', 'Lot': '200', 'Dividend': '5000', 'Total Dividend': '1,068,400', 'Date': '15 Jan 2025'},
+                    ]
+                )
+            else:
+                example_df = st.session_state['history_df'].copy(deep=True)
+            edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True)
+
+        submit = st.form_submit_button('Submit data')
+        if submit:
+
+            if method == 'Upload CSV':
+                if st.session_state['history_file'] != 'EMPTY':
+                    st.session_state['history_file'].seek(0)
+                    st.session_state['history_df'] = pd.read_csv(st.session_state['history_file'], sep=',', dtype='str')
+
+            elif method == 'Paste Raw':
+                raw_lines = np.array(raw.split('\n'))
+
+                stocks = []
+                lots = []
+                divs = []
+                amounts = []
+                dates = []
+                for i, s in enumerate(raw_lines):
+
+                    if 'DIVIDEND' not in s:
+                        continue
+
+                    stock = s.split(' ')[1]
+                    lot = raw_lines[i+2]
+                    div = raw_lines[i+4]
+                    amount = raw_lines[i+6]
+                    dt = raw_lines[i+14]
+
+                    stocks += [stock]
+                    lots += [lot]
+                    divs += [div]
+                    amounts += [amount]
+                    dates   += [dt]
+
+                    df = pd.DataFrame({'Stock': stocks, 'Lot': lots, 'Dividend': divs, 'Total Dividend': amounts, 'Date': dates})
+                    st.session_state['history_df'] = df
+                
+            elif method == 'Form':
+                df = edited_df.copy(deep=True)
+                st.session_state['history_df'] = df
 
 ## Handle input and cache
 if 'history_df' not in st.session_state:
     st.session_state['history_df'] = None
 
-uploaded_file = st.file_uploader('Choose a file', type='csv')
-if uploaded_file:
-    st.session_state['history_df'] = pd.read_csv(uploaded_file, delimiter=',', thousands=',')
+# uploaded_file = st.file_uploader('Choose a file', type='csv')
+# if uploaded_file:
+#     st.session_state['history_df'] = pd.read_csv(uploaded_file, delimiter=',', thousands=',')
 
 if st.session_state['history_df'] is None:
     st.stop()
 
 df = st.session_state['history_df'].copy()
 df['Date'] = pd.to_datetime(df['Date']).dt.date
+df['Total Dividend'] = df['Total Dividend'].str.replace(',', '').astype(float)
 
 ## First section, overall 
 con = st.container(border=True)
