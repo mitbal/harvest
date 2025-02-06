@@ -79,13 +79,9 @@ with st.expander('Data Input', expanded=True):
                 df = edited_df.copy(deep=True)
                 st.session_state['history_df'] = df
 
-## Handle input and cache
+
 if 'history_df' not in st.session_state:
     st.session_state['history_df'] = None
-
-# uploaded_file = st.file_uploader('Choose a file', type='csv')
-# if uploaded_file:
-#     st.session_state['history_df'] = pd.read_csv(uploaded_file, delimiter=',', thousands=',')
 
 if st.session_state['history_df'] is None:
     st.stop()
@@ -94,32 +90,31 @@ df = st.session_state['history_df'].copy()
 df['Date'] = pd.to_datetime(df['Date']).dt.date
 df['Total Dividend'] = df['Total Dividend'].str.replace(',', '').astype(float)
 
-## First section, overall 
-con = st.container(border=True)
-with con:
+
+with st.expander('Overview', expanded=True):
 
     col1, col2 = st.columns([0.45, 0.55])
     with col1:
         total_dividend = f"IDR {df['Total Dividend'].sum():,}"
-        st.metric(label='Total Dividend', value=total_dividend)
+        st.metric(label='Total Historical Dividend', value=total_dividend)
 
         cola, colb = st.columns(2)
         with cola:
             num_transaction = len(df)
-            st.metric(label='Number of Transaction', value=num_transaction)
+            st.metric(label='Number of Payment', value=num_transaction)
 
         with colb:
             num_stocks = len(df['Stock'].unique())
-            st.metric(label='Number of Stocks', value=num_stocks)
+            st.metric(label='Number of Unique Stocks', value=num_stocks)
         
         cola, colb = st.columns(2)
         with cola:
             first_date = df['Date'].values[-1]
-            st.metric(label='First Transaction Date', value=f'{first_date}')
+            st.metric(label='First Payment Date', value=f'{first_date}')
 
         with colb:
             last_date = df['Date'][0]
-            st.metric(label='Last Transaction Date', value=f'{last_date}')
+            st.metric(label='Last Payment Date', value=f'{last_date}')
 
         duration = last_date - first_date
         years = int(duration.days / 365)
@@ -128,12 +123,12 @@ with con:
         st.metric(label='Total Duration', value=f'{years} years, {months} months, {days} days')
 
     with col2:
-        st.write('List of transactions')
+        st.write('Last Payment Transactions')
 
         df_display = df[['Date', 'Stock', 'Lot', 'Dividend']].copy(deep=True)
         df_display['Total'] = df['Total Dividend'].astype('float')
 
-        st.dataframe(df_display, hide_index=True)
+        st.dataframe(df_display, hide_index=True, height=320)
 
 
 with st.expander('Stock Aggregation', expanded=True):
