@@ -6,7 +6,6 @@ import requests
 import scipy
 import numpy as np
 import pandas as pd
-import vectorbt as vbt
 import PIL.Image as Image
 
 
@@ -275,13 +274,6 @@ def calc_fin_stats(fin_df):
     return stats
 
 
-def make_labels(price_df, threshold):
-
-    labels = vbt.LEXLB.run(price_df, threshold, threshold).labels
-    labels = ['buy' if x == -1 else 'sell' if x == 1 else 'hold' for x in labels]
-    return labels
-
-
 def calc_labels_stats(price_df, labels):
     
     buy = price_df[np.where(labels == 'buy', True, False)].copy()
@@ -332,9 +324,3 @@ def calc_valuation(stock_list, price_dict, fin_dict):
 
     val_df = rev_growth_df.join(watchlist)
     return val_df
-
-
-def calc_return(price, entry, exits, sl_stop=None, tp_stop=None):
-    
-    pf = vbt.Portfolio.from_signals(price, entries=entry, exits=exits, freq='D', sl_stop=sl_stop, tp_stop=tp_stop)
-    return pf
