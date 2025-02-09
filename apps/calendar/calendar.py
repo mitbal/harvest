@@ -1,6 +1,5 @@
 import os
 import json
-import pickle
 import calendar
 
 import redis
@@ -8,7 +7,6 @@ import pandas as pd
 import streamlit as st
 
 import harvest.plot as hp
-import harvest.data as hd
 
 st.title('Dividend Calendar 2025')
 
@@ -32,7 +30,7 @@ div_score_key = f'{exch}_div_score'
 url = os.environ['REDIS_URL']
 r = redis.from_url(url)
 
-@st.cache_data
+@st.cache_data(ttl=60*60)
 def get_data_from_redis(key):
     j = r.get(key)
     return pd.DataFrame(json.loads(j))
@@ -54,7 +52,6 @@ if sl == 'JKSE':
 else:
     show_next_year = False
 
-# st.dataframe(df)
 cal = hp.plot_dividend_calendar(df, show_next_year=False, sl=sl)
 st.altair_chart(cal)
 
