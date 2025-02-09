@@ -5,7 +5,6 @@ import time
 import redis
 import numpy as np
 import pandas as pd
-import altair as alt
 import streamlit as st
 from datetime import date, datetime, timedelta
 
@@ -120,7 +119,7 @@ def get_div_score_table(key='jkse_div_score'):
     return final_df.set_index('stock')
 
 
-@st.cache_data
+@st.cache_data(ttl=60*60)
 def get_specific_stock_detail(stock_name):
 
     n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
