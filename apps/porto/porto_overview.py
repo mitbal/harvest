@@ -157,7 +157,7 @@ achieve_percentage = annual_dividend / target * 100 / 1_000_000
 total_yield_on_cost = annual_dividend / total_investment * 100
 
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
-                 'yield_on_cost', 'yield_on_price', 'total_dividend', 'numDividendYear', 'avgAnnualDivIncrease']].copy(deep=True)
+                 'yield_on_cost', 'yield_on_price', 'total_dividend']].copy(deep=True)
 
 
 # Overall summary
@@ -207,6 +207,9 @@ with st.container(border=True):
             ),
             'last_price': st.column_config.NumberColumn(
                 'Last Price',
+            ),
+            'total_dividend': st.column_config.NumberColumn(
+                'Total Dividend',
             )
         }
 
