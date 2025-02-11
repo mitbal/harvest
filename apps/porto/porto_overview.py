@@ -198,6 +198,15 @@ with st.container(border=True):
             'div_rate': st.column_config.NumberColumn(
                 'Last Dividend Paid',
                 format='%.0f'
+            ),
+            'avg_price': st.column_config.NumberColumn(
+                'Average Price',
+            ),
+            'total_invested': st.column_config.NumberColumn(
+                'Total Invested',
+            ),
+            'last_price': st.column_config.NumberColumn(
+                'Last Price',
             )
         }
 
