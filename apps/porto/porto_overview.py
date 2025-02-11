@@ -130,7 +130,7 @@ df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype
 df['total_invested'] = df['current_lot'] * df['avg_price'] * 100
 df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
 df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
-df['total_dividend'] = df['div_rate'] * df['current_lot'] * 100
+df['total_dividend'] = (df['div_rate'] * df['current_lot'] * 100).astype(int)
 
 incs = []
 years = []
