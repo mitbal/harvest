@@ -1,6 +1,8 @@
 import streamlit as st
 from streamlit_lottie import st_lottie
 
+#### Setup and configuration
+
 st.set_page_config(
     page_title='Panen Dividen',
     page_icon='🪙',
@@ -9,6 +11,14 @@ st.set_page_config(
 
 st.title('Panen Dividen')
 
+if 'porto_file' not in st.session_state:
+    st.session_state['porto_file'] = 'EMPTY'
+if 'history_file' not in st.session_state:
+    st.session_state['history_file'] = 'EMPTY'
+
+#### End of setup and configuration
+
+#### Main content of Landing Page
 cols = st.columns([0.35, 0.65])
 
 with cols[0]:
