@@ -17,6 +17,14 @@ GA_SCRIPT = """
 </script>
 """
 
+META_TAG = """
+<html lang="en" prefix="og: http://ogp.me/ns#">
+<meta property="og:image" content="https://github.com/mitbal/harvest/blob/master/asset/calendar.png?raw=true" />
+
+<meta name="description" content="Panen Dividen is a web application to help you build, track, and monitor your investment portfolio." />
+<meta name="keywords" content="investment, portfolio, tracking, monitoring, dividend, stock, mutual fund, ETF, index fund, bond, real estate, cryptocurrency, forex, commodity" />
+"""
+
 def inject_ga():
     
     index_path = pathlib.Path(st.__file__).parent / "static" / "index.html"
@@ -29,6 +37,7 @@ def inject_ga():
             shutil.copy(index_path, bck_index)
         html = str(soup)
         new_html = html.replace('<head>', '<head>\n' + GA_SCRIPT)
+        new_html = new_html.replace('<html lang="en">', META_TAG)
         index_path.write_text(new_html)
 
 inject_ga()
