@@ -15,6 +15,8 @@ COPY home.py ./home.py
 COPY add_ga.py ./add_ga.py
 COPY README.md ./README.md
 COPY Makefile ./Makefile
+COPY *.html ./*.html
+COPY static/sitemap.txt ./static/sitemap.txt
 COPY .streamlit/config.toml ./.streamlit/config.toml
 
 EXPOSE 8501
