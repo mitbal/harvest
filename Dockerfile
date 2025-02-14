@@ -12,7 +12,7 @@ COPY apps ./apps
 COPY harvest ./harvest
 COPY main.py ./main.py
 COPY home.py ./home.py
-COPY add_ga.py ./add_ga.py
+COPY prep_index_html.py ./prep_index_html.py
 COPY README.md ./README.md
 COPY Makefile ./Makefile
 COPY style.html ./style.html
