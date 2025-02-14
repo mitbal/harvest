@@ -4,16 +4,17 @@ import pathlib
 import streamlit as st
 from bs4 import BeautifulSoup
 
-GA_ID = "google_analytics"
+GA_ID = 'google_analytics'
+GA_TAG_ID = 'G-V434YW6FCJ'
 GA_SCRIPT = """
 <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-V434YW6FCJ"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id={0}"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
 
-  gtag('config', 'G-V434YW6FCJ');
+  gtag('config', '{0}');
 </script>
 """
 
@@ -36,7 +37,7 @@ def inject_ga():
         else:
             shutil.copy(index_path, bck_index)
         html = str(soup)
-        new_html = html.replace('<head>', '<head>\n' + GA_SCRIPT)
+        new_html = html.replace('<head>', '<head>\n' + GA_SCRIPT.format(GA_TAG_ID))
         new_html = new_html.replace('<html lang="en">', META_TAG)
         index_path.write_text(new_html)
 
