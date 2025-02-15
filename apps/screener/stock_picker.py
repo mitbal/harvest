@@ -189,7 +189,10 @@ with full_table_section:
                 max_value=100,
                 step=0.01,
                 format="%.02f",
-            )
+            ),
+            'mktCap': st.column_config.NumberColumn(
+                'Market Cap',
+            ),
         }
 
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
