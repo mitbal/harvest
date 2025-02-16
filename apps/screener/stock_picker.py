@@ -182,16 +182,22 @@ with full_table_section:
     with tabs[0]:
 
         cfig={
-            "yield": st.column_config.NumberColumn(
-                "Yield (in pct)",
-                help="The dividend yield on the current price",
+            'yield': st.column_config.NumberColumn(
+                'Dividend Yield (in pct)',
+                help='The dividend yield on the current price',
                 min_value=0,
                 max_value=100,
                 step=0.01,
-                format="%.02f",
+                format='%.02f',
             ),
             'mktCap': st.column_config.NumberColumn(
                 'Market Cap',
+                help='Market Capitalization on the current price'
+            ),
+            'lastDiv': st.column_config.NumberColumn(
+                'Last Dividend',
+                help='Last Dividend Paid in Last/Current Fiscal Year',
+                format='%.02f',
             ),
         }
 
