@@ -3,6 +3,13 @@ import numpy as np
 import pandas as pd
 import altair as alt
 
+
+def format_currency():
+    return  "datum.value >= 1000000000000 ? format(datum.value/1000000000000, ',.0f') + ' T' : " +\
+            "datum.value >= 1000000000 ? format(datum.value/1000000000, ',.0f') + ' B' : " +\
+            "format(datum.value/1000000, ',.0f') + ' M'"
+
+
 def plot_financial(fin_df, period='quarter', metric='netIncome'):
     
     if period == 'quarter':
@@ -19,13 +26,15 @@ def plot_yearly_income(fin_df, metric):
 
 def plot_quarter_income(fin_df, metric):
 
-    chart = alt.Chart(fin_df[fin_df['calendarYear'] > '2016']).mark_bar().encode(
+    chart = alt.Chart(fin_df).mark_bar().encode(
         x=alt.X('period'),
-        y=alt.Y(metric),
+        y=alt.Y(metric, axis=alt.Axis(
+            labelExpr=format_currency()
+        )),
         color='period',
         column='calendarYear'
     ).properties(
-        width=100
+        height=300
     )
 
     return chart
@@ -254,6 +263,5 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
         domain = np.array(domain) / 10
     
     cal = lesley.calendar_plot(div_df['date'], div_df['yield'], 
-                               show_date=True, cmap='Greens', domain=domain,
-                               )
+                               show_date=True, cmap='Greens', domain=domain, nrows=2)
     return cal
