@@ -5,6 +5,7 @@ import pandas as pd
 from tqdm import tqdm
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
+from concurrent.futures import ThreadPoolExecutor
 
 import harvest.data as hd
 
@@ -72,14 +73,20 @@ def download_shares_outstanding(stock_list):
 
 
 @flow
-def download_prices(stock_list, start_from=None):
+def download_prices(stock_list, start_from=None, max_concurrency=10):  # Added max_concurrency as flow parameter
+    """Download price data in parallel using ThreadPoolExecutor."""
 
     prices = {}
-    for stock in tqdm(stock_list):
-        future = download_single_price.submit(stock, start_from)
-        result = future.result()
-        if result is not None:
-            prices[stock] = result
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        futures = {executor.submit(download_single_price, stock, start_from): stock for stock in stock_list}
+        for future in tqdm(futures, desc="Downloading prices"):
+            stock = futures[future]
+            try:
+                result = future.result()
+                if result is not None:
+                    prices[stock] = result
+            except Exception as e:
+                print(f"Error downloading price for {stock}: {e}")
 
     return prices
 
@@ -94,13 +101,23 @@ def download_single_price(stock, start_from):
         return None
 
 @flow
-def download_financials(stock_list):
-    
-    financials = {}
-    for stock in tqdm(stock_list):
-        financials[stock] = download_single_fin(stock)
+def download_financials(stock_list, start_from=None, max_concurrency=10):  # Added max_concurrency as flow parameter
+    """Download price data in parallel using ThreadPoolExecutor."""
 
-    return financials
+    fins = {}
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        futures = {executor.submit(download_single_fin, stock): stock for stock in stock_list}
+        for future in tqdm(futures, desc="Downloading financials data"):
+            stock = futures[future]
+            try:
+                result = future.result()
+                if result is not None:
+                    fins[stock] = result
+            except Exception as e:
+                print(f"Error downloading financial data for {stock}: {e}")
+
+    return fins
+
 
 @task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
 def download_single_fin(stock):
@@ -123,4 +140,4 @@ def download_dividends(stock_list):
 if __name__ == '__main__':
     
     download_all(start_from='2000-01-01', exch='jkse')
-    # download_all(start_from='2000-01-01', exch='sp500')
+    download_all(start_from='2000-01-01', exch='sp500')
