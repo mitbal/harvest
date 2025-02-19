@@ -20,7 +20,9 @@ def plot_financial(fin_df, period='quarter', metric='netIncome'):
 def plot_yearly_income(fin_df, metric):
     chart = alt.Chart(fin_df).mark_bar().encode(
         x=alt.X('calendarYear'),
-        y=alt.Y(f'sum({metric}):Q'),
+        y=alt.Y(f'sum({metric}):Q', axis=alt.Axis(
+            labelExpr=format_currency()
+        )),
     )
     return chart
 
