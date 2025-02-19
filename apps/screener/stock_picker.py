@@ -241,7 +241,8 @@ with st.expander('Financial Information', expanded=False):
     metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
     
     fin_chart = hp.plot_financial(fin, period=period, metric=metric)
-    st.altair_chart(fin_chart)
+    with st.container(height=500):
+        st.altair_chart(fin_chart, use_container_width=False)
 
 with st.expander('Price Movement', expanded=False):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
