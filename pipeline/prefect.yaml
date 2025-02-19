@@ -1,0 +1,55 @@
+deployments:
+- name: daily-panen-jkse
+  entrypoint: daily_panen_data.py:run_daily
+  work_pool:
+    name: default
+    work_queue_name:
+    job_variables: {}
+  schedule:
+    cron: 0 0 * * *
+    timezone: Asia/Jakarta
+  parameters:
+    exch: jkse
+    mcap_filter: 100000000000
+  tags:
+  - dividend
+  - jkse
+  version:
+  concurrency_limit:
+  description:
+  schedules:
+  - cron: 0 0 * * *
+    timezone: Asia/Jakarta
+    day_or: true
+    active: true
+  pull:
+  - prefect.deployments.steps.git_clone:
+      repository: git@github.com:mitbal/harvest.git
+      branch: master
+- name: daily-panen-sp500
+  entrypoint: daily_panen_data.py:run_daily
+  work_pool:
+    name: default
+    work_queue_name:
+    job_variables: {}
+  schedule:
+    cron: 0 0 * * *
+    timezone: America/New_York
+  parameters:
+    exch: sp500
+    mcap_filter: 10000000000
+  tags:
+  - dividend
+  - sp500
+  version:
+  concurrency_limit:
+  description:
+  schedules:
+  - cron: 0 0 * * *
+    timezone: America/New_York
+    day_or: true
+    active: true
+  pull:
+  - prefect.deployments.steps.git_clone:
+      repository: git@github.com:mitbal/harvest.git
+      branch: master
