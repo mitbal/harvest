@@ -1,6 +1,6 @@
 deployments:
 - name: daily-panen-jkse
-  entrypoint: daily_panen_data.py:run_daily
+  entrypoint: pipeline/daily_panen_data.py:run_daily
   work_pool:
     name: default
     work_queue_name:
@@ -27,7 +27,7 @@ deployments:
       repository: git@github.com:mitbal/harvest.git
       branch: master
 - name: daily-panen-sp500
-  entrypoint: daily_panen_data.py:run_daily
+  entrypoint: pipeline/daily_panen_data.py:run_daily
   work_pool:
     name: default
     work_queue_name:
