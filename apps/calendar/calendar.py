@@ -9,6 +9,10 @@ import streamlit as st
 import harvest.plot as hp
 
 st.title('Dividend Calendar 2025')
+try:
+    st.set_page_config(layout='wide')
+except Exception as e:
+    print('Set Page config has been called before')
 
 sl = st.segmented_control(label='Stock List', 
                          options=['JKSE', 'S&P500'],
