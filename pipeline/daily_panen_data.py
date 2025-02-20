@@ -44,6 +44,12 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
     financials = download_financials(stock_list)
     dividends = download_dividends(stock_list)
 
+    if exch == 'jkse':
+        syariah = pd.read_csv(f'data/{exch}/syariah.csv', sep=';')
+        syariah['symbol'] = syariah['Kode'].apply(lambda x: x+'.JK')
+        cp_df = cp_df.merge(syariah, on='symbol', how='left')
+        cp_df['is_syariah'] = ~cp['Kode'].isnull()
+
     div_stats = compute_div_score(cp_df, financials, dividends, sl=exch)
     store_df_to_redis(f'div_score_{exch}', div_stats.reset_index())
 
