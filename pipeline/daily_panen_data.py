@@ -5,7 +5,6 @@ from datetime import timedelta, datetime
 import redis
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
 from concurrent.futures import ThreadPoolExecutor
@@ -38,7 +37,7 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
     else:
         raise ValueError('exch must be either jkse or sp500')
     
-    stock_list = idxs['symbol'].to_list()[:20]
+    stock_list = idxs['symbol'].to_list()
     
     cp_df = hd.get_company_profile(stock_list)
     financials = download_financials(stock_list)
@@ -48,7 +47,7 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
         syariah = pd.read_csv(f'data/{exch}/syariah.csv', sep=';')
         syariah['symbol'] = syariah['Kode'].apply(lambda x: x+'.JK')
         cp_df = cp_df.merge(syariah, on='symbol', how='left')
-        cp_df['is_syariah'] = ~cp['Kode'].isnull()
+        cp_df['is_syariah'] = ~cp_df['Kode'].isnull()
 
     div_stats = compute_div_score(cp_df, financials, dividends, sl=exch)
     store_df_to_redis(f'div_score_{exch}', div_stats.reset_index())
@@ -64,7 +63,7 @@ def download_financials(stock_list, max_concurrency=10):  # Added max_concurrenc
     fins = {}
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
         futures = {executor.submit(download_single_fin, stock): stock for stock in stock_list}
-        for future in tqdm(futures, desc="Downloading financials data"):
+        for future in futures:
             stock = futures[future]
             try:
                 result = future.result()
