@@ -16,7 +16,7 @@ deployments:
   description:
   pull:
   - prefect.deployments.steps.git_clone:
-      repository: git@github.com:mitbal/harvest.git
+      repository: https://github.com/mitbal/harvest.git
       branch: master
   schedules:
   - cron: 0 0 * * *
@@ -40,7 +40,7 @@ deployments:
   description:
   pull:
   - prefect.deployments.steps.git_clone:
-      repository: git@github.com:mitbal/harvest.git
+      repository: https://github.com/mitbal/harvest.git
       branch: master
   schedules:
   - cron: 0 0 * * *
