@@ -44,6 +44,10 @@ def inject_ga():
     
     index_path = pathlib.Path(st.__file__).parent / "static" / "index.html"
     soup = BeautifulSoup(index_path.read_text(), features="html.parser")
+    
+    soup.find('title').string = 'Panen Dividen - Aplikasi Monitoring Portofolio & Saham Dividen'
+    soup.find('noscript').string = 'Panen dividen adalah aplikasi monitoring portofolio dan saham dividen. Pantau portofolio investasi Anda dan dapatkan informasi riwayat dividen, jadwal pembayaran, dan analisis kinerja portofolio secara gratis.'
+
     if not soup.find(id=GA_ID):
         bck_index = index_path.with_suffix('.bck')
         if bck_index.exists():
