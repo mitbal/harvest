@@ -19,11 +19,21 @@ GA_SCRIPT = """
 """
 
 META_TAG = """
-<html lang="en" prefix="og: http://ogp.me/ns#">
+<html lang="id-ID" prefix="og: http://ogp.me/ns#">
 <meta property="og:image" content="https://github.com/mitbal/harvest/blob/master/asset/calendar.png?raw=true" />
 
-<meta name="description" content="Panen Dividen is a web application to help you build, track, and monitor your investment portfolio." />
-<meta name="keywords" content="investment, portfolio, tracking, monitoring, dividend, stock, mutual fund, ETF, index fund, bond, real estate, cryptocurrency, forex, commodity" />
+<meta name="description" content="Panen Dividen - Pantau portofolio investasi dan saham dividen Anda. Dapatkan informasi riwayat dividen, jadwal pembayaran, dan analisis kinerja portofolio secara gratis." />
+<meta name="description" lang="en" content="Panen Dividen - Track your dividend stocks and investment portfolio with our free tools. Get insights on dividend history, payment schedules, and portfolio performance analysis." />
+
+<meta name="keywords" content="investasi, portofolio, saham, dividen, reksa dana, ETF, obligasi, cryptocurrency, forex, komoditas, analisis saham, pasar modal indonesia, idx, bei, bursa efek indonesia, saham dividen" />
+<meta name="keywords" lang="en" content="investment, portfolio, tracking, monitoring, dividend, stock, mutual fund, ETF, index fund, bond, real estate, cryptocurrency, forex, commodity" />
+
+<meta property="og:title" content="Panen Dividen - Aplikasi Monitoring Portofolio & Saham Dividen" />
+<meta property="og:description" content="Pantau portofolio investasi dan saham dividen Anda. Dapatkan informasi riwayat dividen, jadwal pembayaran, dan analisis kinerja portofolio secara gratis." />
+<meta property="og:locale" content="id_ID" />
+<meta property="og:locale:alternate" content="en_US" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://panendividen.com" />
 """
 
 FAVICON_TAG = """
