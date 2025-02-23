@@ -85,11 +85,32 @@ def download_single_fin(stock):
         print(f'Error downloading financial report {stock}: {e}')
         return None
 
-@task
-def download_dividends(stock_list):
+@flow
+def download_dividends(stock_list, max_concurrency=10):
+    """Download dividend data in parallel using ThreadPoolExecutor."""
 
-    dividends = hd.get_dividend_history(stock_list)
+    dividends = {}
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        futures = {executor.submit(download_single_dividend, stock): stock for stock in stock_list}
+        for future in futures:
+            stock = futures[future]
+            try:
+                result = future.result()
+                if result is not None:
+                    dividends[stock] = result
+            except Exception as e:
+                print(f"Error downloading dividend data for {stock}: {e}")
     return dividends
+
+@task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
+def download_single_dividend(stock):
+    print(f'download dividend history for {stock}')
+    try:
+        div = hd.get_dividend_history_single_stock(stock)
+        return div
+    except Exception as e:
+        print(f'Error downloading dividend history for {stock}: {e}')
+        return None
 
 def prep_div_cal(cp, div_dict, filter):
 
