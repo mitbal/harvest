@@ -26,6 +26,10 @@ META_TAG = """
 <meta name="keywords" content="investment, portfolio, tracking, monitoring, dividend, stock, mutual fund, ETF, index fund, bond, real estate, cryptocurrency, forex, commodity" />
 """
 
+FAVICON_TAG = """
+<link rel="icon" href="https://github.com/mitbal/harvest/blob/master/asset/favicon.png?raw=true" type="image/png">
+"""
+
 def inject_ga():
     
     index_path = pathlib.Path(st.__file__).parent / "static" / "index.html"
@@ -37,7 +41,7 @@ def inject_ga():
         else:
             shutil.copy(index_path, bck_index)
         html = str(soup)
-        new_html = html.replace('<head>', '<head>\n' + GA_SCRIPT.replace('GA_TAG_ID',GA_TAG_ID))
+        new_html = html.replace('<head>', '<head>\n' + GA_SCRIPT.replace('GA_TAG_ID',GA_TAG_ID) + '\n' + FAVICON_TAG)
         new_html = new_html.replace('<html lang="en">', META_TAG)
         index_path.write_text(new_html)
 
