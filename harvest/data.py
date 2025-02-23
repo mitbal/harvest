@@ -88,6 +88,52 @@ def get_company_ratio(stock, api_key):
     return pd.DataFrame(ratio)
 
 
+def get_dividend_history_single_stock(stock, api_key=None):
+    """
+    Downloads dividend history for a single stock from Financial Modeling Prep and returns it as a Pandas DataFrame.
+
+    Args:
+        stock (str): The stock symbol (e.g., "AAPL").
+        api_key (str, optional): Your Financial Modeling Prep API key.
+                                 If not provided, it will be read from the
+                                 'FMP_API_KEY' environment variable. Defaults to None.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the dividend history, indexed by date,
+                          with columns 'dividend' and 'adjDividend'. Returns None
+                          if no dividends are found or if an error occurs.
+    """
+    if api_key is None:
+        api_key = os.environ['FMP_API_KEY']
+
+    dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stock}?apikey={api_key}'
+    try:
+        dr = requests.get(dividend_history_url)
+        dr.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        drj = dr.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching dividend history for {stock}: {e}")
+        return None
+
+    if drj and 'historical' in drj:
+        try:
+            div_list = drj['historical']
+            df = pd.DataFrame(div_list)
+            if not df.empty:
+                df['date'] = pd.to_datetime(df['date'])  # Ensure 'date' is datetime
+                return df
+            else:
+                print(f"No historical dividend data found for {stock}.")
+                return None
+        except KeyError:
+            print(f"No historical dividend data found for {stock}.")
+            return None
+
+    else:
+        print(f"No data received for {stock}.")
+        return None
+
+
 def get_dividend_history(stocks, api_key=None):
     
     if api_key is None:
