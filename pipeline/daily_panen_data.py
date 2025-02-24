@@ -59,7 +59,7 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
 
 
 @flow
-def download_financials(stock_list, max_concurrency=10):  # Added max_concurrency as flow parameter
+def download_financials(stock_list, max_concurrency=5):  # Added max_concurrency as flow parameter
     """Download price data in parallel using ThreadPoolExecutor."""
 
     fins = {}
@@ -107,7 +107,7 @@ def download_single_fin(stock):
         return None
 
 @flow
-def download_dividends(stock_list, max_concurrency=10):
+def download_dividends(stock_list, max_concurrency=5):
     """Download dividend data in parallel using ThreadPoolExecutor."""
 
     dividends = {}
@@ -193,7 +193,7 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     df['avgPctAnnualDivIncrease'] = np.nan
     df['numDividendYear'] = np.nan
     df['positiveYear'] = np.nan
-    df['positiveYear'] = np.nan
+    df['numOfYear'] = np.nan
 
     stock_list = df.index.tolist()
     for symbol in stock_list:
