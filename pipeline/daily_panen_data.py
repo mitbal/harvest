@@ -54,12 +54,12 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
     div_stats = compute_div_score(cp_df, financials, dividends, sl=exch)
     store_df_to_redis(f'div_score_{exch}', div_stats.reset_index())
 
-    div_cal = prep_div_cal(cp_df, financials, dividends, filter=mcap_filter)
+    div_cal = prep_div_cal(cp_df, dividends, filter=mcap_filter)
     store_df_to_redis(f'div_cal_{exch}', div_cal)
 
 
 @flow
-def download_financials(stock_list, max_concurrency=5):  # Added max_concurrency as flow parameter
+def download_financials(stock_list, max_concurrency=6):  # Added max_concurrency as flow parameter
     """Download price data in parallel using ThreadPoolExecutor."""
 
     fins = {}
@@ -107,7 +107,7 @@ def download_single_fin(stock):
         return None
 
 @flow
-def download_dividends(stock_list, max_concurrency=5):
+def download_dividends(stock_list, max_concurrency=6):
     """Download dividend data in parallel using ThreadPoolExecutor."""
 
     dividends = {}
