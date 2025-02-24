@@ -113,6 +113,7 @@ def download_single_dividend(stock):
         print(f'Error downloading dividend history for {stock}: {e}')
         return None
 
+@task
 def prep_div_cal(cp, div_dict, filter):
 
     cp = cp[cp['mktCap'] >= filter].copy()
@@ -142,7 +143,7 @@ def prep_div_cal(cp, div_dict, filter):
 
     return div_2024
 
-
+@task
 def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     
     df = cp_df[(cp_df['isActivelyTrading']) & (cp_df['lastDiv'] != 0)].copy()
@@ -157,7 +158,7 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
                     
-            div_df = pd.DataFrame(div_dict[symbol])
+            div_df = div_dict[symbol]
             div_df = hd.preprocess_div(div_df)
             div_stats = hd.calc_div_stats(div_df)
             
