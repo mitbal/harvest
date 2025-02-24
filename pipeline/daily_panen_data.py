@@ -8,6 +8,7 @@ import pandas as pd
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
 from concurrent.futures import ThreadPoolExecutor
+from prefect.artifacts import create_markdown_artifact
 
 import harvest.data as hd
 
@@ -73,10 +74,29 @@ def download_financials(stock_list, max_concurrency=10):  # Added max_concurrenc
             except Exception as e:
                 print(f"Error downloading financial data for {stock}: {e}")
 
+    # Create artifact to track data completeness
+    total_stocks = len(stock_list)
+    successful_downloads = len(fins)
+    failed_downloads = total_stocks - successful_downloads
+    
+    markdown_content = f"""
+    # Financial Data Download Summary
+    - Total stocks processed: {total_stocks}
+    - Successful downloads: {successful_downloads} 
+    - Failed downloads: {failed_downloads}
+    - Success rate: {(successful_downloads/total_stocks)*100:.1f}%
+    """
+    
+    create_markdown_artifact(
+        key="financial-data-summary",
+        markdown=markdown_content,
+        description="Summary of financial data download completeness"
+    )
+
     return fins
 
 
-@task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
+@task(log_prints=True, retries=3, retry_delay_seconds=10)
 def download_single_fin(stock):
     print(f'download financial report {stock}')
     try:
@@ -101,9 +121,28 @@ def download_dividends(stock_list, max_concurrency=10):
                     dividends[stock] = result
             except Exception as e:
                 print(f"Error downloading dividend data for {stock}: {e}")
+    
+    total_stocks = len(stock_list)
+    successful_downloads = len(dividends)
+    failed_downloads = total_stocks - successful_downloads
+
+    markdown_content = f"""
+    # Dividend Data Download Summary
+    - Total stocks processed: {total_stocks}
+    - Successful downloads: {successful_downloads}
+    - Failed downloads: {failed_downloads} 
+    - Success rate: {(successful_downloads/total_stocks)*100:.1f}%
+    """
+
+    create_markdown_artifact(
+        key="dividend-data-summary", 
+        markdown=markdown_content,
+        description="Summary of dividend data download completeness"
+    )
+    
     return dividends
 
-@task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
+@task(log_prints=True, retries=3, retry_delay_seconds=10)
 def download_single_dividend(stock):
     print(f'download dividend history for {stock}')
     try:
@@ -148,6 +187,13 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     
     df = cp_df[(cp_df['isActivelyTrading']) & (cp_df['lastDiv'] != 0)].copy()
     df['yield'] = df['lastDiv'] / df['price'] * 100
+    df['revenueGrowth'] = np.nan
+    df['netIncomeGrowth'] = np.nan
+    df['avgFlatAnnualDivIncrease'] = np.nan
+    df['avgPctAnnualDivIncrease'] = np.nan
+    df['numDividendYear'] = np.nan
+    df['positiveYear'] = np.nan
+    df['positiveYear'] = np.nan
 
     stock_list = df.index.tolist()
     for symbol in stock_list:
