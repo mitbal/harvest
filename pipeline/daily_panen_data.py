@@ -49,7 +49,7 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
         syariah['symbol'] = syariah['Kode'].apply(lambda x: x+'.JK')
         cp_df = cp_df.merge(syariah, on='symbol', how='left')
         cp_df['is_syariah'] = ~cp_df['Kode'].isnull()
-    cp_df.set_index('symbol', inplace=True)
+        cp_df.set_index('symbol', inplace=True)
 
     div_stats = compute_div_score(cp_df, financials, dividends, sl=exch)
     store_df_to_redis(f'div_score_{exch}', div_stats.reset_index())
