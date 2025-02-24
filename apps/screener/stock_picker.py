@@ -11,11 +11,12 @@ from datetime import date, datetime, timedelta
 import harvest.plot as hp
 import harvest.data as hd
 
-st.title('Jajan Saham')
 try:
     st.set_page_config(layout='wide')
 except Exception as e:
     print('Set Page config has been called before')
+
+st.title('Jajan Saham')
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
