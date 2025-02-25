@@ -237,7 +237,7 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     """
 
     create_markdown_artifact(
-        key="Dividend Score Summary",
+        key="div-score-summary",
         markdown=markdown_content,
         description= "The summary for dividend score calculation"
     )
