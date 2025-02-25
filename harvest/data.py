@@ -120,7 +120,6 @@ def get_dividend_history_single_stock(stock, api_key=None):
             div_list = drj['historical']
             df = pd.DataFrame(div_list)
             if not df.empty:
-                df['date'] = pd.to_datetime(df['date'])  # Ensure 'date' is datetime
                 return df
             else:
                 print(f"No historical dividend data found for {stock}.")
