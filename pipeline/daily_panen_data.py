@@ -8,7 +8,7 @@ import pandas as pd
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
 from concurrent.futures import ThreadPoolExecutor
-from prefect.artifacts import create_markdown_artifact
+from prefect.artifacts import create_markdown_artifact, create_table_artifact
 
 import harvest.data as hd
 
@@ -224,6 +224,23 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     
     # patented dividend score
     df['DScore'] = hd.calc_div_score(df)
+
+    create_table_artifact(
+        key="div-score-table",
+        table=df.to_dict(orient='records'),
+        description= "The final table of dividend score"
+    )
+
+    markdown_content = f"""
+    # Dividend Score Summary
+    Number of non-null score: {df[df['DScore'].notnull()].shape[0]}
+    """
+
+    create_markdown_artifact(
+        key="Dividend Score Summary",
+        markdown=markdown_content,
+        description= "The summary for dividend score calculation"
+    )
 
     if sl == 'jkse':
         features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'is_syariah',
