@@ -44,6 +44,6 @@ deployments:
       branch: master
   schedules:
   - cron: 0 0 * * *
-    timezone: Asia/Jakarta
+    timezone: America/New_York
     day_or: true
     active: true
