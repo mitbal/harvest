@@ -14,8 +14,8 @@ import harvest.data as hd
 
 
 DEFAULT_RETRIES = 3
-DEFAULT_RETRY_DELAY = 60
-DEFAULT_MAX_CONCURRENCY = 4
+DEFAULT_RETRY_DELAY = 30
+DEFAULT_MAX_CONCURRENCY = 5
 
 
 def store_df_to_redis(key: str, df: pd.DataFrame) -> None:
@@ -73,98 +73,77 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
 
 
 @flow
-def download_financials(stock_list, max_concurrency=DEFAULT_MAX_CONCURRENCY):
-    """Download price data in parallel using ThreadPoolExecutor."""
+def download_financials(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
+    """Download financial data in parallel using ThreadPoolExecutor."""
+    return _download_data(stock_list, download_single_fin, "financial", max_concurrency)
 
-    fins = {}
+
+@flow
+def download_dividends(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
+    """Download dividend data in parallel using ThreadPoolExecutor."""
+    return _download_data(stock_list, download_single_dividend, "dividend", max_concurrency)
+
+
+def _download_data(stock_list, download_func, data_type, max_concurrency):
+    """
+    Helper function to download data in parallel.
+    """
+    data = {}
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-        futures = {executor.submit(download_single_fin, stock): stock for stock in stock_list}
+        futures = {executor.submit(download_func, stock): stock for stock in stock_list}
         for future in futures:
             stock = futures[future]
             try:
                 result = future.result()
                 if result is not None:
-                    fins[stock] = result
+                    data[stock] = result
             except Exception as e:
-                print(f"Error downloading financial data for {stock}: {e}")
+                print(f"Error downloading {data_type} data for {stock}: {e}")
 
     # Create artifact to track data completeness
     total_stocks = len(stock_list)
-    successful_downloads = len(fins)
+    successful_downloads = len(data)
     failed_downloads = total_stocks - successful_downloads
-    
+
     markdown_content = f"""
-    # Financial Data Download Summary
+    # {data_type.capitalize()} Data Download Summary
     - Total stocks processed: {total_stocks}
     - Successful downloads: {successful_downloads} 
     - Failed downloads: {failed_downloads}
     - Success rate: {(successful_downloads/total_stocks)*100:.1f}%
     """
-    
+
     create_markdown_artifact(
-        key="financial-data-summary",
+        key=f"{data_type}-data-summary",
         markdown=markdown_content,
-        description="Summary of financial data download completeness"
+        description=f"Summary of {data_type} data download completeness"
     )
 
-    return fins
-
+    return data
 
 @task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
-def download_single_fin(stock):
+def download_single_fin(stock: str):
+    """Downloads a single financial report."""
     print(f'download financial report {stock}')
     try:
         fin = hd.get_financial_data(stock, period='quarter')
         return fin
     except Exception as e:
         print(f'Error downloading financial report {stock}: {e}')
-        return None
+        raise e
 
-@flow
-def download_dividends(stock_list, max_concurrency=DEFAULT_MAX_CONCURRENCY):
-    """Download dividend data in parallel using ThreadPoolExecutor."""
-
-    dividends = {}
-    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-        futures = {executor.submit(download_single_dividend, stock): stock for stock in stock_list}
-        for future in futures:
-            stock = futures[future]
-            try:
-                result = future.result()
-                if result is not None:
-                    dividends[stock] = result
-            except Exception as e:
-                print(f"Error downloading dividend data for {stock}: {e}")
-    
-    total_stocks = len(stock_list)
-    successful_downloads = len(dividends)
-    failed_downloads = total_stocks - successful_downloads
-
-    markdown_content = f"""
-    # Dividend Data Download Summary
-    - Total stocks processed: {total_stocks}
-    - Successful downloads: {successful_downloads}
-    - Failed downloads: {failed_downloads} 
-    - Success rate: {(successful_downloads/total_stocks)*100:.1f}%
-    """
-
-    create_markdown_artifact(
-        key="dividend-data-summary", 
-        markdown=markdown_content,
-        description="Summary of dividend data download completeness"
-    )
-    
-    return dividends
 
 @task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
-def download_single_dividend(stock):
+def download_single_dividend(stock: str):
+    """Downloads dividend history for a single stock."""
     print(f'download dividend history for {stock}')
     try:
         div = hd.get_dividend_history_single_stock(stock)
         return div
     except Exception as e:
         print(f'Error downloading dividend history for {stock}: {e}')
-        return None
+        raise e
+
 
 @task
 def prep_div_cal(cp, div_dict, filter):
