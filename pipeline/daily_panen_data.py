@@ -198,7 +198,7 @@ def prep_div_cal(cp, div_dict, filter):
 
 
 @task
-def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: str = JKSE) -> pd.DataFrame:
+def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: str = 'jkse') -> pd.DataFrame:
     """Computes the dividend score for each stock."""
 
     df = cp_df[(cp_df['isActivelyTrading']) & (cp_df['lastDiv'] != 0)].copy()
