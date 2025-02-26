@@ -34,24 +34,33 @@ def store_df_to_redis(key: str, df: pd.DataFrame) -> None:
 
 
 @flow
-def run_daily(exch='jkse', mcap_filter=100_000_000_000):
+def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
+    """
+    Runs the daily data pipeline for a given exchange.
 
-    if exch == 'jkse':
-        idxs = hd.get_all_idx_stocks()
-    elif exch == 'sp500':
-        idxs = hd.get_all_sp500_stocks()
-    else:
+    Args:
+        exch:  Exchange ('jkse' or 'sp500').
+        mcap_filter: Market capitalization filter.
+    """
+    if exch not in ('jkse', 'sp500'):
         raise ValueError('exch must be either jkse or sp500')
     
-    stock_list = idxs['symbol'].to_list()
-    
-    cp_df = hd.get_company_profile(stock_list)
-    financials = download_financials(stock_list)
-    dividends = download_dividends(stock_list)
-
     if exch == 'jkse':
+        idxs = hd.get_all_idx_stocks()
         syariah = pd.read_csv(f'data/{exch}/syariah.csv', sep=';')
         syariah['symbol'] = syariah['Kode'].apply(lambda x: x+'.JK')
+    else:
+        idxs = hd.get_all_sp500_stocks()
+        syariah = None
+
+    stock_list = idxs['symbol'].to_list()
+    cp_df = hd.get_company_profile(stock_list)
+    stock_dividend_list = cp_df[(cp_df['lastDiv'] != 0) & (cp_df['isActivelyTrading'])].index.to_list()
+
+    dividends = download_dividends(stock_dividend_list)
+    financials = download_financials(stock_dividend_list)
+
+    if exch == 'jkse':
         cp_df = cp_df.merge(syariah, on='symbol', how='left')
         cp_df['is_syariah'] = ~cp_df['Kode'].isnull()
         cp_df.set_index('symbol', inplace=True)
