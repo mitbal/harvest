@@ -1,16 +1,21 @@
 import os
 import json
-from datetime import timedelta, datetime
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 import redis
 import numpy as np
 import pandas as pd
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
-from concurrent.futures import ThreadPoolExecutor
 from prefect.artifacts import create_markdown_artifact, create_table_artifact
 
 import harvest.data as hd
+
+
+DEFAULT_RETRIES = 3
+DEFAULT_RETRY_DELAY = 60
+DEFAULT_MAX_CONCURRENCY = 5
 
 
 def store_df_to_redis(key, df):
@@ -59,7 +64,7 @@ def run_daily(exch='jkse', mcap_filter=100_000_000_000):
 
 
 @flow
-def download_financials(stock_list, max_concurrency=6):  # Added max_concurrency as flow parameter
+def download_financials(stock_list, max_concurrency=DEFAULT_MAX_CONCURRENCY):
     """Download price data in parallel using ThreadPoolExecutor."""
 
     fins = {}
@@ -96,7 +101,7 @@ def download_financials(stock_list, max_concurrency=6):  # Added max_concurrency
     return fins
 
 
-@task(log_prints=True, retries=3, retry_delay_seconds=10)
+@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
 def download_single_fin(stock):
     print(f'download financial report {stock}')
     try:
@@ -107,7 +112,7 @@ def download_single_fin(stock):
         return None
 
 @flow
-def download_dividends(stock_list, max_concurrency=6):
+def download_dividends(stock_list, max_concurrency=DEFAULT_MAX_CONCURRENCY):
     """Download dividend data in parallel using ThreadPoolExecutor."""
 
     dividends = {}
@@ -142,7 +147,7 @@ def download_dividends(stock_list, max_concurrency=6):
     
     return dividends
 
-@task(log_prints=True, retries=3, retry_delay_seconds=10)
+@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
 def download_single_dividend(stock):
     print(f'download dividend history for {stock}')
     try:
@@ -247,7 +252,7 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     
     create_table_artifact(
         key="div-score-table",
-        table=df[features].to_dict(orient='records'),
+        table=df[features].reset_index().to_dict(orient='records'),
         description= "The final table of dividend score"
     )
 
