@@ -196,9 +196,11 @@ def prep_div_cal(cp, div_dict, filter):
 
     return div_2024
 
+
 @task
-def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
-    
+def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: str = JKSE) -> pd.DataFrame:
+    """Computes the dividend score for each stock."""
+
     df = cp_df[(cp_df['isActivelyTrading']) & (cp_df['lastDiv'] != 0)].copy()
     df['yield'] = df['lastDiv'] / df['price'] * 100
     df['revenueGrowth'] = np.nan
@@ -239,9 +241,19 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
     # patented dividend score
     df['DScore'] = hd.calc_div_score(df)
 
+    features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'is_syariah',
+               'revenueGrowth', 'netIncomeGrowth', 
+               'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
+    
+    if sl == 'jkse':
+        features = ['is_syariah'] + features
+    final_df = df[features]
+
+
     markdown_content = f"""
     # Dividend Score Summary
-    Number of non-null score: {df[df['DScore'].notnull()].shape[0]}
+    Number of non-null score: {final_df[final_df['DScore'].notnull()].shape[0]}
+    Percentage of non-null score: {final_df[final_df['DScore'].notnull()].shape[0] / final_df.shape[0] * 100:.2f}%
     """
 
     create_markdown_artifact(
@@ -249,23 +261,14 @@ def compute_div_score(cp_df, fin_dict, div_dict, sl='jkse'):
         markdown=markdown_content,
         description= "The summary for dividend score calculation"
     )
-
-    if sl == 'jkse':
-        features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'is_syariah',
-               'revenueGrowth', 'netIncomeGrowth', 
-               'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
-    else:
-        features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
-               'revenueGrowth', 'netIncomeGrowth', 
-               'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
     
     create_table_artifact(
         key="div-score-table",
-        table=df[features].reset_index().to_dict(orient='records'),
+        table=final_df.reset_index().to_dict(orient='records'),
         description= "The final table of dividend score"
     )
 
-    return df[features]
+    return final_df
 
 
 if __name__ == '__main__':
