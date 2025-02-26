@@ -15,22 +15,22 @@ import harvest.data as hd
 
 DEFAULT_RETRIES = 3
 DEFAULT_RETRY_DELAY = 60
-DEFAULT_MAX_CONCURRENCY = 5
+DEFAULT_MAX_CONCURRENCY = 4
 
 
-def store_df_to_redis(key, df):
+def store_df_to_redis(key: str, df: pd.DataFrame) -> None:
+    """Stores a Pandas DataFrame to Redis as JSON."""
 
-    url = os.environ['REDIS_URL']
-    r = redis.from_url(url)
-    df_json = json.dumps(df.to_dict(orient='records'))
-
-    today = datetime.now().strftime('%Y-%m-%d')
-
-    data = {}
-    data['date'] = today
-    data['content'] = df_json
-
-    r.set(key, json.dumps(data))
+    redis_url = os.environ['REDIS_URL']
+    r = redis.from_url(redis_url)
+    try:
+        df_json = df.to_json(orient='records')
+        data = {'date': datetime.now().strftime('%Y-%m-%d'), 'content': df_json}
+        r.set(key, json.dumps(data))
+    except redis.exceptions.ConnectionError as e:
+        print(f"Error connecting to Redis: {e}")
+    except Exception as e:
+        print(f"Error storing data to Redis: {e}")
 
 
 @flow
