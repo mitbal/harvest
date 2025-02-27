@@ -112,8 +112,11 @@ def get_div_score_table(key='jkse_div_score'):
     r = connect_redis(redis_url)
     rjson = r.get(key)
     if rjson is not None:
-        final_df = pd.DataFrame(json.loads(rjson))
-    else:    
+        div_score_json = json.loads(rjson)
+        last_updated = div_score_json['date']
+        print('data last updated', last_updated)
+        final_df = pd.DataFrame(json.loads(div_score_json['content']))
+    else:
         # if not found in cache, compute from scratch
         print('redis error, computing dividend score from scratch')
         cp_df = get_company_profile(use_cache=False)
@@ -156,11 +159,11 @@ with full_table_section:
         st.stop()
 
     if sl == 'JKSE':
-        key = 'jkse_div_score'
+        key = 'div_score_jkse'
         mcap_value = 1000
         currency = 'IDR'
     else:
-        key = 'sp500_div_score'
+        key = 'div_score_sp500'
         mcap_value = 100
         currency = 'USD'
 
