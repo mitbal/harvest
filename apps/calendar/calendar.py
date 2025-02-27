@@ -30,8 +30,8 @@ if sl == 'JKSE':
 else:
     exch = 'sp500'
 
-div_cal_key = f'{exch}_div_cal'
-div_score_key = f'{exch}_div_score'
+div_cal_key = f'div_cal_{exch}'
+div_score_key = f'div_score_{exch}'
 
 url = os.environ['REDIS_URL']
 r = redis.from_url(url)
@@ -39,7 +39,12 @@ r = redis.from_url(url)
 @st.cache_data(ttl=60*60)
 def get_data_from_redis(key):
     j = r.get(key)
-    return pd.DataFrame(json.loads(j))
+
+    rjson = json.loads(j)
+    last_updated = rjson['date']
+    print(f'Last Updated: {last_updated}')
+    content = rjson['content']
+    return pd.DataFrame(json.loads(content))
 
 
 df = get_data_from_redis(div_cal_key)
