@@ -220,7 +220,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     # patented dividend score
     df['DScore'] = hd.calc_div_score(df)
 
-    features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 'is_syariah',
+    features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
                'revenueGrowth', 'netIncomeGrowth', 
                'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
     
