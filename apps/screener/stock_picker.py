@@ -3,7 +3,6 @@ import json
 import time
 
 import redis
-import numpy as np
 import pandas as pd
 import streamlit as st
 from datetime import date, datetime, timedelta
@@ -20,84 +19,6 @@ st.title('Jajan Saham')
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
-
-@st.cache_data
-def compute_div_feature(cp_df, div_df):
-
-    df = cp_df.copy()
-    df['yield'] = df['lastDiv'] / df['price'] * 100
-
-    for rows in df.iterrows():
-
-        symbol = rows[0]
-        try:
-            div = pd.DataFrame(json.loads(div_df.loc[symbol, 'historical'].replace("'", '"')))
-        except Exception as e:
-            print('error', symbol)
-            continue
-
-        if df.loc[symbol, 'lastDiv'] == 0:
-            continue
-        
-        try:
-            div['year'] = [x.year for x in pd.to_datetime(div['date'])]
-        except Exception as e:
-            print('error', symbol)
-            continue
-
-        agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-        inc_flat = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
-        inc_pct = inc_flat / agg_year['adjDividend'] * 100
-        avg_flat_annual_increase = np.mean(inc_flat[-4:])
-        # avg_pct_annual_increase = np.nanmedian(inc_pct)
-        avg_pct_annual_increase = np.clip(avg_flat_annual_increase / df.loc[symbol, 'lastDiv'] * 100, 0, 100)
-        df.loc[symbol, 'avgFlatAnnualDivIncrease'] = avg_flat_annual_increase
-        df.loc[symbol, 'avgPctAnnualDivIncrease'] = avg_pct_annual_increase
-        df.loc[symbol, 'numDividendYear'] = len(agg_year)
-        df.loc[symbol, 'positiveYear'] = np.sum(inc_flat > 0)
-        df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
-    
-    # patented dividend score
-    df['DScore'] = (df['lastDiv'] + df['avgFlatAnnualDivIncrease']*4)/df['price'] * (df['numDividendYear'] / (df['numOfYear']+25)/2) * (df['positiveYear'] / (df['numOfYear']+25)/2) * 100
-
-    return df[['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate', 
-               'avgFlatAnnualDivIncrease', 'avgPctAnnualDivIncrease', 'numDividendYear', 'DScore']]
-
-
-@st.cache_data
-def get_company_profile(use_cache=False):
-    
-    bei = hd.get_all_idx_stocks(api_key=api_key)
-    cp_df = hd.get_company_profile(bei['symbol'], api_key=api_key)
-
-    return cp_df
-
-
-def get_historical_dividend(use_cache=True):
-    
-    if use_cache:
-        div_df = pd.read_csv('data/dividend_historical.csv').set_index('symbol')
-    else:
-        div_df  = pd.DataFrame()
-    
-    return div_df
-
-
-def calc_statistics(full, market_cap_filter, dividend_filter):
-
-    num_of_all_stocks = len(full)
-    num_filtered_market_cap = len(full[full['mktCap'] > market_cap_filter*1000_000_1000])
-    num_filtered_dividend_year = len(full[full['numDividendYear'] > dividend_filter])
-
-    text = f"""
-    Statistics as of {datetime.today().strftime('%Y-%m-%d')}  
-    Number of stocks in Jakarta Stock Exchange is {num_of_all_stocks}  
-    Number of stocks that have market capitalization above {market_cap_filter}B Rupiah is {num_filtered_market_cap}  
-    Number of stocks that have paid dividend at lear {dividend_filter} year is {num_filtered_dividend_year}
-    """
-
-    return text
-
 
 @st.cache_resource
 def connect_redis(redis_url):
@@ -117,11 +38,7 @@ def get_div_score_table(key='jkse_div_score'):
         print('data last updated', last_updated)
         final_df = pd.DataFrame(json.loads(div_score_json['content']))
     else:
-        # if not found in cache, compute from scratch
-        print('redis error, computing dividend score from scratch')
-        cp_df = get_company_profile(use_cache=False)
-        div_df = get_historical_dividend(use_cache=True)
-        final_df = compute_div_feature(cp_df, div_df)
+        final_df = pd.read_csv('dividend_historical.csv')
 
     final_df.rename(columns={'symbol': 'stock'}, inplace=True)
     return final_df.set_index('stock')
