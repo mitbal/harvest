@@ -161,7 +161,7 @@ with st.expander('Dividend History', expanded=False):
         st.write(f'Yield on current price: {next_yield:0.2f}%')
 
 with st.expander('Financial Information', expanded=False):
-    fin_cols = st.columns(4)
+    fin_cols = st.columns([0.3, 0.4, 0.3])
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
     metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
     
