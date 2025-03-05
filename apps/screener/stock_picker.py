@@ -107,6 +107,11 @@ with full_table_section:
     with tabs[0]:
 
         cfig={
+            'is_syariah': st.column_config.CheckboxColumn(
+                'Syariah',
+                help='Is the stock Syariah?',
+                default=False,
+            ),
             'yield': st.column_config.NumberColumn(
                 'Dividend Yield (in pct)',
                 help='The dividend yield on the current price',
