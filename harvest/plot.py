@@ -23,6 +23,8 @@ def plot_yearly_income(fin_df, metric):
         y=alt.Y(f'sum({metric}):Q', axis=alt.Axis(
             labelExpr=format_currency()
         )),
+    ).properties(
+        height=300
     )
     return chart
 
