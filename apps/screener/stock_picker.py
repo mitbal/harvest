@@ -170,7 +170,7 @@ with st.expander('Financial Information', expanded=False):
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
     metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
     
-    fin_chart = hp.plot_financial(fin, period=period, metric=metric)
+    fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
     with st.container(height=500):
         st.altair_chart(fin_chart, use_container_width=False)
 
