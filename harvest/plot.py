@@ -10,25 +10,43 @@ def format_currency():
             "format(datum.value/1000000, ',.0f') + ' M'"
 
 
-def plot_financial(fin_df, period='quarter', metric='netIncome'):
+def format_tooltip_currency(val, currency):
+        if val >= 1_000_000_000_000:
+            return f"{val/1_000_000_000_000:.2f} T {currency.upper()}"
+        elif val >= 1_000_000_000:
+            return f"{val/1_000_000_000:.2f} B {currency.upper()}"
+        elif val >= 1_000_000:
+            return f"{val/1_000_000:.2f} M {currency.upper()}"
+        else:
+            return f"{val/1_000:.2f} K {currency.upper()}"
+
+
+def plot_financial(fin_df, period='quarter', metric='netIncome', currency='idr'):
     
     if period == 'quarter':
-        return plot_quarter_income(fin_df, metric)
+        return plot_quarter_income(fin_df, metric, currency)
     else:
-        return plot_yearly_income(fin_df, metric)
+        return plot_yearly_income(fin_df, metric, currency)
 
-def plot_yearly_income(fin_df, metric):
+def plot_yearly_income(fin_df, metric, currency='idr'):
+
+    fin_df['value'] = fin_df[metric].apply(lambda x: format_tooltip_currency(x, currency))
+
     chart = alt.Chart(fin_df).mark_bar().encode(
         x=alt.X('calendarYear'),
         y=alt.Y(f'sum({metric}):Q', axis=alt.Axis(
             labelExpr=format_currency()
         )),
+        tooltip='value'
     ).properties(
         height=300
     )
     return chart
 
-def plot_quarter_income(fin_df, metric):
+
+def plot_quarter_income(fin_df, metric, currency='idr'):
+    
+    fin_df['value'] = fin_df[metric].apply(lambda x: format_tooltip_currency(x, currency))
 
     chart = alt.Chart(fin_df).mark_bar().encode(
         x=alt.X('period'),
@@ -36,7 +54,8 @@ def plot_quarter_income(fin_df, metric):
             labelExpr=format_currency()
         )),
         color='period',
-        column='calendarYear'
+        column='calendarYear',
+        tooltip='value'
     ).properties(
         height=300
     )
