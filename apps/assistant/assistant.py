@@ -106,7 +106,7 @@ else:
     st.sidebar.success("API Key is set! ✓")
     if st.sidebar.button("Change API Key"):
         del st.session_state.OPENROUTER_API_KEY
-        st.experimental_rerun()
+        st.rerun()
         
 # Model selection
 model_options = {
