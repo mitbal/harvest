@@ -5,11 +5,12 @@ page_screener = st.Page('apps/screener/stock_picker.py', title='Stock Picker', i
 page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Overview', icon='💰')
 page_history = st.Page('apps/history/history_overview.py', title='Historical Overview', icon='🧭')
 page_calendar = st.Page('apps/calendar/calendar.py', title='Dividend Calendar', icon='📅')
+page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 
 pages = st.navigation(
     {
         'Home': [page_home],
-        'Apps': [page_screener, page_calendar, page_porto, page_history]
+        'Apps': [page_screener, page_calendar, page_porto, page_history, page_assistant]
     }
 )
 pages.run()
