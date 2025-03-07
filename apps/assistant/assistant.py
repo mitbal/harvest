@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 # from dotenv import load_dotenv
+import redis
 
 # Load environment variables (optional)
 # load_dotenv()
@@ -15,6 +16,19 @@ st.set_page_config(
     layout="wide"
 )
 
+api_key = os.environ['FMP_API_KEY']
+redis_url = os.environ['REDIS_URL']
+
+@st.cache_resource
+def connect_redis(redis_url):
+    r = redis.from_url(redis_url)
+    return r
+
+r = connect_redis(redis_url)
+rjson = r.get('div_score_jkse')
+div_score_json = json.loads(rjson)
+content = div_score_json['content']
+
 # Helper function to call OpenRouter API
 def get_ai_response(prompt, chat_history, api_key, model):
     headers = {
@@ -23,9 +37,22 @@ def get_ai_response(prompt, chat_history, api_key, model):
         "X-Title": "AI Chatbot App",  # Your app name
         "Content-Type": "application/json"
     }
+
+    system_prompt = """
+    You are a financial advisor. 
+    Answer the question of user based on the data below. 
+    Don't make things up.
+    Answer in user language.
+    """
     
     # Format messages for the API
     messages = []
+    messages.append({
+        "role": "system",
+        "content": system_prompt
+    })
+    messages[0]['content'] += '\n' + content
+    
     for msg in chat_history:
         messages.append({
             "role": msg["role"],
