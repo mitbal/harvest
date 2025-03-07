@@ -27,7 +27,7 @@ def connect_redis(redis_url):
 
 
 @st.cache_data(ttl=60*60*24)
-def get_div_score_table(key='jkse_div_score'):
+def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend table...'):
 
     # try from cache from redis first
     r = connect_redis(redis_url)
@@ -44,7 +44,7 @@ def get_div_score_table(key='jkse_div_score'):
     return final_df.set_index('stock')
 
 
-@st.cache_data(ttl=60*60)
+@st.cache_data(ttl=60*60, show_spinner='Downloading stock data... please wait')
 def get_specific_stock_detail(stock_name):
 
     n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
