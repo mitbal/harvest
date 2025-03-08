@@ -176,7 +176,7 @@ with st.expander('Financial Information', expanded=False):
 
 with st.expander('Price Movement', expanded=False):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
-    st.altair_chart(candlestick_chart.interactive())
+    st.altair_chart(candlestick_chart, use_container_width=True)
 
 with st.expander('Valuation Analysis', expanded=False):
     val_cols = st.columns(3, gap='large')
