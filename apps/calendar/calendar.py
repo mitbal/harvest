@@ -10,7 +10,11 @@ import harvest.plot as hp
 
 
 try:
-    st.set_page_config(layout='wide')
+    st.set_page_config(
+        layout='wide',
+        page_icon='📅',
+        page_title='Dividend Calendar',
+    )
 except Exception as e:
     print('Set Page config has been called before')
 
