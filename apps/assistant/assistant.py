@@ -11,13 +11,18 @@ import redis
 
 # Set page configuration
 st.set_page_config(
-    page_title="AI Assistant with OpenRouter",
-    page_icon="🤖",
-    layout="wide"
+    page_title='Om Jin the Financial Advisor',
+    page_icon='🧞‍♂️',
+    layout='wide'
 )
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
+
+avatars = {
+    'assistant': '🧞‍♂️',
+    'user': '🧑‍💼'
+}
 
 @st.cache_resource
 def connect_redis(redis_url):
@@ -116,11 +121,11 @@ model_options = {
     # "Anthropic Claude 3 Sonnet": "anthropic/claude-3-sonnet",
     # "Google Gemini Pro": "google/gemini-pro",
     # "Meta Llama 3 70B": "meta/llama-3-70b-instruct"
-    'Gemini Free': 'google/gemini-2.0-flash-lite-preview-02-05:free'
+    'Gemini 2.0 Flash': 'google/gemini-2.0-flash-lite-preview-02-05:free'
 }
 
 selected_model = st.sidebar.selectbox(
-    "Choose AI Model:",
+    "AI Model Selection:",
     list(model_options.keys()),
     index=0  # Default to GPT-3.5 Turbo
 )
@@ -137,7 +142,7 @@ st.sidebar.subheader("About the selected model")
 st.sidebar.info(f"You're currently using **{selected_model}** (`{model_id}`)")
 
 # Main chat interface
-st.title("🤖 AI Assistant")
+st.title("🧞‍♂️ Om Jin the Financial Advisor")
 st.caption(f"Powered by {selected_model} via OpenRouter")
 
 # Check if API Key is set
@@ -148,7 +153,7 @@ if "OPENROUTER_API_KEY" not in st.session_state:
 
 # Display chat messages
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
+    with st.chat_message(message["role"], avatar=avatars[message['role']]):
         st.markdown(message["content"])
         if "timestamp" in message:
             st.caption(f"{message['timestamp']}")
@@ -164,7 +169,7 @@ if prompt := st.chat_input("Message the AI assistant..."):
     })
     
     # Display user message
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=avatars['user']):
         st.markdown(prompt)
         st.caption(timestamp)
     
@@ -187,6 +192,6 @@ if prompt := st.chat_input("Message the AI assistant..."):
         })
         
         # Display AI response
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=avatars['assistant']):
             st.markdown(response)
             st.caption(timestamp)
