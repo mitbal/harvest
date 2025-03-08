@@ -194,10 +194,10 @@ with st.expander('Valuation Analysis', expanded=False):
     pe_df = hd.calc_pe_history(price_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
-    val_cols[0].altair_chart(pe_dist_chart)
+    val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
 
     pe_ts_chart = hp.plot_pe_timeseries(pe_df)
-    val_cols[1].altair_chart(pe_ts_chart)
+    val_cols[1].altair_chart(pe_ts_chart, use_container_width=True)
 
     with val_cols[2]:
         ci = pe_df['pe'].quantile([.05, .95]).values
