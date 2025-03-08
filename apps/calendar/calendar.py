@@ -18,13 +18,15 @@ try:
 except Exception as e:
     print('Set Page config has been called before')
 
-
 st.title('Dividend Calendar 2025')
-sl = st.segmented_control(label='Stock List', 
-                         options=['JKSE', 'S&P500'],
-                         selection_mode='single',
-                         default='JKSE')
-    
+
+sl = st.sidebar.segmented_control(
+    label='Stock List', 
+    options=['JKSE', 'S&P500'],
+    selection_mode='single',
+    default='JKSE'
+)
+
 if sl is None:
     print('Please select one of the options above')
     st.stop()
