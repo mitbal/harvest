@@ -15,6 +15,14 @@ import harvest.data as hd
 st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
 
+with st.sidebar:
+    if not st.experimental_user.is_logged_in:
+        if st.button('Log in with Google', icon=':material/login:'):
+            st.login('google')
+    else:
+        st.markdown(f"Welcome! {st.experimental_user.name}")
+        if st.button('Log Out', icon=':material/logout:'):
+            st.logout()
 
 if 'porto_df' not in st.session_state:
     st.session_state['porto_df'] = None
