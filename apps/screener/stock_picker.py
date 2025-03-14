@@ -61,43 +61,40 @@ def get_specific_stock_detail(stock_name):
 
 ### End of Function definition
 
-full_table_section = st.container(border=True)
-with full_table_section:
-
-    st.write('Filter')
-
-    sl = st.segmented_control(label='Stock List', 
+sl = st.sidebar.segmented_control(label='Stock List', 
                          options=['JKSE', 'S&P500'],
                          selection_mode='single',
                          default='JKSE')
-    
-    if sl is None:
-        print('Please select one of the options above')
-        st.stop()
 
-    if sl == 'JKSE':
-        key = 'div_score_jkse'
-        mcap_value = 1000
-        currency = 'IDR'
-    else:
-        key = 'div_score_sp500'
-        mcap_value = 100
-        currency = 'USD'
+if sl is None:
+    print('Please select one of the options above')
+    st.stop()
 
-    start = time.time()
-    final_df = get_div_score_table(key)
+if sl == 'JKSE':
+    key = 'div_score_jkse'
+    mcap_value = 1000
+    currency = 'IDR'
+else:
+    key = 'div_score_sp500'
+    mcap_value = 100
+    currency = 'USD'
 
-    end = time.time()
-    print(f'Elapsed time {end-start}')
+start = time.time()
+final_df = get_div_score_table(key)
 
-    filter_cols = st.columns(2)
-    minimum_market_cap = filter_cols[0].number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
-    minimum_year = filter_cols[1].number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
+end = time.time()
+print(f'Elapsed time {end-start}')
 
-    if sl == 'JKSE':
-        is_syariah = st.toggle('Syariah Only?')
+minimum_market_cap = st.sidebar.number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
+minimum_year = st.sidebar.number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
+
+if sl == 'JKSE':
+        is_syariah = st.sidebar.toggle('Syariah Only?')
         if is_syariah:
             final_df = final_df[final_df['is_syariah'] == True]
+
+full_table_section = st.container(border=True)
+with full_table_section:
 
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
