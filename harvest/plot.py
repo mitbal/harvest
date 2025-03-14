@@ -1,3 +1,6 @@
+import calendar
+from datetime import datetime
+
 import lesley
 import numpy as np
 import pandas as pd
@@ -285,6 +288,13 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     if sl != 'JKSE':
         domain = np.array(domain) / 10
     
-    cal = lesley.calendar_plot(div_df['date'], div_df['yield'], 
-                               show_date=True, cmap='Greens', domain=domain, nrows=2)
-    return cal
+    full_chart = alt.hconcat()
+    for i in range(4):
+        column = alt.vconcat()
+        for j in range(3):
+            idx = (j*4)+1
+            c = lesley.month_plot(div_df['date'], div_df['yield'], title=calendar.month_name[idx], 
+                                        cmap='Greens', domain=domain, show_date=True, month=idx)
+            column = column & c
+        full_chart = full_chart | column
+    return full_chart
