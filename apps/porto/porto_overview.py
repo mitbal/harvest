@@ -1,5 +1,6 @@
 import io
 import os
+from datetime import datetime
 
 import lesley
 import calendar
@@ -7,10 +8,38 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
-from datetime import datetime
+from st_supabase_connection import SupabaseConnection, execute_query
 
 import harvest.plot as hp
 import harvest.data as hd
+
+
+@st.cache_resource(show_spinner=False)
+def get_db_connection() -> SupabaseConnection:
+    """
+    Establish and cache a connection to the Supabase database.
+
+    Returns:
+        SupabaseConnection: Authenticated connection to Supabase
+    """
+    conn = st.connection("supabase", type=SupabaseConnection)
+    conn.auth.sign_in_with_password(
+        {
+            "email": st.secrets["connections"]["supabase"]["EMAIL_ADDRESS"],
+            "password": st.secrets["connections"]["supabase"]["PASSWORD"],
+        }
+    )
+    print('connection to supabase established')
+    return conn
+
+
+def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
+    user_in_db = execute_query(
+        conn.table("users").select("portfolio").eq("email", user_email),
+        ttl=0,
+    )
+    return user_in_db.data[0]['portfolio']
+
 
 st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
@@ -23,6 +52,14 @@ with st.sidebar:
         st.markdown(f"Welcome! {st.experimental_user.name}")
         if st.button('Log Out', icon=':material/logout:'):
             st.logout()
+
+conn = get_db_connection()
+if st.experimental_user.is_logged_in:
+    data = get_user_portfolio(conn, st.experimental_user.email)
+    print(st.experimental_user.email, data)
+    if len(data) > 0:
+        # pass
+        st.session_state['porto_df'] = pd.DataFrame(data)
 
 if 'porto_df' not in st.session_state:
     st.session_state['porto_df'] = None
