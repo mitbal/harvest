@@ -41,6 +41,16 @@ def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
     return user_in_db.data[0]['portfolio']
 
 
+def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email: str) -> None:
+
+    execute_query(
+            conn.table("users").update(
+                {"email": user_email, "portfolio": portfolio, 'modified_at': datetime.now().isoformat()}
+            ).eq("email", user_email),
+            ttl=0,
+        )
+
+
 st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
 
@@ -54,15 +64,17 @@ with st.sidebar:
             st.logout()
 
 conn = get_db_connection()
-if st.experimental_user.is_logged_in:
-    data = get_user_portfolio(conn, st.experimental_user.email)
-    print(st.experimental_user.email, data)
-    if len(data) > 0:
-        # pass
-        st.session_state['porto_df'] = pd.DataFrame(data)
 
 if 'porto_df' not in st.session_state:
-    st.session_state['porto_df'] = None
+    if st.experimental_user.is_logged_in:
+        data = get_user_portfolio(conn, st.experimental_user.email)
+        print(st.experimental_user.email, data)
+        if len(data) > 0:
+            st.session_state['porto_df'] = pd.DataFrame(data)
+        else:
+            st.session_state['porto_df'] = None
+    else:
+        st.session_state['porto_df'] = None
 
 with st.expander('Data Input', expanded=True):
     method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], horizontal=True)
@@ -436,3 +448,8 @@ with st.expander('Future Projection', expanded=True):
         width=1000
     )
     st.altair_chart(future_chart)
+
+
+if st.experimental_user.is_logged_in:
+    if st.sidebar.button('Update Porto', icon=':material/cloud_upload:'):
+        update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.experimental_user.email)
