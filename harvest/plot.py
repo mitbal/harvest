@@ -73,8 +73,8 @@ def plot_candlestick(price_df, width=1000, height=300):
         alt.value("#ae1325")
     )
 
-    # brush = alt.selection_interval(value={'y': [20, 40]})
-    interval = alt.selection_interval(encodings=['x'])
+    x_init = pd.to_datetime(['2025-03-01', '2024-03-01']).astype(int) / 1E6
+    interval = alt.selection_interval(encodings=['x'], value={'x':list(x_init)})
 
     base = alt.Chart(price_df).encode(
         alt.X('date:T', scale=alt.Scale(domain=interval)),
@@ -85,29 +85,37 @@ def plot_candlestick(price_df, width=1000, height=300):
         alt.Y(
             'low:Q',
             title='Price',
-            scale=alt.Scale(zero=False),
+            scale=alt.Scale(zero=False)
         ),
         alt.Y2('high:Q')
     )
 
     bar = base.mark_bar().encode(
-        alt.Y('open:Q'),
+        alt.Y('open:Q', scale=alt.Scale(zero=False, padding=10)),
         alt.Y2('close:Q')
     )
 
     candlestick = alt.layer(rule, bar).properties(
         width=width,
         height=height
+    ).transform_filter(
+        interval
     )
 
     view = alt.Chart(price_df).mark_bar().encode(
         x=alt.X('date:T'),
-        y='volume'
-    ).properties(
+        y='volume',
+        color=alt.condition(
+            interval,
+            alt.value('#007FFF'),
+            alt.value('lightgrey')
+        )
+    ).add_params(interval)
+    
+    view = view.properties(
         width=width,
         height=50
     )
-    view = view.add_selection(interval)
     
     return candlestick & view
 
