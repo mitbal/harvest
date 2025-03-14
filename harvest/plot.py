@@ -288,12 +288,14 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     if sl != 'JKSE':
         domain = np.array(domain) / 10
     
+    labels = div_df.apply(lambda x: f"{x['date'].strftime('%d %b')}: {x['symbol']} ({x['yield']:2.2f}%)", axis=1)
+
     full_chart = alt.hconcat()
     for i in range(4):
         column = alt.vconcat()
         for j in range(3):
             idx = (j*4)+i+1
-            c = lesley.month_plot(div_df['date'], div_df['yield'], title=calendar.month_name[idx], 
+            c = lesley.month_plot(div_df['date'], div_df['yield'], labels=labels, title=calendar.month_name[idx], 
                                         cmap='Greens', domain=domain, show_date=True, month=idx)
             column = column & c
         full_chart = full_chart | column
