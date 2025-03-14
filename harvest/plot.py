@@ -292,7 +292,7 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     for i in range(4):
         column = alt.vconcat()
         for j in range(3):
-            idx = (j*4)+1
+            idx = (j*4)+i+1
             c = lesley.month_plot(div_df['date'], div_df['yield'], title=calendar.month_name[idx], 
                                         cmap='Greens', domain=domain, show_date=True, month=idx)
             column = column & c
