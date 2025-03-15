@@ -104,6 +104,10 @@ with full_table_section:
     with tabs[0]:
 
         cfig={
+            'stock': st.column_config.TextColumn(
+                'Stock',
+                help='Stock Code',
+            ),
             'is_syariah': st.column_config.CheckboxColumn(
                 'Syariah',
                 help='Is the stock Syariah?',
