@@ -1,5 +1,6 @@
 import os
 import json
+import pickle
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,7 +8,7 @@ import redis
 import numpy as np
 import pandas as pd
 from prefect import flow, task
-from prefect.cache_policies import INPUTS
+from supabase import create_client, Client
 from prefect.artifacts import create_markdown_artifact, create_table_artifact
 
 import harvest.data as hd
@@ -31,6 +32,43 @@ def store_df_to_redis(key: str, df: pd.DataFrame) -> None:
         print(f"Error connecting to Redis: {e}")
     except Exception as e:
         print(f"Error storing data to Redis: {e}")
+
+
+def store_to_supabase_storage(filename: str, content: dict) -> None:
+    """Stores the given content as a JSON file in Supabase storage.
+
+    Args:
+        filename: The name of the file to be stored (e.g., "data.json").
+        content: A dictionary containing the data to be stored.
+    """
+
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_KEY")
+
+    if not supabase_url or not supabase_key:
+        raise ValueError("Supabase URL and Key must be set as environment variables.")
+
+    supabase: Client = create_client(supabase_url, supabase_key)
+
+    bucket_name = "harvest_dividend"
+
+    try:
+        # Convert content to JSON string
+        json_data = pickle.dumps(content, indent=4)
+
+        # Upload the JSON data to Supabase storage
+        response = supabase.storage.from_(bucket_name).upload(
+            path=filename,
+            file=json_data,
+            file_options={"contentType": "application/octet-stream"}
+        )
+        if response.get('error'):
+            raise Exception(f"Error uploading to Supabase: {response['error']}")
+
+        print(f"Successfully uploaded {filename} to Supabase storage.")
+
+    except Exception as e:
+        print(f"Error storing data to Supabase: {e}")
 
 
 @flow
@@ -70,6 +108,9 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
 
     div_cal = prep_div_cal(cp_df, dividends, filter=mcap_filter)
     store_df_to_redis(f'div_cal_{exch}', div_cal)
+
+    store_to_supabase_storage(f'data/{exch}/dividends.pkl', dividends)
+    store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
 
 
 @flow
