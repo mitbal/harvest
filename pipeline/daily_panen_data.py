@@ -53,18 +53,15 @@ def store_to_supabase_storage(filename: str, content: dict) -> None:
     bucket_name = "harvest_dividend"
 
     try:
-        # Convert content to JSON string
-        json_data = pickle.dumps(content, indent=4)
+        json_data = pickle.dumps(content)
 
-        # Upload the JSON data to Supabase storage
         response = supabase.storage.from_(bucket_name).upload(
             path=filename,
             file=json_data,
-            file_options={"contentType": "application/octet-stream"}
+            file_options={"contentType": "application/octet-stream",
+                          'upsert': 'true'}
         )
-        if response.get('error'):
-            raise Exception(f"Error uploading to Supabase: {response['error']}")
-
+        print(response)
         print(f"Successfully uploaded {filename} to Supabase storage.")
 
     except Exception as e:
