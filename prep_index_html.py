@@ -1,3 +1,6 @@
+import os
+import toml
+
 import shutil
 import pathlib
 
@@ -40,6 +43,7 @@ FAVICON_TAG = """
 <link rel="icon" href="https://github.com/mitbal/harvest/blob/master/asset/favicon.png?raw=true" type="image/png">
 """
 
+
 def inject_ga():
     
     index_path = pathlib.Path(st.__file__).parent / "static" / "index.html"
@@ -59,4 +63,32 @@ def inject_ga():
         new_html = new_html.replace('<html lang="en">', META_TAG)
         index_path.write_text(new_html)
 
+
+def populate_secret():
+
+    secrets = {
+        
+        'auth': {
+            'redirect_uri': os.environ['REDIRECT_URI'],
+            'cookie_secret': os.environ['COOKIE_SECRET'],
+        },
+
+        'auth.google': {
+            'client_id': os.environ['GOOGLE_CLIENT_ID'],
+            'client_secret': os.environ['GOOGLE_CLIENT_SECRET'],
+            'server_metadata_url': 'https://accounts.google.com/.well-known/openid-configuration' 
+        },
+
+        'connections.supabase': {
+            'SUPABASE_URL': os.environ['SUPABASE_URL'],
+            'SUPABASE_KEY': os.environ['SUPABASE_KEY'],
+            'EMAIL_ADDRESS': os.environ['SUPABASE_EMAIL'],
+            'PASSWORD': os.environ['SUPABASE_PASSWORD'],
+        }
+    }
+
+    with open('.streamlit/secrets.toml', 'w') as f:
+        toml.dump(secrets, f)
+
 inject_ga()
+populate_secret()
