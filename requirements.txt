@@ -14,3 +14,4 @@ streamlit==1.43.2
 matplotlib==3.9.1
 scikit_learn==1.5.1
 streamlit_lottie==0.0.5
+st-supabase-connection==2.0.1
