@@ -94,6 +94,7 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
 
     dividends = download_dividends(stock_dividend_list)
     financials = download_financials(stock_dividend_list)
+    prices = download_prices(stock_dividend_list)
 
     if exch == 'jkse':
         cp_df = cp_df.merge(syariah, on='symbol', how='left')
@@ -106,6 +107,7 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
     div_cal = prep_div_cal(cp_df, dividends, filter=mcap_filter)
     store_df_to_redis(f'div_cal_{exch}', div_cal)
 
+    store_to_supabase_storage(f'data/{exch}/prices.pkl', prices)
     store_to_supabase_storage(f'data/{exch}/dividends.pkl', dividends)
     store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
 
@@ -120,6 +122,12 @@ def download_financials(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURREN
 def download_dividends(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
     """Download dividend data in parallel using ThreadPoolExecutor."""
     return _download_data(stock_list, download_single_dividend, "dividend", max_concurrency)
+
+
+@flow
+def download_prices(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
+    """Download price data in parallel using ThreadPoolExecutor."""
+    return _download_data(stock_list, download_single_price, "price", max_concurrency)
 
 
 def _download_data(stock_list, download_func, data_type, max_concurrency):
@@ -180,6 +188,18 @@ def download_single_dividend(stock: str):
         return div
     except Exception as e:
         print(f'Error downloading dividend history for {stock}: {e}')
+        raise e
+
+
+@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
+def download_single_price(stock: str):
+    """Downloads price history for a single stock."""
+    print(f'download price history for {stock}')
+    try:
+        price = hd.get_daily_stock_price(stock, start_from='2010-01-01')
+        return price
+    except Exception as e:
+        print(f'Error downloading price history for {stock}: {e}')
         raise e
 
 
