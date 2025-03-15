@@ -73,17 +73,21 @@ def populate_secret():
             'cookie_secret': os.environ['COOKIE_SECRET'],
         },
 
-        'auth.google': {
-            'client_id': os.environ['GOOGLE_CLIENT_ID'],
-            'client_secret': os.environ['GOOGLE_CLIENT_SECRET'],
-            'server_metadata_url': 'https://accounts.google.com/.well-known/openid-configuration' 
+        'auth': {
+            'google': {
+                'client_id': os.environ['GOOGLE_CLIENT_ID'],
+                'client_secret': os.environ['GOOGLE_CLIENT_SECRET'],
+                'server_metadata_url': 'https://accounts.google.com/.well-known/openid-configuration'
+            }
         },
 
-        'connections.supabase': {
-            'SUPABASE_URL': os.environ['SUPABASE_URL'],
-            'SUPABASE_KEY': os.environ['SUPABASE_KEY'],
-            'EMAIL_ADDRESS': os.environ['SUPABASE_EMAIL'],
-            'PASSWORD': os.environ['SUPABASE_PASSWORD'],
+        'connections': {
+            'supabase': {
+                'SUPABASE_URL': os.environ['SUPABASE_URL'],
+                'SUPABASE_KEY': os.environ['SUPABASE_KEY'],
+                'EMAIL_ADDRESS': os.environ['SUPABASE_EMAIL'],
+                'PASSWORD': os.environ['SUPABASE_PASSWORD'],
+            }
         }
     }
 
