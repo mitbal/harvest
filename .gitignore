@@ -1,5 +1,6 @@
 *.csv
 *.gif
+*.pkl
 .DS_Store
 __pycache__/
 .streamlit/secrets.toml
