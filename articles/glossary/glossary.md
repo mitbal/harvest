@@ -1,5 +1,7 @@
 # Glosarium
 
+![library](app/static/library_banner.png)
+
 Last edited: 18 Maret 2025
 
 Berikut adalah istilah-istilah yang terkait dengan dividen dari investasi saham.
