@@ -9,6 +9,7 @@ RUN pip install -r requirements.txt
 
 COPY data ./data
 COPY apps ./apps
+COPY static ./static
 COPY harvest ./harvest
 COPY articles ./articles
 
@@ -19,7 +20,6 @@ COPY README.md ./README.md
 COPY Makefile ./Makefile
 COPY style.html ./style.html
 COPY feature.html ./feature.html
-COPY static/sitemap.txt ./static/sitemap.txt
 COPY .streamlit/config.toml ./.streamlit/config.toml
 
 EXPOSE 8501
