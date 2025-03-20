@@ -1,5 +1,9 @@
 # IHSG vs SP500
 
+![library](app/static/comparison_banner.png)
+
+Last edited: 20 Maret 2025
+
 Sepanjang tahun 2024, dari 860 saham yang berada di IHSG, ada sebanyak 380 pembayaran dividen yang terjadi dari 305 perusahaan.
 
 Rata-rata dividen yield di harga penutupan tanggal 14 Maret 2025 adalah 4%, dengan median di angka 2.5%.
