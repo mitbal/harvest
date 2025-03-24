@@ -67,18 +67,15 @@ def inject_ga():
 def populate_secret():
 
     secrets = {
-        
-        'auth': {
-            'redirect_uri': os.environ['REDIRECT_URI'],
-            'cookie_secret': os.environ['COOKIE_SECRET'],
-        },
 
         'auth': {
             'google': {
                 'client_id': os.environ['GOOGLE_CLIENT_ID'],
                 'client_secret': os.environ['GOOGLE_CLIENT_SECRET'],
                 'server_metadata_url': 'https://accounts.google.com/.well-known/openid-configuration'
-            }
+            },
+            'redirect_uri': os.environ['REDIRECT_URI'],
+            'cookie_secret': os.environ['COOKIE_SECRET'],
         },
 
         'connections': {
