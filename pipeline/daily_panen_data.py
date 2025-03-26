@@ -107,9 +107,9 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
     div_cal = prep_div_cal(cp_df, dividends, filter=mcap_filter)
     store_df_to_redis(f'div_cal_{exch}', div_cal)
 
-    store_to_supabase_storage(f'data/{exch}/prices.pkl', prices)
+    # store_to_supabase_storage(f'data/{exch}/prices.pkl', prices)
     store_to_supabase_storage(f'data/{exch}/dividends.pkl', dividends)
-    # store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
+    store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
 
 
 @flow
