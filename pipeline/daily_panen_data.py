@@ -94,7 +94,7 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
 
     dividends = download_dividends(stock_dividend_list)
     financials = download_financials(stock_dividend_list)
-    prices = download_prices(stock_dividend_list)
+    # prices = download_prices(stock_dividend_list)
 
     if exch == 'jkse':
         cp_df = cp_df.merge(syariah, on='symbol', how='left')
@@ -109,7 +109,7 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
 
     store_to_supabase_storage(f'data/{exch}/prices.pkl', prices)
     store_to_supabase_storage(f'data/{exch}/dividends.pkl', dividends)
-    store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
+    # store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
 
 
 @flow
