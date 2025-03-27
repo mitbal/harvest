@@ -53,7 +53,7 @@ def get_specific_stock_detail(stock_name):
     cp_df = hd.get_company_profile([stock_name])
     start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
     price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
-    sdf = pd.DataFrame(hd.get_dividend_history([stock.name])[stock.name])
+    sdf = pd.DataFrame(hd.get_dividend_history([stock_name])[stock_name])
     sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
 
     return fin, cp_df, price_df, sdf, sector_df, industry_df, n_share
@@ -158,9 +158,9 @@ with st.expander('Dividend History', expanded=True):
     dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
     with dividend_history_cols[2]:
-        last_div = filtered_df.loc[stock.name, 'lastDiv']
+        last_div = filtered_df.loc[stock_name, 'lastDiv']
         inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-        curr_price = filtered_df.loc[stock.name, 'price']
+        curr_price = filtered_df.loc[stock_name, 'price']
         next_div = last_div + inc_val
         next_yield = next_div / curr_price * 100
         st.write(f'Next year dividend payment: {next_div:0.2f} IDR')
