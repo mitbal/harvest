@@ -146,7 +146,7 @@ fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_
 with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
 
-with st.expander('Dividend History', expanded=False):
+with st.expander('Dividend History', expanded=True):
     dividend_history_cols = st.columns([3, 10, 4])
     dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
 
@@ -166,7 +166,7 @@ with st.expander('Dividend History', expanded=False):
         st.write(f'Next year dividend payment: {next_div:0.2f} IDR')
         st.write(f'Yield on current price: {next_yield:0.2f}%')
 
-with st.expander('Financial Information', expanded=False):
+with st.expander('Financial Information', expanded=True):
     fin_cols = st.columns([0.3, 0.4, 0.3])
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
     metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
@@ -175,11 +175,11 @@ with st.expander('Financial Information', expanded=False):
     with st.container(height=500):
         st.altair_chart(fin_chart, use_container_width=False)
 
-with st.expander('Price Movement', expanded=False):
+with st.expander('Price Movement', expanded=True):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
     st.altair_chart(candlestick_chart, use_container_width=True)
 
-with st.expander('Valuation Analysis', expanded=False):
+with st.expander('Valuation Analysis', expanded=True):
     val_cols = st.columns(3, gap='large')
 
     sector_name = filtered_df.loc[stock_name, 'sector']
