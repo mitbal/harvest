@@ -138,6 +138,8 @@ if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
+elif len(st.query_params) > 0:
+    stock_name = st.query_params['stock']
 else:
     st.stop()
 
