@@ -86,13 +86,21 @@ for i in range(3):
         month_df['rank'] = list(range(1, len(month_df)+1))
         month_df['div_yield'] = month_df['yield'].apply(lambda x: f'{x:2.2f}%')
         month_df['ex_date'] = month_df['date'].dt.strftime('%d %b')
+        month_df['url_link'] = month_df['symbol'].apply(lambda x: f'https://panendividen.com/stock_picker?stock={x}')
         if sl == 'JKSE':
             month_df['symbol'] = month_df['symbol'].apply(lambda x: x[:-3])
         month_df.rename(columns={'symbol': 'stock',
                                  'adjDividend': 'dividend'}, inplace=True)
 
         row_cols[j].write(f'{calendar.month_name[idx]}')
-        row_cols[j].dataframe(hide_index=True, 
-                              data=month_df[['rank', 'stock', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
+        row_cols[j].dataframe(hide_index=True,
+                              column_config={
+                                "url_link": st.column_config.LinkColumn(
+                                    "Stock",
+                                    help="Stock Name",
+                                    max_chars=10,
+                                    display_text=r"https://panendividen\.com/stock_picker\?stock=([A-Z]+(?:\.JK)?)"
+                                ),},
+                              data=month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
         idx += 1
     
