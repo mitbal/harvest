@@ -12,7 +12,7 @@ Jadi kalaupun kamu lihat kalau kedua produk ini sangat laku di pasaran, mengalah
 
 $MYOR sendiri juga memproduksi beberapa produk minuman. Di antaranya adalah Kopiko 78 dan Tora Cafe. 
 
-Mungkin suatu saat di masa depan PT Tirta Fresindo Jaya akan IPO dengan kode $MAYO, biar bisa di kombo namanya dengan $NICE?
+Mungkin suatu saat di masa depan PT Tirta Fresindo Jaya akan IPO dengan kode MAYO, biar bisa di kombo namanya dengan NICE?
 
 Dari sisi dividennya, di harga sekarang memang terlihat kecil di kisaran 2.5%, tapi kalau dilihat dari konsistensinya dan growth-nya selama 20 tahun lebih, maka kelihatannya cukup impresif.
  
