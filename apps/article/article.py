@@ -2,10 +2,11 @@ import streamlit as st
 
 # 1. as sidebar menu
 with st.sidebar:
-    st.markdown("# Article List")
-    st.html('<a href="/article?name=glossary">Glossary</a>')
+    st.markdown("## Article List")
+    st.html('<a href="/article?name=glossary">Glossarium</a>')
     st.html('<a href="/article?name=comparison">IHSG vs S&P500</a>')
-    st.html('<a href="/article?name=sido">Better (Call) Buy SIDO </a>')
+    st.html('<a href="/article?name=sido">Better (Call) Buy SIDO</a>')
+    st.html('<a href="/article?name=myor">MYOR != Pucuk Harum</a>')
 
 if len(st.query_params) == 0:
     st.title('Article')
