@@ -62,10 +62,10 @@ div_score_df = get_data_from_redis(div_score_key)
 if sl == 'JKSE':
     show_next_year = True
     div_score_df = div_score_df[['symbol', 'is_syariah']]
-    # is_syariah = st.toggle('Syariah Only?')
-    # if is_syariah:
-    #     df = df.merge(div_score_df, on='symbol', how='left')
-    #     df = df[df['is_syariah'] == True]
+    is_syariah = st.sidebar.toggle('Syariah Only?')
+    if is_syariah:
+        df = df.merge(div_score_df, on='symbol', how='left')
+        df = df[df['is_syariah'] == True]
 else:
     show_next_year = False
 
