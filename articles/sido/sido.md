@@ -5,7 +5,7 @@ Last Edited: November 22, 2024
 ## #1 Preamble
 Seluruh insan manusia yang pernah tinggal di Indonesia pastinya kenal dengan nama Tolak Angin, satu-satunya obat mujarab yang bisa menyembuhkan penyakit paling misterius yang merajalela di seluruh penjuru nusantara dan belum bisa dijelaskan oleh ilmu pengetahuan modern, masuk angin.
 
-Tolak Angin adalah salah satu produk buatan PT Sido Muncul, yang melandai di bursa saham Indonesia sejak tahun 2013 dengan kode SIDO, walau sebenarnya sudah berdiri sangat lama dari tahun 1951 di Kota Semarang. Walaupun memang bukan produk satu2nya yang dibuat dan dijual, segmen herbal menyumbang 65% dari total penjualan dengan gross profit margin yang sangat membagongkan, hingga 68%.
+Tolak Angin adalah salah satu produk buatan PT Sido Muncul, yang melandai di bursa saham Indonesia sejak tahun 2013 dengan kode [SIDO](stock_picker?stock=SIDO.JK), walau sebenarnya sudah berdiri sangat lama dari tahun 1951 di Kota Semarang. Walaupun memang bukan produk satu2nya yang dibuat dan dijual, segmen herbal menyumbang 65% dari total penjualan dengan gross profit margin yang sangat membagongkan, hingga 68%.
 
 ![proporsi sektor herbal di penjualan sido](app/static/segment_contribution.png)
 ![gross profit margin sektor herbal](app/static/gross_profit_margin.png)
