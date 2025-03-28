@@ -12,7 +12,9 @@ Pembagian paling sering terjadi di bulan Juni sebesar 105 kali.
 
 Sebaliknya, dari semua saham yang berada di S&P500, ada sebanyak 1504 pembayaran dividen dari 387 perusahaan dengan market capitalization di atas 10 miliar USD.
 
-Dari jumlah pembagian jelas terlihat lebih banyak dan sering, namun kalau dibandingkan yield-nya, rata-rata dan median dari S&P500 hanya sebesar 0.5% saja.
+Dari jumlah pembagian jelas terlihat lebih banyak dan sering, karena memang rata-rata mereka membagikan dividen setiap quarter atau 4 kali setahun. Sementara di IHSG, hanya ada 4 emiten yang membagikan dividen 4 kali dalam setahun, mereka adalah [SMSM](stock_picker?stock=SMSM.JK), [EAST](stock_picker?stock=EAST.JK), [GEMS](stock_picker?stock=GEMS.JK), dan [TEBE](stock_picker?stock=TEBE.JK).
+
+Namun kalau dibandingkan yield-nya, rata-rata dan median dari S&P500 jauh lebih kecil, hanya sebesar 0.5% saja.
 
 Pembagiannya pun cukup merata sepanjang tahun, jadi cocok untuk investor yang ingin mendapatkan passive income secara konsisten.
 
