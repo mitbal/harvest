@@ -47,6 +47,8 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
 @st.cache_data(ttl=60*60, show_spinner=False)
 def get_specific_stock_detail(stock_name):
 
+    start_time = time.time()
+
     progress_bar = st.progress(0, text='Downloading stock data... Please wait')
 
     n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
@@ -66,6 +68,9 @@ def get_specific_stock_detail(stock_name):
 
     sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
     progress_bar.progress(100, text='Progress 100% complete')
+
+    end_time = time.time()
+    print(f'Total download time for {stock_name}: {end_time-start_time}')
 
     time.sleep(0.5)
     progress_bar.empty()
