@@ -132,13 +132,25 @@ with full_table_section:
                 help='Is the stock Syariah?',
                 default=False,
             ),
+            'price': st.column_config.NumberColumn(
+                'Price',
+                help='Current Stock Price',
+            ),
             'yield': st.column_config.NumberColumn(
-                'Dividend Yield (in pct)',
-                help='The dividend yield on the current price',
+                'Dividend Yield',
+                help='The dividend yield on the current price (in pct)',
                 min_value=0,
                 max_value=100,
                 step=0.01,
                 format='%.02f',
+            ),
+            'sector': st.column_config.TextColumn(
+                'Sector',
+                help='The sector of the stock',
+            ),
+            'industry': st.column_config.TextColumn(
+                'Industry',
+                help='The industry of the stock',
             ),
             'mktCap': st.column_config.NumberColumn(
                 'Market Cap',
