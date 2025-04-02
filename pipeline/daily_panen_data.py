@@ -90,7 +90,7 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
 
     stock_list = idxs['symbol'].to_list()
     cp_df = hd.get_company_profile(stock_list)
-    stock_dividend_list = cp_df[(cp_df['lastDiv'] != 0) & (cp_df['isActivelyTrading'])].index.to_list()
+    stock_dividend_list = cp_df[(cp_df['lastDiv'] != 0)].index.to_list()
 
     dividends = download_dividends(stock_dividend_list)
     financials = download_financials(stock_dividend_list)
@@ -238,7 +238,7 @@ def prep_div_cal(cp, div_dict, filter):
 def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: str = 'jkse') -> pd.DataFrame:
     """Computes the dividend score for each stock."""
 
-    df = cp_df[(cp_df['isActivelyTrading']) & (cp_df['lastDiv'] != 0)].copy()
+    df = cp_df[(cp_df['lastDiv'] != 0)].copy()
     df['yield'] = df['lastDiv'] / df['price'] * 100
     df['revenueGrowth'] = np.nan
     df['netIncomeGrowth'] = np.nan
