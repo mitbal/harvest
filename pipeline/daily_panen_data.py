@@ -212,7 +212,7 @@ def prep_div_cal(cp, div_dict, filter):
     year = 2024
     div_df = pd.DataFrame()
     for key, val in div_dict.items():
-        if key in ['GGRP.JK', 'IKBI.JK']:
+        if key in ['GGRP.JK', 'IKBI.JK', 'RCCC.JK']:
             continue
         temp = pd.DataFrame(val)
         temp['ticker'] = key
