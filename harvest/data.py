@@ -316,6 +316,11 @@ def calc_fin_stats(fin_df):
     stats = stats | calc_growth_stats(fin_df, metric='revenue')
     stats = stats | calc_growth_stats(fin_df, metric='netIncome')
 
+    rolling_revenue = fin_df[['date', 'revenue']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
+    rolling_income = fin_df[['date', 'netIncome']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
+    profit_margin = rolling_income['netIncome'] / rolling_revenue['revenue'] * 100
+    stats['median_profit_margin'] = np.nanmedian(profit_margin)
+
     return stats
 
 
