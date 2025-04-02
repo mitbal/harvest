@@ -256,6 +256,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             fin_stats = hd.calc_fin_stats(fin_df)
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
+            df.loc[symbol, 'medianProfitMargin'] = fin_stats['median_profit_margin']
                     
             div_df = div_dict[symbol]
             div_df = hd.preprocess_div(div_df)
@@ -279,7 +280,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['DScore'] = hd.calc_div_score(df)
 
     features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
-               'revenueGrowth', 'netIncomeGrowth', 
+               'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin',
                'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
     
     if sl == 'jkse':
