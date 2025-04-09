@@ -42,7 +42,7 @@ div_score_key = f'div_score_{exch}'
 url = os.environ['REDIS_URL']
 r = redis.from_url(url)
 
-@st.cache_data(ttl=60*60)
+@st.cache_data(ttl=60*60, show_spinner='Downloading dividend data')
 def get_data_from_redis(key):
     j = r.get(key)
 
