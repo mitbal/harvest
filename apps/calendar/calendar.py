@@ -93,14 +93,38 @@ for i in range(3):
                                  'adjDividend': 'dividend'}, inplace=True)
 
         row_cols[j].write(f'{calendar.month_name[idx]}')
-        row_cols[j].dataframe(hide_index=True,
-                              column_config={
-                                "url_link": st.column_config.LinkColumn(
-                                    "Stock",
-                                    help="Stock Name",
-                                    max_chars=10,
-                                    display_text=r"https://panendividen\.com/stock_picker\?stock=([A-Z]+(?:\.JK)?)"
-                                ),},
-                              data=month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
+        row_cols[j].dataframe(
+            hide_index=True,
+            column_config={
+                'url_link': st.column_config.LinkColumn(
+                    'Stock',
+                    help='The code of the stock',
+                    max_chars=10,
+                    display_text=r"https://panendividen\.com/stock_picker\?stock=([A-Z]+(?:\.JK)?)"
+                ),
+                'rank': st.column_config.NumberColumn(
+                    'Rank',
+                    help='Rank of the stock based on yield for this month',
+                    format='%d',
+                ),
+                'ex_date': st.column_config.TextColumn(
+                    'Ex Date',
+                    help='Ex-dividend date',
+                ),
+                'div_yield': st.column_config.TextColumn(
+                    'Yield',
+                    help='Dividend yield',
+                ),
+                'dividend': st.column_config.NumberColumn(
+                    'Dividend',
+                    help='Dividend amount',
+                    format='%.01f',
+                ),
+                'price': st.column_config.NumberColumn(
+                    'Price',
+                    help='Stock price',
+                ),
+            },
+            data=month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
         idx += 1
     
