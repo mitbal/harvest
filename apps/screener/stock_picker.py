@@ -26,7 +26,7 @@ def connect_redis(redis_url):
     return r
 
 
-@st.cache_data(ttl=60*60*24)
+@st.cache_data(ttl=60*60*24, show_spinner='Downloading dividend data')
 def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend table...'):
 
     # try from cache from redis first
