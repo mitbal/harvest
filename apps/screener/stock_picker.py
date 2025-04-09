@@ -156,6 +156,57 @@ with full_table_section:
                 'Market Cap',
                 help='Market Capitalization on the current price'
             ),
+            'ipoDate': st.column_config.DateColumn(
+                'IPO Date',
+                help='IPO Date',
+            ),
+            'revenueGrowth': st.column_config.NumberColumn(
+                'Revenue Growth',
+                help='Average revenue growth in the last 5 years',
+                format='%.02f',
+            ),
+            'netIncomeGrowth': st.column_config.NumberColumn(
+                'Income Growth',
+                help='Average net income growth in the last 5 years',
+                format='%.02f',
+            ),
+            'medianProfitMargin': st.column_config.NumberColumn(
+                'Profit Margin',
+                help='Median profit margin in the last 5 years',
+                format='%.02f',
+            ),
+            'avgFlatAnnualDivIncrease': st.column_config.NumberColumn(
+                'Dividend Growth',
+                help='Average annual dividend increase in the last 5 years',
+                format='%.02f',
+            ),
+            'numOfYear': st.column_config.NumberColumn(
+                'Num of Year',
+                help='Number of years the stock has been listed',
+            ),
+            'numDividendYear': st.column_config.NumberColumn(
+                'Num of Dividend Year',
+                help='Number of years the stock has paid dividend',
+            ),
+            'positiveYear': st.column_config.NumberColumn(
+                'Positive Year',
+                help='Number of years the stock has increased dividend',
+            ),
+            'score': st.column_config.NumberColumn(
+                'Score',
+                help='Score of the stock',
+                format='%.02f',
+            ),
+            'price': st.column_config.NumberColumn(
+                'Price',
+                help='Current price of the stock',
+                format='%.02f',
+            ),
+            'DScore': st.column_config.NumberColumn(
+                'Dividend Score',
+                help='Dividend Score of the stock',
+                format='%.02f',
+            ),
             'lastDiv': st.column_config.NumberColumn(
                 'Last Dividend',
                 help='Last Dividend Paid in Last/Current Fiscal Year',
