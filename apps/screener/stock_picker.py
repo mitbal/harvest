@@ -232,7 +232,19 @@ with st.expander('Company Profile', expanded=False):
 
 with st.expander('Dividend History', expanded=True):
     dividend_history_cols = st.columns([3, 10, 4])
-    dividend_history_cols[0].dataframe(sdf[['date', 'adjDividend']], hide_index=True)
+    dividend_history_cols[0].dataframe(
+        sdf[['date', 'adjDividend']],
+        column_config={
+            'date': st.column_config.DateColumn(
+                'Ex-Date',
+            ),
+            'adjDividend': st.column_config.NumberColumn(
+                'Dividend',
+                help='Dividend paid per share',
+                format='%.01f',
+            ),
+        },
+        hide_index=True)
 
     yearly_dividend_chart = hp.plot_dividend_history(sdf, 
                                                      extrapolote=True, 
