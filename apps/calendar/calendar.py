@@ -123,6 +123,7 @@ for i in range(3):
                 'price': st.column_config.NumberColumn(
                     'Price',
                     help='Stock price',
+                    format='localized'
                 ),
             },
             data=month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
