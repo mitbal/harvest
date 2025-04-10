@@ -135,6 +135,7 @@ with full_table_section:
             'price': st.column_config.NumberColumn(
                 'Price',
                 help='Current Stock Price',
+                format='localized',
             ),
             'yield': st.column_config.NumberColumn(
                 'Dividend Yield',
@@ -154,7 +155,8 @@ with full_table_section:
             ),
             'mktCap': st.column_config.NumberColumn(
                 'Market Cap',
-                help='Market Capitalization on the current price'
+                help='Market Capitalization on the current price',
+                format='localized'
             ),
             'ipoDate': st.column_config.DateColumn(
                 'IPO Date',
@@ -195,11 +197,6 @@ with full_table_section:
             'score': st.column_config.NumberColumn(
                 'Score',
                 help='Score of the stock',
-                format='%.02f',
-            ),
-            'price': st.column_config.NumberColumn(
-                'Price',
-                help='Current price of the stock',
                 format='%.02f',
             ),
             'DScore': st.column_config.NumberColumn(
