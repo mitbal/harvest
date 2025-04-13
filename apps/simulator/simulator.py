@@ -57,6 +57,9 @@ returns = np.zeros((num_year, num_of_stocks))
 
 investments[0, :] = investment_per_stock
 for i in range(num_year):
+
+    if i > 0:
+        investments[i, 1:] = investments[i-1, 1:]
     
     for j in range(num_of_stocks):
 
@@ -64,7 +67,11 @@ for i in range(num_year):
         if j+1 < num_of_stocks:
             investments[i, j+1] += returns[i, j]
         elif i+1 < num_year:
-            investments[i+1, 0] += investments[i, 0] + returns[i, j]
+            investments[i+1, 0] = investments[i, j] + returns[i, j]
 
 st.write('investments', investments)
 st.write('returns', returns)
+
+st.write('total return per year', np.sum(returns, axis=1))
+st.write('total investment', np.sum(investments, axis=1))
+# st.write('total return', np.sum(returns))
