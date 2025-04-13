@@ -72,6 +72,38 @@ for i in range(num_year):
 st.write('investments', investments)
 st.write('returns', returns)
 
-st.write('total return per year', np.sum(returns, axis=1))
-st.write('total investment', np.sum(investments, axis=1))
-# st.write('total return', np.sum(returns))
+multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
+multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
+st.dataframe(multi_return_df)
+
+multi_investment_chart = alt.Chart(multi_return_df).mark_bar().encode(
+    x=alt.X('year:O', title='Year'),
+    y=alt.Y('investment:Q', title='Investment')
+)
+
+multi_return_chart = alt.Chart(multi_return_df).mark_line(point=True).encode(
+    x=alt.X('year:O', title='Year'),
+    y=alt.Y('returns:Q', title='Returns'),
+    color=alt.value('blue')
+)
+
+compound_chart = alt.layer(return_chart, multi_return_chart)
+
+# .resolve_scale(y='independent')
+st.altair_chart(compound_chart)
+
+return_df['type'] = 'Basic'
+multi_return_df['type'] = 'Multi'
+combined_df = pd.concat([return_df, multi_return_df], axis=0)
+
+combined_chart = alt.Chart(combined_df).mark_bar().encode(
+    x=alt.X('year:O', title='Year'),
+    y=alt.Y('returns:Q', title='Returns'),
+    color=alt.Color('type:N', title='Type'),
+    xOffset='type:N',
+).properties(
+    width=600,
+    height=400
+)
+
+st.altair_chart(combined_chart)
