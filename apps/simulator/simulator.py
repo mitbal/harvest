@@ -1,8 +1,11 @@
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 
 st.title('Historical Dividend Growth Simulator')
+
+st.write('## Basic compounding simulator')
 
 initial_value = st.number_input('Jumlah awal investasi', value=120_000_000)
 num_year = st.number_input('Lama tahun', value=10)
@@ -36,3 +39,32 @@ return_chart = alt.Chart(return_df).mark_line(point=True).encode(
 compound_chart = alt.layer(investment_chart, return_chart).resolve_scale(y='independent')
 
 st.altair_chart(compound_chart)
+
+
+st.write('# Multi year compounding')
+
+num_of_stocks = st.number_input('Jumlah saham', value=2)
+
+investment_per_stock = [initial_value / num_of_stocks for _ in range(num_of_stocks)]
+# st.write('investment per stock', investment_per_stock)
+
+investment_per_stock = st.text_area('investment per stock', value='\n'.join([str(i) for i in investment_per_stock]))
+investment_per_stock = [float(i) for i in investment_per_stock.split('\n')]
+
+# simulate
+investments = np.zeros((num_year, num_of_stocks))
+returns = np.zeros((num_year, num_of_stocks))
+
+investments[0, :] = investment_per_stock
+for i in range(num_year):
+    
+    for j in range(num_of_stocks):
+
+        returns[i, j] = investments[i, j] * avg_yield
+        if j+1 < num_of_stocks:
+            investments[i, j+1] += returns[i, j]
+        elif i+1 < num_year:
+            investments[i+1, 0] += investments[i, 0] + returns[i, j]
+
+st.write('investments', investments)
+st.write('returns', returns)
