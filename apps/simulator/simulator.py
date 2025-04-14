@@ -20,7 +20,7 @@ for i in range(num_year):
     investments += [investments[i] + returns[i]]
 
 returns += [investments[-1] * avg_yield]
-return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:10]
+return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
 return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
 st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
 
@@ -88,16 +88,13 @@ multi_return_chart = alt.Chart(multi_return_df).mark_line(point=True).encode(
 
 compound_chart = alt.layer(return_chart, multi_return_chart)
 
-# .resolve_scale(y='independent')
-st.altair_chart(compound_chart)
-
 return_df['type'] = 'Basic'
 multi_return_df['type'] = 'Multi'
 combined_df = pd.concat([return_df, multi_return_df], axis=0)
 
 combined_chart = alt.Chart(combined_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
-    y=alt.Y('returns:Q', title='Returns'),
+    y=alt.Y('investment:Q', title='Investments'),
     color=alt.Color('type:N', title='Type'),
     xOffset='type:N',
 ).properties(
@@ -105,4 +102,4 @@ combined_chart = alt.Chart(combined_df).mark_bar().encode(
     height=400
 )
 
-st.altair_chart(combined_chart)
+st.altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'))
