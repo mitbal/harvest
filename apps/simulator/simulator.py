@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import altair as alt
 import streamlit as st
 
 
@@ -19,11 +20,9 @@ for i in range(num_year):
     investments += [investments[i] + returns[i]]
 
 returns += [investments[-1] * avg_yield]
-return_df = pd.DataFrame({'investment': investments, 'returns': returns})
+return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:10]
 return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
-st.dataframe(return_df)
-
-import altair as alt
+st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
 
 investment_chart = alt.Chart(return_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
