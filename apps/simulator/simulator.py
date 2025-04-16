@@ -29,7 +29,11 @@ for i in range(num_year):
 returns += [investments[-1] * avg_yield]
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
 return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
-st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
+
+st.dataframe(return_df[['year', 'investment', 'returns']], 
+             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
+                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
+             hide_index=True)
 
 investment_chart = alt.Chart(return_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
