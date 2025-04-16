@@ -6,13 +6,14 @@ import streamlit as st
 import harvest.data as hd
 
 
-st.title('Historical Dividend Growth Simulator')
+st.title('# Simulator')
 
-st.write('## Basic compounding simulator')
+st.write('## Basic single instrument compounding simulation')
 
-initial_value = st.number_input('Jumlah awal investasi', value=120_000_000)
-num_year = st.number_input('Lama tahun', value=10)
-avg_yield = st.number_input('Yield', value=0.10)
+cols = st.columns(3)
+initial_value = cols[0].number_input('Jumlah awal investasi (in million rupiah)', value=120) * 100_000
+num_year = cols[1].number_input('Lama tahun', value=10)
+avg_yield = cols[2].number_input('Yield', value=0.10)
 
 investments = [initial_value]
 returns = []
