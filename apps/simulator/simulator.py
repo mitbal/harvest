@@ -181,7 +181,7 @@ st.altair_chart((investment_chart + return_chart).resolve_scale(y='independent')
 
 st.write('## Multi Stock Dividend Reinvestment')
 
-stock_list = st.text_input('Enter stock list (separated by comma):', 'BMRI.JK, PTBA.JK, ASII.JK, SIDO.JK', max_chars=50)
+stock_list = st.text_input('Enter stock list (separated by comma):', 'BMRI.JK, PTBA.JK, ASII.JK, SIDO.JK', max_chars=52)
 stock_list = [stock.strip() for stock in stock_list.split(',')]
 
 prices = {}
@@ -192,6 +192,8 @@ for stock in stock_list:
 
 porto = {s: 0 for s in stock_list}
 returns = {}
+
+porto_df = pd.DataFrame(columns=['year', 'stock', 'lot', 'price', 'value'])
 
 cash = initial_value
 activities = []
@@ -206,7 +208,6 @@ for y in range(start_year, end_year+1):
             price_df = prices[s]
             buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
             close_price = buy_date['close']
-            # st.write(price_df)
             
             buy_lot = (initial_value/len(stock_list)) / close_price / 100
             buy_trx = int(buy_lot) * close_price * 100
@@ -220,20 +221,18 @@ for y in range(start_year, end_year+1):
         div_event += [div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]]
 
     div_event_df = pd.concat(div_event).sort_values('date', ascending=True).reset_index(drop=True)
-    # st.write(y, div_event_df)
     ret = 0
     for idx, last_d in div_event_df.iterrows():
 
         div = porto[last_d['stock']] * last_d['adjDividend'] * 100
         cash += div
         ret += div
-        activities.append(f'dividend {div} from {last_d['stock']} @ {last_d['date']}')
+        activities.append(f'receive dividend {div} from {last_d['stock']} @ {last_d['date']}')
 
         d = div_event_df.iloc[(idx+1) % len(div_event_df)]
         price_df = prices[d['stock']]
         buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
         close_price = buy_date['close']
-        # st.write(price_df)
         
         buy_lot = cash / close_price / 100
         buy_trx = int(buy_lot) * close_price * 100
@@ -246,19 +245,25 @@ for y in range(start_year, end_year+1):
     for s in stock_list:
         price_df = prices[s]
         buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
-        inv += porto[s] * buy_date['close'] * 100
+        val = porto[s] * buy_date['close'] * 100
+        inv += val
+        porto_df = pd.concat([porto_df,
+                              pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
+                            ])
+
     investments += [inv]
 
-st.write(activities)
-st.write(porto)
+st.write('activity log', activities)
+# st.dataframe(porto_df, hide_index=True)
 
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
 st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
 
-investment_chart = alt.Chart(return_df).mark_bar().encode(
+investment_chart = alt.Chart(porto_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
-    y=alt.Y('investment:Q', title='Investment')
+    y=alt.Y('value:Q', title='Investment'),
+    color='stock'
 )
 
 return_chart = alt.Chart(return_df).mark_line(point=True).encode(
