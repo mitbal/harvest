@@ -15,7 +15,7 @@ st.title('# Simulator')
 st.write('## Basic single instrument compounding simulation')
 
 cols = st.columns(3)
-initial_value = cols[0].number_input('Jumlah awal investasi (in million rupiah)', value=120) * 100_000
+initial_value = cols[0].number_input('Jumlah awal investasi (in million rupiah)', value=120) * 1_000_000
 num_year = cols[1].number_input('Lama tahun', value=10)
 avg_yield = cols[2].number_input('Yield', value=0.10)
 
@@ -115,17 +115,19 @@ combined_chart = alt.Chart(combined_df).mark_bar().encode(
 
 st.altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'))
 
+
 #############################################################################################
 
-st.write('## Single Stock Dividend Reinvestment')
-stock_name = st.text_input(label='Stock Name', value='INDF.JK')
-start_year = st.number_input(label='Start Year', value=2014, min_value=2000, max_value=2024)
-end_year = st.number_input(label='End Year', value=2024, min_value=2000, max_value=2024)
-div_df = hd.get_dividend_history_single_stock(stock_name)
-# st.dataframe(div_df)
 
+st.write('## Single stock dividend reinvestment historical compounding simulation')
+
+cols = st.columns(3)
+stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK')
+start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=2024)
+end_year = cols[2].number_input(label='End Year', value=2024, min_value=2014, max_value=2024)
+
+div_df = hd.get_dividend_history_single_stock(stock_name)
 price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
-# st.dataframe(price_df)
 
 activities = []
 cash = initial_value
@@ -136,7 +138,6 @@ returns = []
 
 for y in range(start_year, end_year+1):
 
-    # if y == start_year:
     buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
     close_price = buy_date['close']
     
@@ -154,7 +155,7 @@ for y in range(start_year, end_year+1):
 
     returns += [div]
 
-st.write(activities)
+st.write('activities', activities)
 
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
@@ -173,6 +174,9 @@ return_chart = alt.Chart(return_df).mark_line(point=True).encode(
 
 st.altair_chart((investment_chart + return_chart).resolve_scale(y='independent')
                 , use_container_width=True)
+
+
+################################################################################
 
 
 st.write('## Multi Stock Dividend Reinvestment')
