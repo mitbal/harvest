@@ -8,6 +8,10 @@ import harvest.data as hd
 
 st.title('# Simulator')
 
+
+################################################################################
+
+
 st.write('## Basic single instrument compounding simulation')
 
 cols = st.columns(3)
@@ -43,17 +47,21 @@ compound_chart = alt.layer(investment_chart, return_chart).resolve_scale(y='inde
 st.altair_chart(compound_chart)
 
 
-st.write('# Multi year compounding')
+##################################################################################
 
-num_of_stocks = st.number_input('Jumlah saham', value=2)
+
+st.write('## Multi stock compounding simulation')
+
+cols = st.columns(3)
+num_of_stocks = cols[0].number_input('Jumlah saham', value=2, min_value=1, max_value=12)
 
 investment_per_stock = [initial_value / num_of_stocks for _ in range(num_of_stocks)]
-# st.write('investment per stock', investment_per_stock)
-
-investment_per_stock = st.text_area('investment per stock', value='\n'.join([str(i) for i in investment_per_stock]))
+investment_per_stock = cols[1].text_area('investment per stock', value='\n'.join([str(i) for i in investment_per_stock]))
 investment_per_stock = [float(i) for i in investment_per_stock.split('\n')]
 
-# simulate
+yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([str(avg_yield) for _ in range(num_of_stocks)]))
+yield_per_stock = [float(i) for i in yield_per_stock.split('\n')]
+
 investments = np.zeros((num_year, num_of_stocks))
 returns = np.zeros((num_year, num_of_stocks))
 
@@ -107,6 +115,7 @@ combined_chart = alt.Chart(combined_df).mark_bar().encode(
 
 st.altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'))
 
+#############################################################################################
 
 st.write('## Single Stock Dividend Reinvestment')
 stock_name = st.text_input(label='Stock Name', value='INDF.JK')
