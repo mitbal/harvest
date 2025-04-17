@@ -305,7 +305,10 @@ st.write('activity log', activities)
 
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
-st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
+st.dataframe(return_df[['year', 'investment', 'returns']], 
+             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
+                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
+             hide_index=True)
 
 porto_df['type'] = 'with drip'
 without_drip['type'] = 'no drip'
