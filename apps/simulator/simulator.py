@@ -83,8 +83,6 @@ for i in range(num_year):
         elif i+1 < num_year:
             investments[i+1, 0] = investments[i, j] + returns[i, j]
 
-# st.write('investments', investments)
-# st.write('returns', returns)
 
 multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
 multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
@@ -176,7 +174,8 @@ for y in range(start_year, end_year+1):
                                             })
                             ])
 
-st.write('activities', activities)
+with st.expander('Activity Log'):
+    st.write(activities)
 
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
@@ -300,8 +299,8 @@ for y in range(start_year, end_year+1):
 
     investments += [inv]
 
-st.write('activity log', activities)
-# st.dataframe(porto_df, hide_index=True)
+with st.expander('Activity Log'):
+    st.write(activities)
 
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
