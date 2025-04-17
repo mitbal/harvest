@@ -126,7 +126,7 @@ st.altair_chart((combined_chart + compound_chart).resolve_scale(y='independent')
 #############################################################################################
 
 
-st.write('## Single stock dividend reinvestment historical compounding simulation')
+st.write('## #3 Single stock dividend reinvestment historical compounding simulation')
 
 cols = st.columns(3)
 stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK')
@@ -143,6 +143,9 @@ divs = []
 investments = []
 returns = []
 
+initial_investment = 0
+without_drip = pd.DataFrame()
+
 for y in range(start_year, end_year+1):
 
     buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
@@ -153,34 +156,58 @@ for y in range(start_year, end_year+1):
     cash -= int(buy) * close_price * 100
     activities.append(f'buy {int(buy)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
 
+    if y == start_year:
+        initial_investment = buy
+
     buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
     investments += [np.sum(porto) * buy_date['close'] * 100]
     
-    div = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum() * np.sum(porto) * 100
+    div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
+    div = div_payment * np.sum(porto) * 100
     cash += div
     activities.append(f'receive dividend {div}')
 
     returns += [div]
 
+    without_drip = pd.concat([without_drip, 
+                              pd.DataFrame({'year': [f'Year {y}'], 
+                                            'returns': [div_payment * initial_investment * 100],
+                                            'investment': [ initial_investment * buy_date['close'] * 100 + div]
+                                            })
+                            ])
+
 st.write('activities', activities)
 
 return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
+return_df['type'] = 'reinvest'
+
 st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
 
+without_drip['type'] = 'no reinvest'
+return_df = pd.concat([without_drip, return_df])
+
+bar_color_scale = alt.Scale(scheme='tableau10') # Or 'category10', 'accent', etc.
 investment_chart = alt.Chart(return_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
-    y=alt.Y('investment:Q', title='Investment')
+    y=alt.Y('investment:Q', title='Investment'),
+    xOffset=alt.XOffset('type:N', sort=['no reinvest', 'reinvest']),
+    color=alt.Color('type:N',
+                    scale=bar_color_scale,
+                    # legend=alt.Legend(title="Investment Type") # Legend for bars
+                   ),
 )
 
 return_chart = alt.Chart(return_df).mark_line(point=True).encode(
     x=alt.X('year:O', title='Year'),
     y=alt.Y('returns:Q', title='Returns'),
-    color=alt.value('#FA8072')
+    color=alt.Color('type:N').scale(domain=['reinvest', 'no reinvest'], range=['red', 'yellow'])
 )
 
-st.altair_chart((investment_chart + return_chart).resolve_scale(y='independent')
-                , use_container_width=True)
+st.altair_chart((investment_chart + return_chart)\
+                .resolve_scale(y='independent', color='independent'),
+                # .resolve_legend(color='independent'), 
+                use_container_width=True)
 
 
 ################################################################################
