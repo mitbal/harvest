@@ -182,7 +182,10 @@ return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
 return_df['type'] = 'reinvest'
 
-st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
+st.dataframe(return_df[['year', 'investment', 'returns']], 
+             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
+                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
+             hide_index=True)
 
 without_drip['type'] = 'no reinvest'
 return_df = pd.concat([without_drip, return_df])
@@ -194,7 +197,6 @@ investment_chart = alt.Chart(return_df).mark_bar().encode(
     xOffset=alt.XOffset('type:N', sort=['no reinvest', 'reinvest']),
     color=alt.Color('type:N',
                     scale=bar_color_scale,
-                    # legend=alt.Legend(title="Investment Type") # Legend for bars
                    ),
 )
 
@@ -206,7 +208,6 @@ return_chart = alt.Chart(return_df).mark_line(point=True).encode(
 
 st.altair_chart((investment_chart + return_chart)\
                 .resolve_scale(y='independent', color='independent'),
-                # .resolve_legend(color='independent'), 
                 use_container_width=True)
 
 
@@ -215,7 +216,7 @@ st.altair_chart((investment_chart + return_chart)\
 
 st.write('## Multi Stock Dividend Reinvestment')
 
-stock_list = st.text_input('Enter stock list (separated by comma):', 'BMRI.JK, PTBA.JK, ASII.JK, SIDO.JK', max_chars=52)
+stock_list = st.text_input('Enter stock list (separated by comma):', 'SMSM.JK, SIDO.JK', max_chars=52)
 stock_list = [stock.strip() for stock in stock_list.split(',')]
 
 prices = {}
