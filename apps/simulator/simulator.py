@@ -165,7 +165,7 @@ for y in range(start_year, end_year+1):
     div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
     div = div_payment * np.sum(porto) * 100
     cash += div
-    activities.append(f'receive dividend {div}')
+    activities.append(f'receive dividend payment {div_payment}')
 
     returns += [div]
 
@@ -252,7 +252,7 @@ for y in range(start_year, end_year+1):
             cash -= buy_trx
 
             initial_purchase[s] = buy_lot
-            activities.append(f'buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}')
+            activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
 
         div_df = pd.DataFrame(divs[s])
         div_df['stock'] = s
@@ -265,7 +265,7 @@ for y in range(start_year, end_year+1):
         div = porto[last_d['stock']] * last_d['adjDividend'] * 100
         cash += div
         ret += div
-        activities.append(f'receive dividend {div} from {last_d['stock']} @ {last_d['date']}')
+        activities.append(f"receive dividend {div} from {last_d['stock']} @ {last_d['date']}")
 
         d = div_event_df.iloc[(idx+1) % len(div_event_df)]
         price_df = prices[d['stock']]
@@ -276,7 +276,7 @@ for y in range(start_year, end_year+1):
         buy_trx = int(buy_lot) * close_price * 100
         porto[d['stock']] += int(buy_lot)  
         cash -= buy_trx
-        activities.append(f'buy {int(buy_lot)} lots of {d["stock"]} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}')
+        activities.append(f"buy {int(buy_lot)} lots of {d['stock']} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
 
     returns += [ret]
     inv = 0
