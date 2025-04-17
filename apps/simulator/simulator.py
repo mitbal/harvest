@@ -214,7 +214,7 @@ st.altair_chart((investment_chart + return_chart)\
 ################################################################################
 
 
-st.write('## Multi Stock Dividend Reinvestment')
+st.write('## #4 Multi Stock Dividend Reinvestment')
 
 stock_list = st.text_input('Enter stock list (separated by comma):', 'SMSM.JK, SIDO.JK', max_chars=52)
 stock_list = [stock.strip() for stock in stock_list.split(',')]
@@ -234,6 +234,8 @@ cash = initial_value
 activities = []
 investments = []
 returns = []
+initial_purchase = {}
+without_drip = pd.DataFrame()
 for y in range(start_year, end_year+1):
     
     div_event = []
@@ -249,6 +251,7 @@ for y in range(start_year, end_year+1):
             porto[s] += int(buy_lot)  
             cash -= buy_trx
 
+            initial_purchase[s] = buy_lot
             activities.append(f'buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}')
 
         div_df = pd.DataFrame(divs[s])
@@ -285,6 +288,15 @@ for y in range(start_year, end_year+1):
         porto_df = pd.concat([porto_df,
                               pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
                             ])
+        without_drip = pd.concat([without_drip,
+                                  pd.DataFrame({
+                                    'stock': [s],
+                                    'year': [f'Year {y}'],
+                                    'lot': [initial_purchase[s]],
+                                    'price': [buy_date['close']],
+                                    'value': [initial_purchase[s] * buy_date['close'] * 100]
+                                    })
+                                ])
 
     investments += [inv]
 
@@ -295,10 +307,14 @@ return_df = pd.DataFrame({'investment': investments, 'returns': returns})
 return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
 st.dataframe(return_df[['year', 'investment', 'returns']], hide_index=True)
 
+porto_df['type'] = 'with drip'
+without_drip['type'] = 'no drip'
+porto_df = pd.concat([porto_df, without_drip])
 investment_chart = alt.Chart(porto_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
     y=alt.Y('value:Q', title='Investment'),
-    color='stock'
+    color='stock',
+    xOffset='type'
 )
 
 return_chart = alt.Chart(return_df).mark_line(point=True).encode(
