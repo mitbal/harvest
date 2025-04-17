@@ -83,12 +83,15 @@ for i in range(num_year):
         elif i+1 < num_year:
             investments[i+1, 0] = investments[i, j] + returns[i, j]
 
-st.write('investments', investments)
-st.write('returns', returns)
+# st.write('investments', investments)
+# st.write('returns', returns)
 
 multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
 multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
-st.dataframe(multi_return_df)
+st.dataframe(multi_return_df[['year', 'investment', 'returns']], 
+             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
+                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
+             hide_index=True)
 
 multi_investment_chart = alt.Chart(multi_return_df).mark_bar().encode(
     x=alt.X('year:O', title='Year'),
