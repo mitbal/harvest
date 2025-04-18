@@ -1,13 +1,11 @@
-import streamlit as st
-import requests
-import json
 import os
+import json
+import requests
 from datetime import datetime
-# from dotenv import load_dotenv
-import redis
 
-# Load environment variables (optional)
-# load_dotenv()
+import redis
+import streamlit as st
+
 
 # Set page configuration
 st.set_page_config(
@@ -16,30 +14,26 @@ st.set_page_config(
     layout='wide'
 )
 
-api_key = os.environ['FMP_API_KEY']
-redis_url = os.environ['REDIS_URL']
 
-avatars = {
-    'assistant': '🧞‍♂️',
-    'user': '🧑‍💼'
-}
-
+# Get additional data from precomputed dividend table
 @st.cache_resource
 def connect_redis(redis_url):
     r = redis.from_url(redis_url)
     return r
 
+redis_url = os.environ['REDIS_URL']
 r = connect_redis(redis_url)
 rjson = r.get('div_score_jkse')
 div_score_json = json.loads(rjson)
 content = div_score_json['content']
 
+
 # Helper function to call OpenRouter API
 def get_ai_response(prompt, chat_history, api_key, model):
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": "localhost",  # Replace with your actual hostname in production
-        "X-Title": "Panen Dividen",  # Your app name
+        "HTTP-Referer": "localhost",
+        "X-Title": "Panen Dividen",
         "Content-Type": "application/json"
     }
 
@@ -78,7 +72,8 @@ def get_ai_response(prompt, chat_history, api_key, model):
     response = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers=headers,
-        data=json.dumps(data)
+        data=json.dumps(data),
+        timeout=30
     )
     
     if response.status_code == 200:
@@ -152,12 +147,20 @@ if "OPENROUTER_API_KEY" not in st.session_state:
     st.info("Don't have an API key? Get one at [openrouter.ai](https://openrouter.ai)")
     st.stop()
 
+
+avatars = {
+    'assistant': '🧞‍♂️',
+    'user': '🧑‍💼'
+}
+
 # Display chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"], avatar=avatars[message['role']]):
         st.markdown(message["content"])
         if "timestamp" in message:
             st.caption(f"{message['timestamp']}")
+
+# st.write('api key', st.session_state.OPENROUTER_API_KEY)
 
 # Chat input
 if prompt := st.chat_input("Message the AI assistant..."):
