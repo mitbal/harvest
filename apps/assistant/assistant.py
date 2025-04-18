@@ -110,12 +110,6 @@ else:
         
 # Model selection
 model_options = {
-    # "OpenAI GPT-4": "openai/gpt-4-turbo",
-    # "OpenAI GPT-3.5 Turbo": "openai/gpt-3.5-turbo",
-    # "Anthropic Claude 3 Opus": "anthropic/claude-3-opus",
-    # "Anthropic Claude 3 Sonnet": "anthropic/claude-3-sonnet",
-    # "Google Gemini Pro": "google/gemini-pro",
-    # "Meta Llama 3 70B": "meta/llama-3-70b-instruct"
     'Gemini 2.0 Flash': 'google/gemini-2.0-flash-exp:free',
     'Gemini 2.5 Pro': 'google/gemini-2.5-pro-exp-03-25:free'
 }
