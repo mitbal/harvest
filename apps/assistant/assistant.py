@@ -38,8 +38,8 @@ content = div_score_json['content']
 def get_ai_response(prompt, chat_history, api_key, model):
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": "https://your-app-hostname.com",  # Replace with your actual hostname in production
-        "X-Title": "AI Chatbot App",  # Your app name
+        "HTTP-Referer": "localhost",  # Replace with your actual hostname in production
+        "X-Title": "Panen Dividen",  # Your app name
         "Content-Type": "application/json"
     }
 
@@ -121,13 +121,14 @@ model_options = {
     # "Anthropic Claude 3 Sonnet": "anthropic/claude-3-sonnet",
     # "Google Gemini Pro": "google/gemini-pro",
     # "Meta Llama 3 70B": "meta/llama-3-70b-instruct"
-    'Gemini 2.0 Flash': 'google/gemini-2.0-flash-lite-preview-02-05:free'
+    'Gemini 2.0 Flash': 'google/gemini-2.0-flash-exp:free',
+    'Gemini 2.5 Pro': 'google/gemini-2.5-pro-exp-03-25:free'
 }
 
 selected_model = st.sidebar.selectbox(
     "AI Model Selection:",
     list(model_options.keys()),
-    index=0  # Default to GPT-3.5 Turbo
+    index=0
 )
 
 model_id = model_options[selected_model]
