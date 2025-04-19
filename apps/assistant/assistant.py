@@ -96,17 +96,6 @@ if "OPENROUTER_API_KEY" not in st.session_state:
 
 # Sidebar for configuration
 st.sidebar.title("Settings")
-
-# API Key input
-if "OPENROUTER_API_KEY" not in st.session_state:
-    api_key = st.sidebar.text_input("Enter your OpenRouter API Key:", type="password")
-    if api_key:
-        st.session_state.OPENROUTER_API_KEY = api_key
-else:
-    st.sidebar.success("API Key is set! ✓")
-    if st.sidebar.button("Change API Key"):
-        del st.session_state.OPENROUTER_API_KEY
-        st.rerun()
         
 # Model selection
 model_options = {
@@ -135,12 +124,6 @@ st.sidebar.info(f"You're currently using **{selected_model}** (`{model_id}`)")
 st.title("🧞‍♂️ Om Jin the Financial Advisor")
 st.caption(f"Powered by {selected_model} via OpenRouter")
 
-# Check if API Key is set
-if "OPENROUTER_API_KEY" not in st.session_state:
-    st.warning("Please enter your OpenRouter API Key in the sidebar to continue.")
-    st.info("Don't have an API key? Get one at [openrouter.ai](https://openrouter.ai)")
-    st.stop()
-
 
 avatars = {
     'assistant': '🧞‍♂️',
@@ -154,7 +137,6 @@ for message in st.session_state.messages:
         if "timestamp" in message:
             st.caption(f"{message['timestamp']}")
 
-# st.write('api key', st.session_state.OPENROUTER_API_KEY)
 
 # Chat input
 if prompt := st.chat_input("Message the AI assistant..."):
