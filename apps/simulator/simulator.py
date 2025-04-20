@@ -11,44 +11,45 @@ st.title('# Simulator')
 
 ################################################################################
 
+with st.container(border=True):
+    st.write('## #1 Basic single instrument compounding simulation')
 
-st.write('## Basic single instrument compounding simulation')
+    cols = st.columns(3)
+    initial_value = cols[0].number_input('Jumlah awal investasi (in million rupiah)', value=120) * 1_000_000
+    num_year = cols[1].number_input('Lama tahun', value=10)
+    avg_yield = cols[2].number_input('Yield', value=0.10)
 
-cols = st.columns(3)
-initial_value = cols[0].number_input('Jumlah awal investasi (in million rupiah)', value=120) * 1_000_000
-num_year = cols[1].number_input('Lama tahun', value=10)
-avg_yield = cols[2].number_input('Yield', value=0.10)
+    investments = [initial_value]
+    returns = []
+    for i in range(num_year):
+        
+        returns += [investments[i] * avg_yield]
+        investments += [investments[i] + returns[i]]
 
-investments = [initial_value]
-returns = []
-for i in range(num_year):
-    
-    returns += [investments[i] * avg_yield]
-    investments += [investments[i] + returns[i]]
+    returns += [investments[-1] * avg_yield]
+    return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
+    return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
 
-returns += [investments[-1] * avg_yield]
-return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
-return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
+    cols = st.columns([0.35, 0.65])
+    cols[0].dataframe(return_df[['year', 'investment', 'returns']], 
+                column_config={'investment': st.column_config.NumberColumn('Investment', format='localized'), 
+                            'returns': st.column_config.NumberColumn('Returns', format='localized'), }, 
+                hide_index=True)
 
-st.dataframe(return_df[['year', 'investment', 'returns']], 
-             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
-                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
-             hide_index=True)
+    investment_chart = alt.Chart(return_df).mark_bar().encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('investment:Q', title='Investment')
+    )
 
-investment_chart = alt.Chart(return_df).mark_bar().encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('investment:Q', title='Investment')
-)
+    return_chart = alt.Chart(return_df).mark_line(point=True).encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('returns:Q', title='Returns'),
+        color=alt.value('#FA8072')
+    )
 
-return_chart = alt.Chart(return_df).mark_line(point=True).encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('returns:Q', title='Returns'),
-    color=alt.value('#FA8072')
-)
+    compound_chart = alt.layer(investment_chart, return_chart).resolve_scale(y='independent')
 
-compound_chart = alt.layer(investment_chart, return_chart).resolve_scale(y='independent')
-
-st.altair_chart(compound_chart)
+    cols[1].altair_chart(compound_chart)
 
 
 ##################################################################################
