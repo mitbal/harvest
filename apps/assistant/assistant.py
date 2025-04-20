@@ -1,10 +1,10 @@
 import os
 import json
-import requests
 from datetime import datetime
 
 import redis
 import streamlit as st
+from openai import OpenAI
 
 
 # Set page configuration
@@ -30,11 +30,15 @@ content = div_score_json['content']
 
 # Helper function to call OpenRouter API
 def get_ai_response(prompt, chat_history, api_key, model):
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": "localhost",
-        "X-Title": "Panen Dividen",
-        "Content-Type": "application/json"
+    
+    client = OpenAI(
+        base_url='https://openrouter.ai/api/v1',
+        api_key=api_key,
+    )
+
+    extra_headers = {
+        'HTTP-Referer': 'panendividen.com',
+        'X-Title': 'Panen Dividen'
     }
 
     system_prompt = """
@@ -64,24 +68,18 @@ def get_ai_response(prompt, chat_history, api_key, model):
         "content": prompt
     })
     
-    data = {
-        "model": model,
-        "messages": messages
-    }
-    
-    response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers=headers,
-        data=json.dumps(data),
-        timeout=30
-    )
-    
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    else:
-        st.error(f"Error: {response.status_code}")
-        st.json(response.json())
-        return f"Sorry, I encountered an error. Status code: {response.status_code}"
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_headers=extra_headers,
+            timeout=30
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+        return f"Sorry, I encountered an error: {str(e)}"
+
 
 # Initialize session state for chat history
 if "messages" not in st.session_state:
