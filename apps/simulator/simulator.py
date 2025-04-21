@@ -146,91 +146,101 @@ with st.container(border=True):
 
 #############################################################################################
 
+with st.container(border=True):
+    st.write('## #3 Single stock dividend reinvestment historical compounding simulation')
 
-st.write('## #3 Single stock dividend reinvestment historical compounding simulation')
+    cols = st.columns(3)
+    stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK')
+    start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=2024)
+    end_year = cols[2].number_input(label='End Year', value=2024, min_value=2014, max_value=2024)
 
-cols = st.columns(3)
-stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK')
-start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=2024)
-end_year = cols[2].number_input(label='End Year', value=2024, min_value=2014, max_value=2024)
+    div_df = hd.get_dividend_history_single_stock(stock_name)
+    price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
 
-div_df = hd.get_dividend_history_single_stock(stock_name)
-price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
+    activities = []
+    cash = initial_value
+    porto = []
+    divs = []
+    investments = []
+    returns = []
 
-activities = []
-cash = initial_value
-porto = []
-divs = []
-investments = []
-returns = []
+    initial_investment = 0
+    without_drip = pd.DataFrame()
 
-initial_investment = 0
-without_drip = pd.DataFrame()
+    for y in range(start_year, end_year+1):
 
-for y in range(start_year, end_year+1):
+        buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
+        close_price = buy_date['close']
+        
+        buy = cash / close_price / 100
+        porto += [int(buy)]
+        cash -= int(buy) * close_price * 100
+        activities.append(f'buy {int(buy)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
 
-    buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
-    close_price = buy_date['close']
-    
-    buy = cash / close_price / 100
-    porto += [int(buy)]
-    cash -= int(buy) * close_price * 100
-    activities.append(f'buy {int(buy)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
+        if y == start_year:
+            initial_investment = buy
 
-    if y == start_year:
-        initial_investment = buy
+        buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
+        investments += [np.sum(porto) * buy_date['close'] * 100]
+        
+        div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
+        div = int(div_payment * np.sum(porto) * 100)
+        cash += div
+        activities.append(f'receive dividend payment {div_payment}')
 
-    buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
-    investments += [np.sum(porto) * buy_date['close'] * 100]
-    
-    div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
-    div = div_payment * np.sum(porto) * 100
-    cash += div
-    activities.append(f'receive dividend payment {div_payment}')
+        returns += [div]
 
-    returns += [div]
+        without_drip = pd.concat([without_drip, 
+                                pd.DataFrame({'year': [f'Year {y}'], 
+                                                'returns': [div_payment * initial_investment * 100],
+                                                'investment': [ initial_investment * buy_date['close'] * 100 + div]
+                                                })
+                                ])
 
-    without_drip = pd.concat([without_drip, 
-                              pd.DataFrame({'year': [f'Year {y}'], 
-                                            'returns': [div_payment * initial_investment * 100],
-                                            'investment': [ initial_investment * buy_date['close'] * 100 + div]
-                                            })
-                            ])
+    with st.expander('Activity Log'):
+        st.write(activities)
 
-with st.expander('Activity Log'):
-    st.write(activities)
+    return_df = pd.DataFrame({'investment': investments, 'returns': returns})
+    return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
+    return_df['type'] = 'reinvest'
 
-return_df = pd.DataFrame({'investment': investments, 'returns': returns})
-return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
-return_df['type'] = 'reinvest'
+    cols = st.columns([0.33, 0.67])
 
-st.dataframe(return_df[['year', 'investment', 'returns']], 
-             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
-                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
-             hide_index=True)
+    cols[0].dataframe(
+        return_df[['year', 'investment', 'returns']], 
+        column_config={
+            'year': st.column_config.TextColumn('Year'),
+            'investment': st.column_config.NumberColumn('Investment', format='localized'),
+            'returns': st.column_config.NumberColumn('Returns', format='localized'),
+        }, 
+        hide_index=True,
+        height=430)
 
-without_drip['type'] = 'no reinvest'
-return_df = pd.concat([without_drip, return_df])
+    without_drip['type'] = 'no reinvest'
+    return_df = pd.concat([without_drip, return_df])
 
-bar_color_scale = alt.Scale(scheme='tableau10') # Or 'category10', 'accent', etc.
-investment_chart = alt.Chart(return_df).mark_bar().encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('investment:Q', title='Investment'),
-    xOffset=alt.XOffset('type:N', sort=['no reinvest', 'reinvest']),
-    color=alt.Color('type:N',
-                    scale=bar_color_scale,
-                   ),
-)
+    bar_color_scale = alt.Scale(scheme='tableau10')
+    investment_chart = alt.Chart(return_df).mark_bar().encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('investment:Q', title='Investment'),
+        xOffset=alt.XOffset('type:N', sort=['no reinvest', 'reinvest']),
+        color=alt.Color('type:N',
+                        scale=bar_color_scale,
+                    ),
+    )
 
-return_chart = alt.Chart(return_df).mark_line(point=True).encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('returns:Q', title='Returns'),
-    color=alt.Color('type:N').scale(domain=['reinvest', 'no reinvest'], range=['red', 'yellow'])
-)
+    return_chart = alt.Chart(return_df).mark_line(point=True).encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('returns:Q', title='Returns'),
+        color=alt.Color('type:N').scale(domain=['reinvest', 'no reinvest'], range=['red', 'yellow'])
+    ).properties(
+        title=f'{stock_name} Dividend Reinvestment Compounding',
+        height=430
+    )
 
-st.altair_chart((investment_chart + return_chart)\
-                .resolve_scale(y='independent', color='independent'),
-                use_container_width=True)
+    cols[1].altair_chart((investment_chart + return_chart)\
+                    .resolve_scale(y='independent', color='independent'),
+                    use_container_width=True)
 
 
 ################################################################################
