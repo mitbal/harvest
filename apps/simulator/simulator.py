@@ -74,9 +74,9 @@ with st.container(border=True):
     cols = st.columns(3)
     num_of_stocks = cols[0].number_input('Jumlah saham', value=2, min_value=1, max_value=12)
 
-    investment_per_stock = [initial_value / num_of_stocks for _ in range(num_of_stocks)]
-    investment_per_stock = cols[1].text_area('investment per stock', value='\n'.join([str(i) for i in investment_per_stock]))
-    investment_per_stock = [float(i) for i in investment_per_stock.split('\n')]
+    investment_per_stock = [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)]
+    investment_per_stock = cols[1].text_area('investment per stock (in million rupiah)', value='\n'.join([f'{int(i):d}' for i in investment_per_stock]))
+    investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
 
     yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([str(avg_yield) for _ in range(num_of_stocks)]))
     yield_per_stock = [float(i) for i in yield_per_stock.split('\n')]
@@ -92,7 +92,7 @@ with st.container(border=True):
         
         for j in range(num_of_stocks):
 
-            returns[i, j] = int(investments[i, j] * avg_yield)
+            returns[i, j] = int(investments[i, j] * yield_per_stock[j])
             if j+1 < num_of_stocks:
                 investments[i, j+1] += returns[i, j]
             elif i+1 < num_year:
