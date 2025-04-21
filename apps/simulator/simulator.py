@@ -36,19 +36,23 @@ with st.container(border=True):
     return_df = simulate_compounding(initial_value, num_year, avg_yield)
 
     cols = st.columns([0.33, 0.67])
-    cols[0].dataframe(return_df[['year', 'investment', 'returns']],
-                column_config={
-                    'year': st.column_config.TextColumn('Year'),
-                    'investment': st.column_config.NumberColumn('Investment', format='localized'), 
-                    'returns': st.column_config.NumberColumn('Returns', format='localized'), }, 
-                hide_index=True)
+    cols[0].dataframe(
+        return_df[['year', 'investment', 'returns']],
+        column_config={
+            'year': st.column_config.TextColumn('Year'),
+            'investment': st.column_config.NumberColumn('Investment', format='localized'), 
+            'returns': st.column_config.NumberColumn('Returns', format='localized'), }, 
+        hide_index=True
+    )
 
-    investment_chart = alt.Chart(return_df).mark_bar().encode(
+    base_chart = alt.Chart(return_df)
+    
+    investment_chart = base_chart.mark_bar().encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('investment:Q', title='Investment')
     )
 
-    return_chart = alt.Chart(return_df).mark_line(point=alt.OverlayMarkDef(size=100), size=5).encode(
+    return_chart = base_chart.mark_line(point=alt.OverlayMarkDef(size=100), size=5).encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('returns:Q', title='Returns'),
         color=alt.value('#FA8072')
