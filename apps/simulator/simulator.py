@@ -9,6 +9,20 @@ import harvest.data as hd
 st.title('# Simulator')
 
 
+def simulate_compounding(initial_value, num_year, avg_yield):
+    
+    investments = [initial_value]
+    returns = []
+    for i in range(num_year):
+        returns += [int(investments[i] * avg_yield)]
+        investments += [investments[i] + returns[i]]
+    returns += [investments[-1] * avg_yield]
+
+    return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
+    return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
+
+    return return_df
+
 ################################################################################
 
 with st.container(border=True):
@@ -19,21 +33,14 @@ with st.container(border=True):
     num_year = cols[1].number_input('Lama tahun', value=10)
     avg_yield = cols[2].number_input('Yield', value=0.10)
 
-    investments = [initial_value]
-    returns = []
-    for i in range(num_year):
-        
-        returns += [investments[i] * avg_yield]
-        investments += [investments[i] + returns[i]]
+    return_df = simulate_compounding(initial_value, num_year, avg_yield)
 
-    returns += [investments[-1] * avg_yield]
-    return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
-    return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
-
-    cols = st.columns([0.35, 0.65])
-    cols[0].dataframe(return_df[['year', 'investment', 'returns']], 
-                column_config={'investment': st.column_config.NumberColumn('Investment', format='localized'), 
-                            'returns': st.column_config.NumberColumn('Returns', format='localized'), }, 
+    cols = st.columns([0.33, 0.67])
+    cols[0].dataframe(return_df[['year', 'investment', 'returns']],
+                column_config={
+                    'year': st.column_config.TextColumn('Year'),
+                    'investment': st.column_config.NumberColumn('Investment', format='localized'), 
+                    'returns': st.column_config.NumberColumn('Returns', format='localized'), }, 
                 hide_index=True)
 
     investment_chart = alt.Chart(return_df).mark_bar().encode(
@@ -41,13 +48,16 @@ with st.container(border=True):
         y=alt.Y('investment:Q', title='Investment')
     )
 
-    return_chart = alt.Chart(return_df).mark_line(point=True).encode(
+    return_chart = alt.Chart(return_df).mark_line(point=alt.OverlayMarkDef(size=100), size=5).encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('returns:Q', title='Returns'),
         color=alt.value('#FA8072')
     )
 
-    compound_chart = alt.layer(investment_chart, return_chart).resolve_scale(y='independent')
+    compound_chart = alt.layer(investment_chart, return_chart)\
+        .resolve_scale(y='independent')\
+        .properties(title='Compound Interest Simulation',
+                    height=420)
 
     cols[1].altair_chart(compound_chart)
 
