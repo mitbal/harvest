@@ -46,7 +46,7 @@ with st.container(border=True):
     )
 
     base_chart = alt.Chart(return_df)
-    
+
     investment_chart = base_chart.mark_bar().encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('investment:Q', title='Investment')
@@ -68,72 +68,80 @@ with st.container(border=True):
 
 ##################################################################################
 
+with st.container(border=True):
+    st.write('## #2 Multi stock compounding simulation')
 
-st.write('## Multi stock compounding simulation')
+    cols = st.columns(3)
+    num_of_stocks = cols[0].number_input('Jumlah saham', value=2, min_value=1, max_value=12)
 
-cols = st.columns(3)
-num_of_stocks = cols[0].number_input('Jumlah saham', value=2, min_value=1, max_value=12)
+    investment_per_stock = [initial_value / num_of_stocks for _ in range(num_of_stocks)]
+    investment_per_stock = cols[1].text_area('investment per stock', value='\n'.join([str(i) for i in investment_per_stock]))
+    investment_per_stock = [float(i) for i in investment_per_stock.split('\n')]
 
-investment_per_stock = [initial_value / num_of_stocks for _ in range(num_of_stocks)]
-investment_per_stock = cols[1].text_area('investment per stock', value='\n'.join([str(i) for i in investment_per_stock]))
-investment_per_stock = [float(i) for i in investment_per_stock.split('\n')]
+    yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([str(avg_yield) for _ in range(num_of_stocks)]))
+    yield_per_stock = [float(i) for i in yield_per_stock.split('\n')]
 
-yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([str(avg_yield) for _ in range(num_of_stocks)]))
-yield_per_stock = [float(i) for i in yield_per_stock.split('\n')]
+    investments = np.zeros((num_year, num_of_stocks))
+    returns = np.zeros((num_year, num_of_stocks))
 
-investments = np.zeros((num_year, num_of_stocks))
-returns = np.zeros((num_year, num_of_stocks))
+    investments[0, :] = investment_per_stock
+    for i in range(num_year):
 
-investments[0, :] = investment_per_stock
-for i in range(num_year):
+        if i > 0:
+            investments[i, 1:] = investments[i-1, 1:]
+        
+        for j in range(num_of_stocks):
 
-    if i > 0:
-        investments[i, 1:] = investments[i-1, 1:]
+            returns[i, j] = int(investments[i, j] * avg_yield)
+            if j+1 < num_of_stocks:
+                investments[i, j+1] += returns[i, j]
+            elif i+1 < num_year:
+                investments[i+1, 0] = investments[i, j] + returns[i, j]
     
-    for j in range(num_of_stocks):
+    multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
+    multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
 
-        returns[i, j] = investments[i, j] * avg_yield
-        if j+1 < num_of_stocks:
-            investments[i, j+1] += returns[i, j]
-        elif i+1 < num_year:
-            investments[i+1, 0] = investments[i, j] + returns[i, j]
+    cols = st.columns([0.33, 0.67])
 
+    cols[0].dataframe(
+        multi_return_df[['year', 'investment', 'returns']], 
+        column_config={
+            'year': st.column_config.TextColumn('Year'),
+            'investment': st.column_config.NumberColumn('Investment', format='localized'),
+            'returns': st.column_config.NumberColumn('Returns', format='localized'),
+        },
+        hide_index=True
+    )
 
-multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
-multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
-st.dataframe(multi_return_df[['year', 'investment', 'returns']], 
-             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
-                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
-             hide_index=True)
+    multi_investment_chart = alt.Chart(multi_return_df).mark_bar().encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('investment:Q', title='Investment')
+    )
 
-multi_investment_chart = alt.Chart(multi_return_df).mark_bar().encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('investment:Q', title='Investment')
-)
+    multi_return_chart = alt.Chart(multi_return_df).mark_line(point=alt.OverlayMarkDef(size=100), size=5).encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('returns:Q', title='Returns'),
+        color=alt.value('#8FBC8F')
+    )
 
-multi_return_chart = alt.Chart(multi_return_df).mark_line(point=True).encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('returns:Q', title='Returns'),
-    color=alt.value('blue')
-)
+    compound_chart = alt.layer(return_chart, multi_return_chart)
 
-compound_chart = alt.layer(return_chart, multi_return_chart)
+    return_df['type'] = 'Basic'
+    multi_return_df['type'] = 'Multi'
+    combined_df = pd.concat([return_df, multi_return_df], axis=0)
 
-return_df['type'] = 'Basic'
-multi_return_df['type'] = 'Multi'
-combined_df = pd.concat([return_df, multi_return_df], axis=0)
+    combined_chart = alt.Chart(combined_df).mark_bar().encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('investment:Q', title='Investments'),
+        color=alt.Color('type:N', title='Type'),
+        xOffset='type:N',
+    ).properties(
+        title='Investment Comparison',
+        width=600,
+        height=420
+    )
 
-combined_chart = alt.Chart(combined_df).mark_bar().encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('investment:Q', title='Investments'),
-    color=alt.Color('type:N', title='Type'),
-    xOffset='type:N',
-).properties(
-    width=600,
-    height=400
-)
-
-st.altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'))
+    cols[1].altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'))
 
 
 #############################################################################################
