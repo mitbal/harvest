@@ -245,118 +245,129 @@ with st.container(border=True):
 
 ################################################################################
 
+with st.container(border=True):
+    st.write('## #4 Multi Stock Dividend Reinvestment')
 
-st.write('## #4 Multi Stock Dividend Reinvestment')
+    stock_list = st.text_input('Enter stock list (separated by comma):', 'SMSM.JK, SIDO.JK', max_chars=52)
+    stock_list = [stock.strip() for stock in stock_list.split(',')]
 
-stock_list = st.text_input('Enter stock list (separated by comma):', 'SMSM.JK, SIDO.JK', max_chars=52)
-stock_list = [stock.strip() for stock in stock_list.split(',')]
+    prices = {}
+    divs = {}
+    for stock in stock_list:
+        prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
+        divs[stock] = hd.get_dividend_history_single_stock(stock)
 
-prices = {}
-divs = {}
-for stock in stock_list:
-    prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
-    divs[stock] = hd.get_dividend_history_single_stock(stock)
+    porto = {s: 0 for s in stock_list}
+    returns = {}
 
-porto = {s: 0 for s in stock_list}
-returns = {}
+    porto_df = pd.DataFrame(columns=['year', 'stock', 'lot', 'price', 'value'])
 
-porto_df = pd.DataFrame(columns=['year', 'stock', 'lot', 'price', 'value'])
+    cash = initial_value
+    activities = []
+    investments = []
+    returns = []
+    initial_purchase = {}
+    without_drip = pd.DataFrame()
+    for y in range(start_year, end_year+1):
+        
+        div_event = []
+        for s in stock_list:
 
-cash = initial_value
-activities = []
-investments = []
-returns = []
-initial_purchase = {}
-without_drip = pd.DataFrame()
-for y in range(start_year, end_year+1):
-    
-    div_event = []
-    for s in stock_list:
+            if y == start_year:
+                price_df = prices[s]
+                buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
+                close_price = buy_date['close']
+                
+                buy_lot = (initial_value/len(stock_list)) / close_price / 100
+                buy_trx = int(buy_lot) * close_price * 100
+                porto[s] += int(buy_lot)  
+                cash -= buy_trx
 
-        if y == start_year:
-            price_df = prices[s]
-            buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
+                initial_purchase[s] = buy_lot
+                activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
+
+            div_df = pd.DataFrame(divs[s])
+            div_df['stock'] = s
+            div_event += [div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]]
+
+        div_event_df = pd.concat(div_event).sort_values('date', ascending=True).reset_index(drop=True)
+        ret = 0
+        for idx, last_d in div_event_df.iterrows():
+
+            div = porto[last_d['stock']] * last_d['adjDividend'] * 100
+            cash += div
+            ret += int(div)
+            activities.append(f"receive dividend {div} from {last_d['stock']} @ {last_d['date']}")
+
+            d = div_event_df.iloc[(idx+1) % len(div_event_df)]
+            price_df = prices[d['stock']]
+            buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
             close_price = buy_date['close']
             
-            buy_lot = (initial_value/len(stock_list)) / close_price / 100
+            buy_lot = cash / close_price / 100
             buy_trx = int(buy_lot) * close_price * 100
-            porto[s] += int(buy_lot)  
+            porto[d['stock']] += int(buy_lot)  
             cash -= buy_trx
+            activities.append(f"buy {int(buy_lot)} lots of {d['stock']} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
 
-            initial_purchase[s] = buy_lot
-            activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
-
-        div_df = pd.DataFrame(divs[s])
-        div_df['stock'] = s
-        div_event += [div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]]
-
-    div_event_df = pd.concat(div_event).sort_values('date', ascending=True).reset_index(drop=True)
-    ret = 0
-    for idx, last_d in div_event_df.iterrows():
-
-        div = porto[last_d['stock']] * last_d['adjDividend'] * 100
-        cash += div
-        ret += div
-        activities.append(f"receive dividend {div} from {last_d['stock']} @ {last_d['date']}")
-
-        d = div_event_df.iloc[(idx+1) % len(div_event_df)]
-        price_df = prices[d['stock']]
-        buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
-        close_price = buy_date['close']
-        
-        buy_lot = cash / close_price / 100
-        buy_trx = int(buy_lot) * close_price * 100
-        porto[d['stock']] += int(buy_lot)  
-        cash -= buy_trx
-        activities.append(f"buy {int(buy_lot)} lots of {d['stock']} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
-
-    returns += [ret]
-    inv = 0
-    for s in stock_list:
-        price_df = prices[s]
-        buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
-        val = porto[s] * buy_date['close'] * 100
-        inv += val
-        porto_df = pd.concat([porto_df,
-                              pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
-                            ])
-        without_drip = pd.concat([without_drip,
-                                  pd.DataFrame({
-                                    'stock': [s],
-                                    'year': [f'Year {y}'],
-                                    'lot': [initial_purchase[s]],
-                                    'price': [buy_date['close']],
-                                    'value': [initial_purchase[s] * buy_date['close'] * 100]
-                                    })
+        returns += [ret]
+        inv = 0
+        for s in stock_list:
+            price_df = prices[s]
+            buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
+            val = porto[s] * buy_date['close'] * 100
+            inv += val
+            porto_df = pd.concat([porto_df,
+                                pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
                                 ])
+            without_drip = pd.concat([without_drip,
+                                    pd.DataFrame({
+                                        'stock': [s],
+                                        'year': [f'Year {y}'],
+                                        'lot': [initial_purchase[s]],
+                                        'price': [buy_date['close']],
+                                        'value': [initial_purchase[s] * buy_date['close'] * 100]
+                                        })
+                                    ])
 
-    investments += [inv]
+        investments += [inv]
 
-with st.expander('Activity Log'):
-    st.write(activities)
+    with st.expander('Activity Log'):
+        st.write(activities)
 
-return_df = pd.DataFrame({'investment': investments, 'returns': returns})
-return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
-st.dataframe(return_df[['year', 'investment', 'returns']], 
-             column_config={'investment': st.column_config.NumberColumn('Investment', format='accounting'), 
-                           'returns': st.column_config.NumberColumn('Returns', format='accounting'), }, 
-             hide_index=True)
+    return_df = pd.DataFrame({'investment': investments, 'returns': returns})
+    return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
 
-porto_df['type'] = 'with drip'
-without_drip['type'] = 'no drip'
-porto_df = pd.concat([porto_df, without_drip])
-investment_chart = alt.Chart(porto_df).mark_bar().encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('value:Q', title='Investment'),
-    color='stock',
-    xOffset='type'
-)
+    cols = st.columns([0.33, 0.67])
 
-return_chart = alt.Chart(return_df).mark_line(point=True).encode(
-    x=alt.X('year:O', title='Year'),
-    y=alt.Y('returns:Q', title='Returns'),
-    color=alt.value('#FA8072')
-)
+    cols[0].dataframe(
+        return_df[['year', 'investment', 'returns']], 
+        column_config={
+            'year': st.column_config.TextColumn('Year'),
+            'investment': st.column_config.NumberColumn('Investment', format='localized'),
+            'returns': st.column_config.NumberColumn('Returns', format='localized'),
+        }, 
+        hide_index=True,
+        height=430
+    )
 
-st.altair_chart((investment_chart + return_chart).resolve_scale(y='independent')
-                , use_container_width=True)
+    porto_df['type'] = 'with drip'
+    without_drip['type'] = 'no drip'
+    porto_df = pd.concat([porto_df, without_drip])
+    investment_chart = alt.Chart(porto_df).mark_bar().encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('value:Q', title='Investment'),
+        color='stock',
+        xOffset='type'
+    )
+
+    return_chart = alt.Chart(return_df).mark_line(point=True).encode(
+        x=alt.X('year:O', title='Year'),
+        y=alt.Y('returns:Q', title='Returns'),
+        color=alt.value('#FA8072')
+    ).properties(
+        height=430
+    )
+
+    cols[1].altair_chart((investment_chart + return_chart).resolve_scale(y='independent')
+                    , use_container_width=True)
