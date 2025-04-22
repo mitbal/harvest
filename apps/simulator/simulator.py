@@ -23,6 +23,28 @@ def simulate_compounding(initial_value, num_year, avg_yield):
 
     return return_df
 
+
+def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_stock, yield_per_stock):
+    investments = np.zeros((num_year, num_of_stocks))
+    returns = np.zeros((num_year, num_of_stocks))
+
+    investments[0, :] = investment_per_stock
+    for i in range(num_year):
+        if i > 0:
+            investments[i, 1:] = investments[i-1, 1:]
+        
+        for j in range(num_of_stocks):
+            returns[i, j] = int(investments[i, j] * yield_per_stock[j])
+            if j+1 < num_of_stocks:
+                investments[i, j+1] += returns[i, j]
+            elif i+1 < num_year:
+                investments[i+1, 0] = investments[i, j] + returns[i, j]
+    
+    multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
+    multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
+    return multi_return_df
+
+
 ################################################################################
 
 with st.container(border=True):
@@ -68,6 +90,7 @@ with st.container(border=True):
 
 ##################################################################################
 
+
 with st.container(border=True):
     st.write('## #2 Multi stock compounding simulation')
 
@@ -81,25 +104,7 @@ with st.container(border=True):
     yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([str(avg_yield) for _ in range(num_of_stocks)]))
     yield_per_stock = [float(i) for i in yield_per_stock.split('\n')]
 
-    investments = np.zeros((num_year, num_of_stocks))
-    returns = np.zeros((num_year, num_of_stocks))
-
-    investments[0, :] = investment_per_stock
-    for i in range(num_year):
-
-        if i > 0:
-            investments[i, 1:] = investments[i-1, 1:]
-        
-        for j in range(num_of_stocks):
-
-            returns[i, j] = int(investments[i, j] * yield_per_stock[j])
-            if j+1 < num_of_stocks:
-                investments[i, j+1] += returns[i, j]
-            elif i+1 < num_year:
-                investments[i+1, 0] = investments[i, j] + returns[i, j]
-    
-    multi_return_df = pd.DataFrame({'investment': np.sum(investments, axis=1), 'returns': np.sum(returns, axis=1)})
-    multi_return_df['year'] = [f'Year {i+1:02d}' for i in range(len(multi_return_df))]
+    multi_return_df = simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_stock, yield_per_stock)
 
     cols = st.columns([0.33, 0.67])
 
