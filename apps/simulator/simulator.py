@@ -96,14 +96,14 @@ with st.container(border=True):
     st.write('## #2 Multi stock compounding simulation')
 
     cols = st.columns(3)
-    num_of_stocks = cols[0].number_input('Jumlah saham', value=2, min_value=1, max_value=12)
+    num_of_stocks = cols[0].number_input('Number of stocks', value=2, min_value=1, max_value=12)
 
     investment_per_stock = [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)]
     investment_per_stock = cols[1].text_area('investment per stock (in million rupiah)', value='\n'.join([f'{int(i):d}' for i in investment_per_stock]))
     investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
 
-    yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([str(avg_yield) for _ in range(num_of_stocks)]))
-    yield_per_stock = [float(i) for i in yield_per_stock.split('\n')]
+    yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([f'{(avg_yield*100):.2f}' for _ in range(num_of_stocks)]))
+    yield_per_stock = [float(i)/100 for i in yield_per_stock.split('\n')]
 
     multi_return_df = simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_stock, yield_per_stock)
 
