@@ -266,6 +266,16 @@ with st.container(border=True):
         stock_list_raw = stocks_input_str.split('\n')
         stock_list = [stock.strip() for stock in stock_list_raw if stock.strip()]
 
+    initial_investments = {}
+    with cols[1]:
+        num_of_stocks = len(stock_list)
+        investment_per_stock = [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)]
+        investment_per_stock = cols[1].text_area('investment per stock (in million rupiah)', 
+                                                 value='\n'.join([f'{int(i):d}' for i in investment_per_stock]), 
+                                                 key='investment_per_stock_sim_4',
+                                                 height=70)
+        investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
+
     prices = {}
     divs = {}
     for stock in stock_list:
@@ -286,14 +296,14 @@ with st.container(border=True):
     for y in range(start_year, end_year+1):
         
         div_event = []
-        for s in stock_list:
+        for i, s in enumerate(stock_list):
 
             if y == start_year:
                 price_df = prices[s]
                 buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
                 close_price = buy_date['close']
                 
-                buy_lot = (initial_value/len(stock_list)) / close_price / 100
+                buy_lot = investment_per_stock[i] / close_price / 100
                 buy_trx = int(buy_lot) * close_price * 100
                 porto[s] += int(buy_lot)  
                 cash -= buy_trx
