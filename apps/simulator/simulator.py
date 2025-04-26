@@ -254,8 +254,17 @@ with st.container(border=True):
 with st.container(border=True):
     st.write('## #4 Multi Stock Dividend Reinvestment')
 
-    stock_list = st.text_input('Enter stock list (separated by comma):', 'SMSM.JK, SIDO.JK', max_chars=52)
-    stock_list = [stock.strip() for stock in stock_list.split(',')]
+    cols = st.columns(2)
+    with cols[0]:
+        # Use text_area for multi-line input
+        stocks_input_str = st.text_area(
+            'Enter stock list (one per line):',
+            'SMSM.JK\nSIDO.JK', # Default example with newline
+            height=70 # Optional: adjust height
+        )
+        # Process input: split by newline, strip whitespace, filter empty lines
+        stock_list_raw = stocks_input_str.split('\n')
+        stock_list = [stock.strip() for stock in stock_list_raw if stock.strip()]
 
     prices = {}
     divs = {}
