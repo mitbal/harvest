@@ -252,7 +252,7 @@ with st.container(border=True):
 ################################################################################
 
 with st.container(border=True):
-    st.write('## #4 Multi Stock Dividend Reinvestment')
+    st.write('## #4 Multi stock dividend reinvestment simulation')
 
     cols = st.columns(2)
     with cols[0]:
