@@ -342,6 +342,7 @@ with st.container(border=True):
             last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
             last_year_div['Symbol'] = stock
             last_year_div['Lot'] = r['current_lot']
+            last_year_div['yield'] = last_year_div['adjDividend'] / r['last_price'] * 100
 
             div_lists += [last_year_div]
 
@@ -355,8 +356,10 @@ with st.container(border=True):
         month_div['month_name'] = month_div['month'].apply(lambda x: calendar.month_name[x])
         
         if view_type == 'Calendar':
-            all_divs['new_date'] = all_divs['new_date'].apply(lambda x: datetime(year=current_year+1, month=x.month, day=x.day))
-            cal = lesley.calendar_plot(all_divs['new_date'], all_divs['total_dividend'], nrows=3)
+            # all_divs['new_date'] = all_divs['new_date'].apply(lambda x: datetime(year=current_year+1, month=x.month, day=x.day))
+            # cal = lesley.calendar_plot(all_divs['new_date'], all_divs['total_dividend'], nrows=3)
+            all_divs['date'] = all_divs['Date']
+            cal = hp.plot_dividend_calendar(all_divs)
             st.altair_chart(cal)
         
         elif view_type == 'Bar Chart':
