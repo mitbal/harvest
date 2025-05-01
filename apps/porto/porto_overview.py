@@ -395,7 +395,15 @@ with st.expander('Dividend History', expanded=True):
 
         div_hist_cols = st.columns([3, 10, 5])
         with div_hist_cols[0]:
-            st.dataframe(div_df[['date', 'adjDividend']], hide_index=True)
+            st.dataframe(
+                div_df[['date', 'adjDividend']],
+                column_config={
+                    'date': st.column_config.DateColumn('Ex-Date'),
+                    'adjDividend': st.column_config.NumberColumn('Dividend', format='localized')
+                },
+                height=420,
+                hide_index=True
+            )
 
         with div_hist_cols[1]:
             stats = hd.calc_div_stats(hd.preprocess_div(div_df))
