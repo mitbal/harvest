@@ -261,20 +261,24 @@ with st.container(border=True):
             ),
             'total_invested': st.column_config.NumberColumn(
                 'Total Invested',
+                format='localized'
             ),
             'last_price': st.column_config.NumberColumn(
                 'Last Price',
             ),
             'total_dividend': st.column_config.NumberColumn(
                 'Total Dividend',
+                format='localized'
             )
         }
 
-        main_event = st.dataframe(df_display, 
-                                  on_select='rerun', 
-                                  selection_mode='single-row', 
-                                  hide_index=True,
-                                  column_config=cfig)
+        main_event = st.dataframe(
+            df_display,
+            on_select='rerun',
+            selection_mode='single-row',
+            hide_index=True,
+            column_config=cfig
+        )
 
     with tabs[1]:
         div_bar = alt.Chart(df_display).mark_bar().encode(
