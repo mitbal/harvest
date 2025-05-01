@@ -361,7 +361,14 @@ with st.container(border=True):
         
         elif view_type == 'Bar Chart':
             bar_cols = st.columns(2)
-            bar_cols[0].dataframe(month_div[['month_name', 'total_dividend']], hide_index=True)
+            bar_cols[0].dataframe(
+                month_div[['month_name', 'total_dividend']],
+                column_config={
+                    'month_name': 'Month',
+                    'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                },
+                hide_index=True
+            )
 
             month_bar = alt.Chart(month_div).mark_bar().encode(
                 x=alt.X('month:N'),
