@@ -258,6 +258,7 @@ with st.container(border=True):
             ),
             'avg_price': st.column_config.NumberColumn(
                 'Average Price',
+                format='localized'
             ),
             'total_invested': st.column_config.NumberColumn(
                 'Total Invested',
@@ -265,9 +266,14 @@ with st.container(border=True):
             ),
             'last_price': st.column_config.NumberColumn(
                 'Last Price',
+                format='localized'
             ),
             'total_dividend': st.column_config.NumberColumn(
                 'Total Dividend',
+                format='localized'
+            ),
+            'Available Lot': st.column_config.NumberColumn(
+                'Available Lot',
                 format='localized'
             )
         }
