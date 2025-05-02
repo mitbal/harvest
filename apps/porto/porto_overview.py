@@ -297,11 +297,16 @@ with st.container(border=True):
         
         with sector_cols[0]:
             sector_df = df.groupby('sector')['total_dividend'].sum().to_frame().sort_values('total_dividend', ascending=False).reset_index()
-            event = st.dataframe(sector_df, 
-                                 selection_mode=['single-row'], 
-                                 on_select='rerun',
-                                 hide_index=True,
-                                 key='data')
+            event = st.dataframe(
+                sector_df,
+                selection_mode=['single-row'],
+                on_select='rerun',
+                hide_index=True,
+                key='data',
+                column_config={
+                    'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                }
+            )
 
         with sector_cols[1]:
             if len(event.selection['rows']) > 0:
