@@ -307,7 +307,13 @@ with st.container(border=True):
             if len(event.selection['rows']) > 0:
                 row_idx = event.selection['rows'][0]
                 sector_name = sector_df.loc[row_idx, 'sector']
-                st.dataframe(df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True, )
+                st.dataframe(
+                    df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), 
+                    hide_index=True, 
+                    column_config={
+                        'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                    }
+                )
             else:
                 st.info('Select one of the sector on the table on the left')
 
@@ -385,7 +391,13 @@ with st.container(border=True):
                 for c, i in zip(row_1_cols, range(1, 7)):
                     m = all_divs[all_divs['month'] == i]
                     c.write(calendar.month_name[i])
-                    c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
+                    c.dataframe(
+                        m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
+                        hide_index=True,
+                        column_config={
+                            'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                        }
+                    )
 
             row_2 = st.container()
             with row_2:
@@ -393,7 +405,13 @@ with st.container(border=True):
                 for c, i in zip(row_2_cols, range(7, 13)):
                     m = all_divs[all_divs['month'] == i]
                     c.write(calendar.month_name[i])
-                    c.dataframe(m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), hide_index=True)
+                    c.dataframe(
+                        m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
+                        hide_index=True,
+                        column_config={
+                            'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                        }
+                    )
 
 # Detailed single stock
 with st.expander('Dividend History', expanded=True):
