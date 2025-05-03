@@ -55,7 +55,7 @@ st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
 
 with st.sidebar:
-    if not st.experimental_user.is_logged_in:
+    if not st.user.is_logged_in:
         if st.button('Log in with Google', icon=':material/login:'):
             st.login('google')
     else:
