@@ -59,16 +59,16 @@ with st.sidebar:
         if st.button('Log in with Google', icon=':material/login:'):
             st.login('google')
     else:
-        st.markdown(f"Welcome! {st.experimental_user.name}")
+        st.markdown(f"Welcome! {st.user.name}")
         if st.button('Log Out', icon=':material/logout:'):
             st.logout()
 
 conn = get_db_connection()
 
 if 'porto_df' not in st.session_state:
-    if st.experimental_user.is_logged_in:
-        data = get_user_portfolio(conn, st.experimental_user.email)
-        print(st.experimental_user.email, data)
+    if st.user.is_logged_in:
+        data = get_user_portfolio(conn, st.user.email)
+        print(st.user.email, data)
         if len(data) > 0:
             st.session_state['porto_df'] = pd.DataFrame(data)
         else:
@@ -500,6 +500,6 @@ with st.expander('Future Projection', expanded=True):
     st.altair_chart(future_chart)
 
 
-if st.experimental_user.is_logged_in:
+if st.user.is_logged_in:
     if st.sidebar.button('Update Porto', icon=':material/cloud_upload:'):
-        update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.experimental_user.email)
+        update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.user.email)
