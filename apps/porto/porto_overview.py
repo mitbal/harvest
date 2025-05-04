@@ -503,3 +503,4 @@ with st.expander('Future Projection', expanded=True):
 if st.user.is_logged_in:
     if st.sidebar.button('Update Porto', icon=':material/cloud_upload:'):
         update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.user.email)
+        st.badge("Success", icon=":material/check:", color="green")
