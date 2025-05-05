@@ -112,8 +112,8 @@ with st.expander('Data Input', expanded=True):
         form_cols = st.columns(2)
 
         target = form_cols[0].number_input(
-            label='Input Target Annual Income (in million IDR)', 
-            value=120, step=1, 
+            label='Input Target Annual Income (in million IDR)',
+            value=240, step=1, min_value=1,
             format='%d'
         )
 
