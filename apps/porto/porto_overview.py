@@ -408,7 +408,7 @@ with st.container(border=True):
                         column_config={
                             'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
                         },
-                        height=420
+                        height=210
                     )
 
             row_2 = st.container()
@@ -423,7 +423,7 @@ with st.container(border=True):
                         column_config={
                             'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
                         },
-                        height=420
+                        height=210
                     )
 
 # Detailed single stock
