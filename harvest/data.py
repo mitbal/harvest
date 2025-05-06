@@ -374,3 +374,30 @@ def calc_valuation(stock_list, price_dict, fin_dict):
 
     val_df = rev_growth_df.join(watchlist)
     return val_df
+
+
+def prep_div_cal(div_dict, cp, year=2025):
+
+    div_df = pd.DataFrame()
+    for key, val in div_dict.items():
+        if key in ['GGRP.JK', 'IKBI.JK', 'RCCC.JK']:
+            continue
+        temp = pd.DataFrame(val)
+        temp['ticker'] = key
+
+        if key in ['ISAT.JK', 'KDSI.JK']:
+            temp['adjDividend'] = temp['adjDividend'] / 4
+
+        div_df = pd.concat([div_df, temp])
+    
+    div_df.reset_index(drop=True, inplace=True)
+    div_df['date'] = pd.to_datetime(div_df['date'])
+
+    div_year = div_df[div_df['date'].dt.year == year]
+    merged = div_year.merge(cp[['symbol', 'price']], left_on='ticker', right_on='symbol')
+    merged['yield'] = merged['adjDividend'] / merged['price'] * 100
+
+    div_df = merged[['date', 'symbol', 'adjDividend', 'price']].copy()
+    div_df['date'] = div_df['date'].dt.strftime('%Y-%m-%d')
+
+    return div_df
