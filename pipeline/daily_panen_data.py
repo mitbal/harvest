@@ -204,34 +204,13 @@ def download_single_price(stock: str):
 
 
 @task
-def prep_div_cal(cp, div_dict, filter):
+def prep_div_cal(cp, div_dict, filter, year=2024):
 
     cp = cp[cp['mktCap'] >= filter].copy()
     cp.reset_index(drop=False, inplace=True)
 
-    year = 2024
-    div_df = pd.DataFrame()
-    for key, val in div_dict.items():
-        if key in ['GGRP.JK', 'IKBI.JK', 'RCCC.JK']:
-            continue
-        temp = pd.DataFrame(val)
-        temp['ticker'] = key
-
-        if key in ['ISAT.JK', 'KDSI.JK']:
-            temp['adjDividend'] = temp['adjDividend'] / 4
-
-        div_df = pd.concat([div_df, temp])
-    div_df.reset_index(drop=True, inplace=True)
-    div_df['date'] = pd.to_datetime(div_df['date'])
-
-    div_year = div_df[div_df['date'].dt.year == year]
-    merged = div_year.merge(cp[['symbol', 'price']], left_on='ticker', right_on='symbol')
-    merged['yield'] = merged['adjDividend'] / merged['price'] * 100
-
-    div_2024 = merged[['date', 'symbol', 'adjDividend', 'price']].copy()
-    div_2024['date'] = div_2024['date'].dt.strftime('%Y-%m-%d')
-
-    return div_2024
+    div_df = hd.prep_div_cal(div_dict, cp, year)
+    return div_df
 
 
 @task
