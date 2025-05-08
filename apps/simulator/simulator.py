@@ -285,8 +285,7 @@ with st.container(border=True):
     porto = {s: 0 for s in stock_list}
     returns = {}
 
-    porto_df = pd.DataFrame(columns=['year', 'stock', 'lot', 'price', 'value'])
-
+    porto_df = pd.DataFrame()
     cash = initial_value
     activities = []
     investments = []
