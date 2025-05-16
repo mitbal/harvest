@@ -308,7 +308,7 @@ with st.container(border=True):
                 cash -= buy_trx
 
                 initial_purchase[s] = buy_lot
-                activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
+                activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {int(buy_trx):,}, cash remaining {int(cash):,}")
 
             div_df = pd.DataFrame(divs[s])
             div_df['stock'] = s
@@ -321,7 +321,7 @@ with st.container(border=True):
             div = porto[last_d['stock']] * last_d['adjDividend'] * 100
             cash += div
             ret += int(div)
-            activities.append(f"receive dividend {div} from {last_d['stock']} @ {last_d['date']}")
+            activities.append(f"receive dividend {int(div):,} from {last_d['stock']} @ {last_d['date']}")
 
             d = div_event_df.iloc[(idx+1) % len(div_event_df)]
             price_df = prices[d['stock']]
