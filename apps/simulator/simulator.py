@@ -165,7 +165,12 @@ with st.container(border=True):
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
     div_df = hd.get_dividend_history_single_stock(stock_name)
-    price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
+
+    try:
+        price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
+    except Exception as e:
+        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
+        st.stop()
 
     activities = []
     cash = initial_value
