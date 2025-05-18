@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import altair as alt
@@ -155,10 +157,12 @@ with st.container(border=True):
 with st.container(border=True):
     st.write('## #3 Single stock dividend reinvestment historical compounding simulation')
 
+    this_year = datetime.now().year
+
     cols = st.columns(3)
     stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK')
-    start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=2024)
-    end_year = cols[2].number_input(label='End Year', value=2024, min_value=2014, max_value=2024)
+    start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
+    end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
     div_df = hd.get_dividend_history_single_stock(stock_name)
     price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
