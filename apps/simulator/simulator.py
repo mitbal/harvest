@@ -173,6 +173,10 @@ with st.container(border=True):
     initial_investment = 0
     without_drip = pd.DataFrame()
 
+    if f'{start_year}-12-31' < price_df['date'].min():
+        st.error(f'Data for {stock_name} is not available before {price_df["date"].min()}, Please change the year or select different stocks')
+        st.stop()
+
     for y in range(start_year, end_year+1):
 
         buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
