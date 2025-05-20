@@ -54,8 +54,8 @@ with st.container(border=True):
     st.write('## #1 Basic single instrument compounding simulation')
 
     cols = st.columns(3)
-    initial_value = cols[0].number_input('Initial investment (in million rupiah)', value=120) * 1_000_000
-    num_year = cols[1].number_input('Number of years', value=10)
+    initial_value = cols[0].number_input('Initial investment (in million rupiah)', value=120, min_value=1, max_value=1000) * 1_000_000
+    num_year = cols[1].number_input('Number of years', value=10, min_value=1, max_value=50)
     avg_yield = cols[2].number_input('Yield (in percent)', value=6.35, min_value=0.1, max_value=99.9) / 100
 
     return_df = simulate_compounding(initial_value, num_year, avg_yield)
