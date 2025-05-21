@@ -272,7 +272,11 @@ with st.expander('Price Movement', expanded=True):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
     st.altair_chart(candlestick_chart, use_container_width=True)
 
+
 with st.expander('Valuation Analysis', expanded=True):
+    cols = st.columns(3, gap='large')
+    year = cols[0].slider('Select Number of Year', min_value=1, max_value=5)
+
     val_cols = st.columns(3, gap='large')
 
     sector_name = filtered_df.loc[stock_name, 'sector']
@@ -285,7 +289,10 @@ with st.expander('Valuation Analysis', expanded=True):
         sector_pe = industry_pe = -1
         print('sector or industry not found')
 
-    pe_df = hd.calc_pe_history(price_df, fin, n_shares=n_share, currency=currency)
+    start_date = datetime.now() - timedelta(days=365*year)
+    last_year_df = price_df[price_df['date']>= str(start_date)]
+
+    pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
@@ -297,7 +304,7 @@ with st.expander('Valuation Analysis', expanded=True):
         ci = pe_df['pe'].quantile([.05, .95]).values
         st.markdown(f'''
             Current PE: {pe_ttm:.2f}\n
-            Mean PE (last 5 year): {pe_df['pe'].mean():.2f}\n
+            Mean PE (last {year} year): {pe_df['pe'].mean():.2f}\n
             95% Confidence Interval range: {ci[0]:.2f} - {ci[1]:.2f}
         ''')
         if industry_pe != -1:
