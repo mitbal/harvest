@@ -324,6 +324,6 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     if diff > 0.9 and diff <= 1.1:
         st.write('Assessment: Fair Valued')
     elif diff > 1.1:
-        st.write(f'Assessment: :green[Undervalued]. Potential Upside: :green[{(diff-1)*100:.2f}%]')
+        st.write(f'Assessment: :green[Undervalued]. Potential Upside: :green[{(diff-1)*100:.2f}% - {(ci[1]/pe_ttm-1)*100:.2f}%]')
     else:
         st.write('Assessment: :red[Overvalued]')
