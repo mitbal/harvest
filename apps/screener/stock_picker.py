@@ -273,7 +273,7 @@ with st.expander('Price Movement', expanded=True):
     st.altair_chart(candlestick_chart, use_container_width=True)
 
 
-with st.expander('Valuation Analysis', expanded=True):
+with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     cols = st.columns(3, gap='large')
     year = cols[0].slider('Select Number of Year', min_value=1, max_value=5)
 
