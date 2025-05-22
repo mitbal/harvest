@@ -319,4 +319,11 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         | Sector {sector_name} PE | {sector_pe:.2f} |"
         
         st.markdown(markdown_table)
-        # st.text(markdown_table)
+
+    diff = mean_pe / pe_ttm
+    if diff > 0.9 and diff <= 1.1:
+        st.write('Assessment: Fair Valued')
+    elif diff > 1.1:
+        st.write(f'Assessment: :green[Undervalued]. Potential Upside: :green[{(diff-1)*100:.2f}%]')
+    else:
+        st.write('Assessment: :red[Overvalued]')
