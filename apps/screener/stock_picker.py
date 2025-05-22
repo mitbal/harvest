@@ -295,7 +295,7 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     current_price = filtered_df.loc[stock_name, 'price']
-    mean_pe = pe_df['pe'].mean()
+    median_pe = pe_df['pe'].median()
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
 
@@ -309,18 +309,18 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         | ------ | ----- |
         | Current PE | {pe_ttm:.2f} |
         | Current Price | {int(current_price):,} |
-        | Mean PE last {year} year | {mean_pe:.2f} |
-        | Fair Price | {(mean_pe/pe_ttm)*current_price:,.2f} |
-        | PE range (95% Confidence Interval) | {ci[0]:.2f} - {ci[1]:.2f} |
-        | Price range (95% Confidence Interval) | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
+        | Median last {year} year PE | {median_pe:.2f} |
+        | Fair Price | {int((median_pe/pe_ttm)*current_price):,} |
+        | 95% Confidence Interval range PE | {ci[0]:.2f} - {ci[1]:.2f} |
+        | 95% Confidence Interval range Price | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         '''
         if industry_pe != -1 and sector_pe != -1:
-            markdown_table += f"| Industry {industry_name} PE | {industry_pe:.2f} | \n \
-        | Sector {sector_name} PE | {sector_pe:.2f} |"
+            markdown_table += f"| Industry: {industry_name} PE | {industry_pe:.2f} | \n \
+        | Sector: {sector_name} PE | {sector_pe:.2f} |"
         
         st.markdown(markdown_table)
 
-    diff = mean_pe / pe_ttm
+    diff = median_pe / pe_ttm
     if diff > 0.9 and diff <= 1.1:
         st.write('Assessment: Fair Valued')
     elif diff > 1.1:
