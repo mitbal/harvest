@@ -227,7 +227,7 @@ fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_
 with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
 
-with st.expander('Dividend History', expanded=True):
+with st.expander(f'Dividend History: {stock_name}', expanded=True):
     dividend_history_cols = st.columns([3, 10, 4])
     dividend_history_cols[0].dataframe(
         sdf[['date', 'adjDividend']],
