@@ -259,9 +259,16 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
         next_div = last_div + inc_val
         next_yield = next_div / curr_price * 100
 
+        stats = hd.calc_div_stats(hd.preprocess_div(sdf))
+        # st.write(stats)
+
         dividend_markdown = f'''
-        Estimated next year dividend payment: **{next_div:0.2f} IDR**
-        Yield on current price: **{next_yield:0.2f}%**
+        Estimated next year dividend payment: **:green[{next_div:0.2f} IDR]**\n
+        Yield on current price: **:green[{next_yield:0.2f}%]**
+
+        Number of years paying dividend: **{stats['num_dividend_year']:,}**
+
+        Number of years increasing dividend: **{stats['num_positive_year']:,}**
         '''
         st.markdown(dividend_markdown)
 
