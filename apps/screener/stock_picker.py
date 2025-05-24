@@ -273,7 +273,7 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
         st.markdown(dividend_markdown)
 
 
-with st.expander('Financial Information', expanded=True):
+with st.expander(f'Financial Information: {stock_name}', expanded=True):
     fin_cols = st.columns([0.3, 0.4, 0.3])
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
     metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
@@ -281,6 +281,7 @@ with st.expander('Financial Information', expanded=True):
     fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
     with st.container(height=500):
         st.altair_chart(fin_chart, use_container_width=False)
+
 
 with st.expander('Price Movement', expanded=True):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
