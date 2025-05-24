@@ -276,11 +276,20 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
 with st.expander(f'Financial Information: {stock_name}', expanded=True):
     fin_cols = st.columns([0.3, 0.4, 0.3])
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
-    metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'revenue'], horizontal=True)
     
-    fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
-    with st.container(height=500):
-        st.altair_chart(fin_chart, use_container_width=False)
+    if period == 'quarter':
+        metric = fin_cols[1].radio('Select Metrics', ['revenue', 'netIncome'], horizontal=True)
+        
+        fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
+        with st.container(height=500):
+            st.altair_chart(fin_chart, use_container_width=False)
+    else:
+
+        income_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
+        revenue_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
+        annual_cols = st.columns(2)
+        annual_cols[0].altair_chart(income_chart, use_container_width=True)
+        annual_cols[1].altair_chart(revenue_chart, use_container_width=True)
 
 
 with st.expander('Price Movement', expanded=True):
