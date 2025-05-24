@@ -33,6 +33,7 @@ def plot_financial(fin_df, period='quarter', metric='netIncome', currency='idr')
 
 def plot_yearly_income(fin_df, metric, currency='idr'):
 
+    fin_df = fin_df.groupby('calendarYear').sum().reset_index()
     fin_df['value'] = fin_df[metric].apply(lambda x: format_tooltip_currency(x, currency))
 
     chart = alt.Chart(fin_df).mark_bar().encode(
