@@ -283,13 +283,13 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
         fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
         with st.container(height=500):
             st.altair_chart(fin_chart, use_container_width=False)
-    else:
 
-        income_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
-        revenue_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
+    else:
+        revenue_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
+        income_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
         annual_cols = st.columns(2)
-        annual_cols[0].altair_chart(income_chart, use_container_width=True)
-        annual_cols[1].altair_chart(revenue_chart, use_container_width=True)
+        annual_cols[0].altair_chart(revenue_chart, use_container_width=True)
+        annual_cols[1].altair_chart(income_chart, use_container_width=True)
 
 
 with st.expander('Price Movement', expanded=True):
