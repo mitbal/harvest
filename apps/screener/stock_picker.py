@@ -276,7 +276,7 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
 with st.expander(f'Financial Information: {stock_name}', expanded=True):
     fin_cols = st.columns([0.3, 0.4, 0.3])
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
-    metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'eps', 'revenue'], horizontal=True)
+    metric = fin_cols[1].radio('Select Metrics', ['netIncome', 'revenue'], horizontal=True)
     
     fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
     with st.container(height=500):
