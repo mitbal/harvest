@@ -17,14 +17,20 @@ def format_currency():
 
 
 def format_tooltip_currency(val, currency):
-        if val >= 1_000_000_000_000:
-            return f"{val/1_000_000_000_000:.2f} T {currency.upper()}"
-        elif val >= 1_000_000_000:
-            return f"{val/1_000_000_000:.2f} B {currency.upper()}"
-        elif val >= 1_000_000:
-            return f"{val/1_000_000:.2f} M {currency.upper()}"
+        
+        is_negative = val < 0
+        abs_val = abs(val)
+        
+        if abs_val >= 1_000_000_000_000:
+            formatted = f"{abs_val/1_000_000_000_000:.2f} T {currency.upper()}"
+        elif abs_val >= 1_000_000_000:
+            formatted = f"{abs_val/1_000_000_000:.2f} B {currency.upper()}"
+        elif abs_val >= 1_000_000:
+            formatted = f"{abs_val/1_000_000:.2f} M {currency.upper()}"
         else:
-            return f"{val/1_000:.2f} K {currency.upper()}"
+            formatted = f"{abs_val/1_000:.2f} K {currency.upper()}"
+        
+        return f"-{formatted}" if is_negative else formatted
 
 
 def plot_financial(fin_df, period='quarter', metric='netIncome', currency='idr'):
