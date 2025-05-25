@@ -9,8 +9,11 @@ import altair as alt
 
 def format_currency():
     return  "datum.value >= 1000000000000 ? format(datum.value/1000000000000, ',.0f') + ' T' : " +\
+            "datum.value <= -1000000000000 ? '-' + format(-datum.value/1000000000000, ',.0f') + ' T' : " +\
             "datum.value >= 1000000000 ? format(datum.value/1000000000, ',.0f') + ' B' : " +\
-            "format(datum.value/1000000, ',.0f') + ' M'"
+            "datum.value <= -1000000000 ? '-' + format(-datum.value/1000000000, ',.0f') + ' B' : " +\
+            "datum.value >= 0 ? format(datum.value/1000000, ',.0f') + ' M' : " +\
+            "'-' + format(-datum.value/1000000, ',.0f') + ' M'"
 
 
 def format_tooltip_currency(val, currency):
