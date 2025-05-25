@@ -44,13 +44,18 @@ def plot_yearly_income(fin_df, metric, currency='idr'):
 
     fin_df = fin_df.groupby('calendarYear').sum().reset_index()
     fin_df['value'] = fin_df[metric].apply(lambda x: format_tooltip_currency(x, currency))
+    fin_df['inc'] = fin_df[metric].pct_change()
 
-    chart = alt.Chart(fin_df).mark_bar().encode(
+    chart = alt.Chart(fin_df).mark_bar(
+        cornerRadiusTopLeft=3,
+        cornerRadiusTopRight=3
+    ).encode(
         x=alt.X('calendarYear'),
-        y=alt.Y(f'sum({metric}):Q', axis=alt.Axis(
+        y=alt.Y(f'{metric}:Q', axis=alt.Axis(
             labelExpr=format_currency()
         )),
-        tooltip='value'
+        color=alt.condition(alt.datum['inc'] < 0, alt.value('#ff796c'), alt.value('#008631')),
+        tooltip=['calendarYear', 'value', 'inc']
     ).properties(
         height=300
     )
