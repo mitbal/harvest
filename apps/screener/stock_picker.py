@@ -288,7 +288,11 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
         revenue_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
         income_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
         annual_cols = st.columns(2)
+        
+        annual_cols[0].write('Annual Revenue Chart')
         annual_cols[0].altair_chart(revenue_chart, use_container_width=True)
+        
+        annual_cols[1].write('Annual Net Income Chart')
         annual_cols[1].altair_chart(income_chart, use_container_width=True)
 
 
