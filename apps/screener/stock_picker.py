@@ -269,6 +269,8 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
         Number of years paying dividend: **{stats['num_dividend_year']:,}**
 
         Number of years increasing dividend: **{stats['num_positive_year']:,}**
+
+        Positive consistency rate: **:green[{stats['num_positive_year']/stats['num_dividend_year']*100:.2f}%]**
         '''
         st.markdown(dividend_markdown)
 
