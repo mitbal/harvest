@@ -213,6 +213,10 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
         ext_years = list(range(end_year+1, end_year+1+n_future_years))
         ext_values = [last_val+(i+1)*inc_val for i in range(n_future_years)]
 
+        if inc_val > 0:
+            ext_color = alt.value('#008631')
+        else:
+            ext_color = alt.value('#ff796c')
         ext_df = pd.DataFrame({'year': ext_years, 'adjDividend': ext_values})
         div_bar2 = alt.Chart(ext_df).mark_bar(
             cornerRadiusTopLeft=5, 
@@ -220,7 +224,9 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
         ).encode(
             alt.X('year:N'),
             alt.Y('adjDividend'),
-            tooltip=['year', alt.Tooltip('adjDividend', format='.2f')]
+            tooltip=['year', alt.Tooltip('adjDividend', format='.2f')],
+            opacity=alt.value(0.4), 
+            color=ext_color
         ).properties(
             height=450,
             width=600
