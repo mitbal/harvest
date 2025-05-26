@@ -44,7 +44,7 @@ def plot_yearly_income(fin_df, metric, currency='idr'):
 
     fin_df = fin_df.groupby('calendarYear').sum().reset_index()
     fin_df['value'] = fin_df[metric].apply(lambda x: format_tooltip_currency(x, currency))
-    fin_df['inc'] = fin_df[metric].pct_change()
+    fin_df['growth'] = fin_df[metric].pct_change() * 100
 
     chart = alt.Chart(fin_df).mark_bar(
         cornerRadiusTopLeft=3,
@@ -54,8 +54,8 @@ def plot_yearly_income(fin_df, metric, currency='idr'):
         y=alt.Y(f'{metric}:Q', axis=alt.Axis(
             labelExpr=format_currency()
         )),
-        color=alt.condition(alt.datum['inc'] < 0, alt.value('#ff796c'), alt.value('#008631')),
-        tooltip=['calendarYear', 'value', 'inc']
+        color=alt.condition(alt.datum['growth'] < 0, alt.value('#ff796c'), alt.value('#008631')),
+        tooltip=['calendarYear', 'value', alt.Tooltip('growth', format='.2f')]
     ).properties(
         height=300
     )
