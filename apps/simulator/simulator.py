@@ -305,6 +305,8 @@ with st.container(border=True):
     returns = []
     initial_purchase = {}
     without_drip = pd.DataFrame()
+
+    transactions = {}
     for y in range(start_year, end_year+1):
         
         div_event = []
@@ -321,6 +323,8 @@ with st.container(border=True):
                 cash -= buy_trx
 
                 initial_purchase[s] = buy_lot
+                transactions[buy_date['date']] = \
+                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
                 activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {int(buy_trx):,}, cash remaining {int(cash):,}")
 
             div_df = pd.DataFrame(divs[s])
@@ -334,6 +338,10 @@ with st.container(border=True):
             div = porto[last_d['stock']] * last_d['adjDividend'] * 100
             cash += div
             ret += int(div)
+            transactions[last_d['date']] = \
+                f'receive dividend {last_d["adjDividend"]:,} of {last_d["stock"]} '\
+                f'for {porto[last_d["stock"]]} lots with total total {int(div):,}'
+            
             activities.append(f"receive dividend {int(div):,} from {last_d['stock']} @ {last_d['date']}")
 
             d = div_event_df.iloc[(idx+1) % len(div_event_df)]
@@ -345,7 +353,9 @@ with st.container(border=True):
             buy_trx = int(buy_lot) * close_price * 100
             porto[d['stock']] += int(buy_lot)  
             cash -= buy_trx
-            activities.append(f"buy {int(buy_lot)} lots of {d['stock']} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
+            transactions[buy_date['date']] += '\n'\
+                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
+            # activities.append(f"buy {int(buy_lot)} lots of {d['stock']} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
 
         returns += [ret]
         inv = 0
@@ -370,7 +380,8 @@ with st.container(border=True):
         investments += [inv]
 
     with st.expander('Activity Log'):
-        st.write(activities)
+        # st.write(activities)
+        st.write(transactions)
 
     return_df = pd.DataFrame({'investment': investments, 'returns': returns})
     return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
