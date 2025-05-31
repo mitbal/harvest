@@ -47,6 +47,95 @@ def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_sto
     return multi_return_df
 
 
+def simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list):
+    prices = {}
+    divs = {}
+    for stock in stock_list:
+        prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
+        divs[stock] = hd.get_dividend_history_single_stock(stock)
+
+    porto = {s: 0 for s in stock_list}
+    returns = {}
+
+    porto_df = pd.DataFrame()
+    cash = initial_value
+    activities = []
+    investments = []
+    returns = []
+    initial_purchase = {}
+    without_drip = pd.DataFrame()
+
+    transactions = {}
+    for y in range(start_year, end_year+1):
+        div_event = []
+        for i, s in enumerate(stock_list):
+            if y == start_year:
+                price_df = prices[s]
+                buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
+                close_price = buy_date['close']
+                
+                buy_lot = investment_per_stock[i] / close_price / 100
+                buy_trx = int(buy_lot) * close_price * 100
+                porto[s] += int(buy_lot)  
+                cash -= buy_trx
+
+                initial_purchase[s] = buy_lot
+                transactions[buy_date['date']] = \
+                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
+                activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {int(buy_trx):,}, cash remaining {int(cash):,}")
+
+            div_df = pd.DataFrame(divs[s])
+            div_df['stock'] = s
+            div_event += [div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]]
+
+        div_event_df = pd.concat(div_event).sort_values('date', ascending=True).reset_index(drop=True)
+        ret = 0
+        for idx, last_d in div_event_df.iterrows():
+            div = porto[last_d['stock']] * last_d['adjDividend'] * 100
+            cash += div
+            ret += int(div)
+            transactions[last_d['date']] = \
+                f'receive dividend {last_d["adjDividend"]:,} of {last_d["stock"]} '\
+                f'for {porto[last_d["stock"]]} lots with total total {int(div):,}'
+            
+            activities.append(f"receive dividend {int(div):,} from {last_d['stock']} @ {last_d['date']}")
+
+            d = div_event_df.iloc[(idx+1) % len(div_event_df)]
+            price_df = prices[d['stock']]
+            buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
+            close_price = buy_date['close']
+            
+            buy_lot = cash / close_price / 100
+            buy_trx = int(buy_lot) * close_price * 100
+            porto[d['stock']] += int(buy_lot)  
+            cash -= buy_trx
+            transactions[buy_date['date']] += '\n'\
+                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
+
+        returns += [ret]
+        inv = 0
+        for s in stock_list:
+            price_df = prices[s]
+            buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
+            val = porto[s] * buy_date['close'] * 100
+            inv += val
+            porto_df = pd.concat([porto_df,
+                                pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
+                                ])
+            without_drip = pd.concat([without_drip,
+                                    pd.DataFrame({
+                                        'stock': [s],
+                                        'year': [f'Year {y}'],
+                                        'lot': [initial_purchase[s]],
+                                        'price': [buy_date['close']],
+                                        'value': [initial_purchase[s] * buy_date['close'] * 100]
+                                        })
+                                    ])
+
+        investments += [inv]
+    return investments,returns,without_drip,porto_df,transactions
+
+
 ################################################################################
 
 
@@ -288,94 +377,7 @@ with st.container(border=True):
         investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
 
     # run the simulation
-    prices = {}
-    divs = {}
-    for stock in stock_list:
-        prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
-        divs[stock] = hd.get_dividend_history_single_stock(stock)
-
-    porto = {s: 0 for s in stock_list}
-    returns = {}
-
-    porto_df = pd.DataFrame()
-    cash = initial_value
-    activities = []
-    investments = []
-    returns = []
-    initial_purchase = {}
-    without_drip = pd.DataFrame()
-
-    transactions = {}
-    for y in range(start_year, end_year+1):
-        
-        div_event = []
-        for i, s in enumerate(stock_list):
-
-            if y == start_year:
-                price_df = prices[s]
-                buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
-                close_price = buy_date['close']
-                
-                buy_lot = investment_per_stock[i] / close_price / 100
-                buy_trx = int(buy_lot) * close_price * 100
-                porto[s] += int(buy_lot)  
-                cash -= buy_trx
-
-                initial_purchase[s] = buy_lot
-                transactions[buy_date['date']] = \
-                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
-                activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {int(buy_trx):,}, cash remaining {int(cash):,}")
-
-            div_df = pd.DataFrame(divs[s])
-            div_df['stock'] = s
-            div_event += [div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]]
-
-        div_event_df = pd.concat(div_event).sort_values('date', ascending=True).reset_index(drop=True)
-        ret = 0
-        for idx, last_d in div_event_df.iterrows():
-
-            div = porto[last_d['stock']] * last_d['adjDividend'] * 100
-            cash += div
-            ret += int(div)
-            transactions[last_d['date']] = \
-                f'receive dividend {last_d["adjDividend"]:,} of {last_d["stock"]} '\
-                f'for {porto[last_d["stock"]]} lots with total total {int(div):,}'
-            
-            activities.append(f"receive dividend {int(div):,} from {last_d['stock']} @ {last_d['date']}")
-
-            d = div_event_df.iloc[(idx+1) % len(div_event_df)]
-            price_df = prices[d['stock']]
-            buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
-            close_price = buy_date['close']
-            
-            buy_lot = cash / close_price / 100
-            buy_trx = int(buy_lot) * close_price * 100
-            porto[d['stock']] += int(buy_lot)  
-            cash -= buy_trx
-            transactions[buy_date['date']] += '\n'\
-                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
-
-        returns += [ret]
-        inv = 0
-        for s in stock_list:
-            price_df = prices[s]
-            buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
-            val = porto[s] * buy_date['close'] * 100
-            inv += val
-            porto_df = pd.concat([porto_df,
-                                pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
-                                ])
-            without_drip = pd.concat([without_drip,
-                                    pd.DataFrame({
-                                        'stock': [s],
-                                        'year': [f'Year {y}'],
-                                        'lot': [initial_purchase[s]],
-                                        'price': [buy_date['close']],
-                                        'value': [initial_purchase[s] * buy_date['close'] * 100]
-                                        })
-                                    ])
-
-        investments += [inv]
+    investments, returns, without_drip, porto_df, transactions = simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list)
 
     # show log, display result table, and plot the graph
     with st.expander('Activity Log'):
