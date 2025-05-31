@@ -267,19 +267,17 @@ with st.container(border=True):
 with st.container(border=True):
     st.write('## #4 Multi stock dividend reinvestment simulation')
 
+    # process input form
     cols = st.columns(2)
     with cols[0]:
-        # Use text_area for multi-line input
         stocks_input_str = st.text_area(
-            'Enter stock list (one per line):',
-            'SMSM.JK\nSIDO.JK', # Default example with newline
-            height=70 # Optional: adjust height
+            label='Enter stock list (one per line):',
+            value='SMSM.JK\nSIDO.JK',
+            height=70
         )
-        # Process input: split by newline, strip whitespace, filter empty lines
         stock_list_raw = stocks_input_str.split('\n')
         stock_list = [stock.strip() for stock in stock_list_raw if stock.strip()]
 
-    initial_investments = {}
     with cols[1]:
         num_of_stocks = len(stock_list)
         investment_per_stock = [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)]
@@ -289,6 +287,7 @@ with st.container(border=True):
                                                  height=70)
         investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
 
+    # run the simulation
     prices = {}
     divs = {}
     for stock in stock_list:
@@ -355,7 +354,6 @@ with st.container(border=True):
             cash -= buy_trx
             transactions[buy_date['date']] += '\n'\
                     f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
-            # activities.append(f"buy {int(buy_lot)} lots of {d['stock']} @ {close_price} at {buy_date['date']} for total {buy_trx}, cash remaining {cash}")
 
         returns += [ret]
         inv = 0
@@ -379,8 +377,8 @@ with st.container(border=True):
 
         investments += [inv]
 
+    # show log, display result table, and plot the graph
     with st.expander('Activity Log'):
-        # st.write(activities)
         st.write(transactions)
 
     return_df = pd.DataFrame({'investment': investments, 'returns': returns})
@@ -417,5 +415,5 @@ with st.container(border=True):
         height=430
     )
 
-    cols[1].altair_chart((investment_chart + return_chart).resolve_scale(y='independent')
-                    , use_container_width=True)
+    cols[1].altair_chart((investment_chart + return_chart).resolve_scale(y='independent'),
+                         use_container_width=True)
