@@ -48,18 +48,16 @@ def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_sto
 
 
 def simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list):
-    prices = {}
+    
     divs = {}
+    prices = {}
     for stock in stock_list:
-        prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
         divs[stock] = hd.get_dividend_history_single_stock(stock)
+        prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
 
     porto = {s: 0 for s in stock_list}
-    returns = {}
-
     porto_df = pd.DataFrame()
     cash = initial_value
-    activities = []
     investments = []
     returns = []
     initial_purchase = {}
@@ -80,9 +78,10 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
                 cash -= buy_trx
 
                 initial_purchase[s] = buy_lot
-                transactions[buy_date['date']] = \
-                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
-                activities.append(f"buy {int(buy_lot)} lots of {s} @ {close_price} at {buy_date['date']} for total {int(buy_trx):,}, cash remaining {int(cash):,}")
+                if buy_date['date'] not in transactions:
+                    transactions[buy_date['date']] = ''
+                transactions[buy_date['date']] += \
+                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}\n'
 
             div_df = pd.DataFrame(divs[s])
             div_df['stock'] = s
@@ -98,8 +97,6 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
                 f'receive dividend {last_d["adjDividend"]:,} of {last_d["stock"]} '\
                 f'for {porto[last_d["stock"]]} lots with total total {int(div):,}'
             
-            activities.append(f"receive dividend {int(div):,} from {last_d['stock']} @ {last_d['date']}")
-
             d = div_event_df.iloc[(idx+1) % len(div_event_df)]
             price_df = prices[d['stock']]
             buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
@@ -110,7 +107,7 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
             porto[d['stock']] += int(buy_lot)  
             cash -= buy_trx
             transactions[buy_date['date']] += '\n'\
-                    f'buy {int(buy_lot)} lots of {s} @ {close_price} for total {int(buy_trx):,}'
+                    f'buy {int(buy_lot)} lots of {d['stock']} @ {close_price} for total {int(buy_trx):,}'
 
         returns += [ret]
         inv = 0
