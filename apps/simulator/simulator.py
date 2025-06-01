@@ -11,6 +11,7 @@ import harvest.data as hd
 st.title('# Simulator')
 
 
+@st.cache_data
 def simulate_compounding(initial_value, num_year, avg_yield):
     
     investments = [initial_value]
@@ -26,6 +27,7 @@ def simulate_compounding(initial_value, num_year, avg_yield):
     return return_df
 
 
+@st.cache_data
 def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_stock, yield_per_stock):
     investments = np.zeros((num_year, num_of_stocks))
     returns = np.zeros((num_year, num_of_stocks))
@@ -47,6 +49,7 @@ def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_sto
     return multi_return_df
 
 
+@st.cache_data
 def simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list):
     
     divs = {}
