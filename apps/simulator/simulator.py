@@ -92,12 +92,14 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
         ret = 0
         for idx, last_d in div_event_df.iterrows():
             div = porto[last_d['stock']]['lot'] * last_d['adjDividend'] * 100
+            yield_on_cost = last_d['adjDividend'] / porto[last_d['stock']]['avg_price'] * 100
             cash += div
             ret += int(div)
             transactions[last_d['date']] = \
                 f'receive dividend {last_d["adjDividend"]:,} of {last_d["stock"]} '\
-                f'for {porto[last_d["stock"]]["lot"]} lots with total total {int(div):,}'
-            
+                f'for {porto[last_d["stock"]]["lot"]} lots with total total {int(div):,}\n'\
+                f'yield-on-cost {yield_on_cost:.2f}% for average price {porto[last_d["stock"]]["avg_price"]:,.2f}'
+               
             d = div_event_df.iloc[(idx+1) % len(div_event_df)]
             price_df = prices[d['stock']]
             buy_date = price_df[price_df['date'] >= last_d['date']].iloc[-1]
@@ -112,7 +114,7 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
             cash -= buy_trx
             transactions[buy_date['date']] += '\n'\
                     f'buy {int(buy_lot)} lots of {d['stock']} @ {close_price} for total {int(buy_trx):,}\n'\
-                    f'current number of lots: {porto[d['stock']]['lot']}, with average price: {porto[d['stock']]['avg_price']}'
+                    f'current number of lots: {porto[d['stock']]['lot']}, with average price: {porto[d['stock']]['avg_price']:,.2f}'
 
         returns += [ret]
         inv = 0
