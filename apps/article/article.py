@@ -1,5 +1,10 @@
 import streamlit as st
 
+try:
+    st.set_page_config(layout='wide')
+except Exception as e:
+    print('Set Page config has been called before')
+
 # 1. as sidebar menu
 with st.sidebar:
     st.markdown("## Article List")
