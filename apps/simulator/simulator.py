@@ -7,6 +7,10 @@ import streamlit as st
 
 import harvest.data as hd
 
+try:
+    st.set_page_config(layout='wide')
+except Exception as e:
+    print('Set Page config has been called before')
 
 st.title('# Simulator')
 
