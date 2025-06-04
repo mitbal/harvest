@@ -375,7 +375,7 @@ with st.container(border=True):
     with cols[0]:
         stocks_input_str = st.text_area(
             label='Enter stock list (one per line):',
-            value='SMSM.JK\nSIDO.JK',
+            value='BJTM.JK\nSMSM.JK',
             height=70
         )
         stock_list_raw = stocks_input_str.split('\n')
