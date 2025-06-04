@@ -115,9 +115,12 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
             porto[d['stock']]['avg_price'] /= (porto[d['stock']]['lot'] + int(buy_lot))
             porto[d['stock']]['lot'] += int(buy_lot)
             cash -= buy_trx
+            stock_name = d['stock']
+            current_lot = porto[d['stock']]['lot']
+            avg_price = porto[d['stock']]['avg_price']
             transactions[buy_date['date']] += '\n'\
-                    f'buy {int(buy_lot)} lots of {d['stock']} @ {close_price} for total {int(buy_trx):,}\n'\
-                    f'current number of lots: {porto[d['stock']]['lot']}, with average price: {porto[d['stock']]['avg_price']:,.2f}'
+                    f'buy {int(buy_lot)} lots of {stock_name} @ {close_price} for total {int(buy_trx):,}\n'\
+                    f'current number of lots: {current_lot}, with average price: {avg_price:,.2f}'
 
         returns += [ret]
         inv = 0
