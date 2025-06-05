@@ -101,26 +101,16 @@ model_options = {
     'Gemini 2.5 Pro': 'google/gemini-2.5-pro-exp-03-25:free'
 }
 
-selected_model = st.sidebar.selectbox(
-    "AI Model Selection:",
-    list(model_options.keys()),
-    index=0
-)
-
-model_id = model_options[selected_model]
+model_id = 'google/gemini-2.0-flash-exp:free'
 
 # Reset chat button
 if st.sidebar.button("Reset Chat"):
     st.session_state.messages = []
     st.rerun()
-    
-# Display information about selected model
-st.sidebar.subheader("About the selected model")
-st.sidebar.info(f"You're currently using **{selected_model}** (`{model_id}`)")
 
 # Main chat interface
 st.title("🧞‍♂️ Om Jin the Financial Advisor")
-st.caption(f"Powered by {selected_model} via OpenRouter")
+st.caption(f"Granting Financial Freedom wishes since 1825 BC")
 
 
 avatars = {
@@ -152,7 +142,7 @@ if prompt := st.chat_input("Message the AI assistant..."):
         st.caption(timestamp)
     
     # Get AI response
-    with st.spinner(f"Waiting for response from {selected_model}..."):
+    with st.spinner(f"Om Jin is thinking..."):
         api_key = st.session_state.OPENROUTER_API_KEY
         response = get_ai_response(
             prompt, 
