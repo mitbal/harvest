@@ -12,7 +12,14 @@ page_simulator = st.Page('apps/simulator/simulator.py', title='Simulator', icon=
 pages = st.navigation(
     {
         'Home': [page_home],
-        'Apps': [page_screener, page_calendar, page_porto, page_history, page_assistant, page_article, page_simulator]
+        'Apps': [page_screener,
+                 page_calendar,
+                 page_assistant,
+                 page_article,
+                 page_simulator,
+                 page_porto,
+                 page_history,
+                 ]
     }
 )
 pages.run()
