@@ -10,17 +10,15 @@ Last Edited: 2025-06-09
 
 
 # pendahuluan, intro ke newton
-Yang namanya serakah, ada peluang untuk mendapatkan uang banyak dalam waktu yang singkat itu tidak hanya mempengaruhi orang2 yang kurang berpendidikan. Bahkan salah satu orang paling pintar sepanjang sejarah saja seperti Sir Isaac Newton, karena namanya muncul di persamaan untuk menghitung gaya gravitasi di pelajaran fisika waktu sekolah.
+Yang namanya serakah, melihat ada peluang untuk mendapatkan uang banyak dalam waktu yang singkat, itu tidak hanya mempengaruhi orang2 yang kurang berpendidikan. Bahkan salah satu orang paling pintar sepanjang sejarah saja seperti Sir Isaac Newton,  namanya muncul di persamaan untuk menghitung gaya gravitasi di pelajaran fisika waktu sekolah, juga pernah tergoda dengan keserakahan.
 
 Newton kurang pintar apa, kontribusinya di bidang ilmu pengetahuan bukan cuma di bidang fisika dengan rumus gravitasi dan optik saja, namun juga matematika dengan kalkulusnya.
-
-Bayangkan di post di forum saham abad 18, sebut saja Stockholmbit.
 
 # kronologis
 
 Di tahun 1700an, ada 3 emiten yang populer di BEI atau Bursa Efek Inggris, yaitu South Sea Company, East India Company, dan Bank of England.
 
-[stock return from 3 company](bei.png)
+![stock return from 3 company](bei.jpg)
 
 Bank of England (BoE) ini fungsinya seperti Bank Indonesia sekarang, yaitu sebagai bank sentral, menjaga stabilitas ekonomi. East India Company (EIC) sudah jelas, kompetitor dari VOC, buat perdagangan rempah2. Masih usaha buat merger biar bisa monopoli. Nah, South Sea Company (SSC) ini bergerak di bidang perdagangan budak manusia.
 
@@ -36,6 +34,8 @@ Mungkin merasa kalau ada bandar asing BatuHitam yang mau masuk, dia masuk lagi d
 Tapi sayangnya itu ternyata hanya jebakan asing, yg ingin ritel2 cut loss.
 Di tahun 1721, harga SSC sudah kembali di bawah 100 pound, sehingga Newton resmi jadi nyangkuter bersama ritel2 lainnya.
 Newton meninggal di tahun 1727, dan tidak mempunyai anak, sehingga saham nyangkutnya tidak diwariskan ke keturunannya.
+
+![ssc price](ssc_stock_price.jpg)
 
 Kalau ingin tahu lebih detail bagaimana kronologi, disertai testimoni dari orang2 yang berperan di masa itu, bisa dibaca lebih lanjut di paper berikut: https://royalsocietypublishing.org/doi/10.1098/rsnr.2018.0018
 
