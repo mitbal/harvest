@@ -91,7 +91,7 @@ if sl is None:
 
 if sl == 'JKSE':
     key = 'div_score_jkse'
-    mcap_value = 1000
+    mcap_value = 300
     currency = 'IDR'
 else:
     key = 'div_score_sp500'
