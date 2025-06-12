@@ -12,6 +12,7 @@ with st.sidebar:
     st.html('<a href="/article?name=comparison">IHSG vs S&P500</a>')
     st.html('<a href="/article?name=sido">Better (Call) Buy SIDO</a>')
     st.html('<a href="/article?name=myor">MYOR != Pucuk Harum</a>')
+    st.html('<a href="/article?name=bubble">Newton Bizarre (Financial) Adventure</a>')
 
 if len(st.query_params) == 0:
     st.title('Article')
