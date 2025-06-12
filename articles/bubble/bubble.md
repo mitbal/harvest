@@ -2,7 +2,7 @@
 
 [](bubble_banner.png)
 
-Last Edited: 2025-06-09
+Last Edited: 2025-06-12
 
 > "Bloody Hell, I've lost all my money!"
 > 
@@ -19,7 +19,7 @@ Newton kurang pintar apa, kontribusinya di bidang ilmu pengetahuan bukan cuma di
 
 Di Inggris awal abad ke 18, setidaknya ada 3 emiten yang populer di BEI (Bursa Efek Inggris): Bank of England (BoE), East India Company (EIC), dan South Sea Company (SSC).
 
-![stock return from 3 company](bei.jpg)
+![stock return from 3 company](app/static/bei.jpg)
 
 BoE ini fungsinya seperti Bank Indonesia sekarang, yaitu sebagai bank sentral, menjaga stabilitas ekonomi. EIC memonopoli perdagangan rempah2 di Asia, berkompetisi dengan VOC. SSC, fokus dari tulisan ini, bergerak di bidang perdagangan budak manusia untuk Amerika Latin.
 
@@ -28,7 +28,7 @@ Konon kisahnya, Newton mulai akum saham SSC dari tahun 1717, dengan average pric
 Pada bulan Mei 1720, di awal dari bubble, Newton sudah TP sebanyak 8000 lembar di harga 350. Jadi sebenarnya Newton sudah cuan bagger dengan realized gain sebesar 20,000 pound. Ini tentu nilainya di tahun itu lebih besar dari gaji Anthony seminggu di MU.
 
 Bayangkan kalau dulu sudah ada forum saham zaman dulu, mungkin dia bakal post seperti ini
-![newton_cuan_post](newton_cuan_post.png)
+![newton_cuan_post](app/static/newton_cuan_post.png)
 *kalau mau info A1 saham calon multibagger lainnya, bisa join group telegram (beneran) saya, cukup 69 pound untuk seumur hidup. link di bio. #conviction #financialfreedom*
 
 Namun entah mengapa, mungkin dapat bisikan info yang katanya A1 kalau bandar asing BatuHitam mau masuk, Newton beli lagi sahamnya mulai dari bulan Juni 1720, ketika harganya sudah naik ke 700 pound sebanyak kurang lebih 4000 lembar. Sehingga Newton total memegang 6,000 lembar saham dengan average price 500 pound.
@@ -37,7 +37,7 @@ Tapi sayangnya itu ternyata hanya jebakan bandar belaka, yang ingin ritel cut lo
 
 Harganya turun terus sejak sampai di puncaknya di bulan Juli sebesar 1000 pound, dan di tahun 1721, harga SSC sudah kembali di bawah 100 pound, sehingga Newton resmi jadi nyangkuter bersama ritel2 lainnya, dengan unrealized loss kira-kira 24,000 pound, lebih tinggi dari realied profit awalnya. Newton meninggal di tahun 1727, dan tidak mempunyai anak, sehingga saham nyangkutnya tidak diwariskan ke keturunannya.
 
-![ssc price](ssc_stock_price.jpg)
+![ssc price](app/static/ssc_stock_price.jpg)
 
 Kalau ingin tahu lebih detail bagaimana kronologi, disertai testimoni dari orang2 yang berperan di masa itu, bisa dibaca lebih lanjut di paper berikut: https://royalsocietypublishing.org/doi/10.1098/rsnr.2018.0018
 
@@ -46,7 +46,7 @@ Tentunya south sea bubble ini bukanlah yang pertama terjadi, dan tidak akan menj
 
 Bagaimana dengan di Indonesia? Masih ingat dengan batu akik? Atau kalau spesifik di bursa saham ada Bank Digital di tahun 2020.
 
-![harga saham arto](arto_stock_price.png)
+![harga saham arto](app/static/arto_stock_price.png)
 *dan terjadi lagi, kisah lama yang terulang kembali*
 
 Pesan moral yang bisa kita tarik tentunya adalah serakah itu tidak baik. Hindarilah saham2 gorengan, karena kadar kolesterolnya (risiko) yang tinggi, bahkan walaupun dimasak dengan extra virgin olive oil (bisikan surga dari influencer)
@@ -56,6 +56,6 @@ Membeli saham gorengan itu hanya ada 2 kemungkinan:
 
 2. **Untung, tapi tidak berkah**: Walaupun kita hoki dan dapat untung, keuntungan yang kita dapatkan itu berasal dari kerugian orang lain, yg bisa jadi tidak mengerti apa yang dia beli, terpaku pada hype, dan akhirnya kehilangan semua tabungannya.
 
-Kalau misalkan Anda tertarik dengan investasi yang berkelanjutan, pertimbangkan saham-saham yang berfokus pada dividen. Kunjungi halaman [Stock Screener](/screener) untuk mendapatkan daftar lengkapnya.
+Kalau misalkan Anda tertarik dengan investasi yang berkelanjutan, pertimbangkan saham-saham yang berfokus pada dividen. Kunjungi halaman [Stock Screener](/stock_picker) untuk mendapatkan daftar lengkapnya.
 
 Selamat berinvestasi dengan bijak!
