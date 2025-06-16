@@ -263,7 +263,7 @@ with st.container(border=True):
     this_year = datetime.now().year
 
     cols = st.columns(3)
-    stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK')
+    stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK').upper()
     start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
@@ -379,7 +379,7 @@ with st.container(border=True):
             height=70
         )
         stock_list_raw = stocks_input_str.split('\n')
-        stock_list = [stock.strip() for stock in stock_list_raw if stock.strip()]
+        stock_list = [stock.strip().upper() for stock in stock_list_raw if stock.strip()]
 
     with cols[1]:
         num_of_stocks = len(stock_list)
