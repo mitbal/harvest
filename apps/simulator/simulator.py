@@ -104,7 +104,7 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
             ret += int(div)
             transactions[last_d['date']] = \
                 f'receive dividend {last_d["adjDividend"]:,} of {last_d["stock"]} '\
-                f'for {porto[last_d["stock"]]["lot"]} lots with total total {int(div):,}\n'\
+                f'for {porto[last_d["stock"]]["lot"]} lots with total {int(div):,}\n'\
                 f'yield-on-cost {yield_on_cost:.2f}% for average price {porto[last_d["stock"]]["avg_price"]:,.2f}'
                
             d = div_event_df.iloc[(idx+1) % len(div_event_df)]
