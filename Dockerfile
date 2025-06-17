@@ -2,13 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Update packages to get security patches
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN apt-get install build-essential -y --no-install-recommends
+RUN apt-get update && apt-get install build-essential -y --no-install-recommends
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
