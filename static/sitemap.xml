@@ -26,6 +26,31 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://panendividen.com/article?name=glossary</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://panendividen.com/article?name=comparison</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://panendividen.com/article?name=sido</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://panendividen.com/article?name=myor</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://panendividen.com/article?name=bubble</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://panendividen.com/simulator</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
