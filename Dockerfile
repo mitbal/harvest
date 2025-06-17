@@ -1,8 +1,14 @@
-FROM python:3.11-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install build-essential -y --no-install-recommends
+# Update packages to get security patches
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get install build-essential -y --no-install-recommends
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
