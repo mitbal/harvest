@@ -249,34 +249,44 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
         },
         hide_index=True)
 
+    try:
+        last_val = final_df.loc[stock_name, 'lastDiv']
+        inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
+        extrapolate = True
+    except:
+        print(f'value last_val and inc_val not found on table for {stock_name}')
+        last_val = 0
+        inc_val = 0
+        extrapolate = False
+
     yearly_dividend_chart = hp.plot_dividend_history(sdf, 
-                                                     extrapolote=True, 
-                                                     n_future_years=5, 
-                                                     last_val=final_df.loc[stock_name, 'lastDiv'], 
-                                                     inc_val=final_df.loc[stock_name, 'avgFlatAnnualDivIncrease'])
+                                                    extrapolote=True, 
+                                                    n_future_years=5, 
+                                                    last_val=last_val, 
+                                                    inc_val=inc_val)
     dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
     with dividend_history_cols[2]:
-        last_div = filtered_df.loc[stock_name, 'lastDiv']
-        inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-        curr_price = filtered_df.loc[stock_name, 'price']
-        next_div = last_div + inc_val
-        next_yield = next_div / curr_price * 100
+        if stock_name in filtered_df.index:
+            last_div = filtered_df.loc[stock_name, 'lastDiv']
+            inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
+            curr_price = filtered_df.loc[stock_name, 'price']
+            next_div = last_div + inc_val
+            next_yield = next_div / curr_price * 100
 
-        stats = hd.calc_div_stats(hd.preprocess_div(sdf))
-        # st.write(stats)
+            stats = hd.calc_div_stats(hd.preprocess_div(sdf))
 
-        dividend_markdown = f'''
-        Estimated next year dividend payment: **:green[{next_div:0.2f} IDR]**\n
-        Yield on current price: **:green[{next_yield:0.2f}%]**
+            dividend_markdown = f'''
+            Estimated next year dividend payment: **:green[{next_div:0.2f} IDR]**\n
+            Yield on current price: **:green[{next_yield:0.2f}%]**
 
-        Number of years paying dividend: **{stats['num_dividend_year']:,}**
+            Number of years paying dividend: **{stats['num_dividend_year']:,}**
 
-        Number of years increasing dividend: **{stats['num_positive_year']:,}**
+            Number of years increasing dividend: **{stats['num_positive_year']:,}**
 
-        Positive consistency rate: **:green[{stats['num_positive_year']/stats['num_dividend_year']*100:.2f}%]**
-        '''
-        st.markdown(dividend_markdown)
+            Positive consistency rate: **:green[{stats['num_positive_year']/stats['num_dividend_year']*100:.2f}%]**
+            '''
+            st.markdown(dividend_markdown)
 
 
 with st.expander(f'Financial Information: {stock_name}', expanded=True):
