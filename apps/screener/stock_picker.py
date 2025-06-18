@@ -230,6 +230,7 @@ fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_
 
 with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
+    currency = cp_df.loc[stock_name, 'currency']
 
 
 with st.expander(f'Dividend History: {stock_name}', expanded=True):
@@ -312,10 +313,11 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
         annual_cols[1].altair_chart(income_chart, use_container_width=True)
 
         with annual_cols[2]:
-            st.write('**Financial Metrics Summary**')
-            st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
-            st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
-            st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
+            if stock_name in filtered_df.index:
+                st.write('**Financial Metrics Summary**')
+                st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
+                st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
+                st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
 
 
 with st.expander('Price Movement', expanded=True):
@@ -329,22 +331,26 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
 
     val_cols = st.columns(3, gap='large')
 
-    sector_name = filtered_df.loc[stock_name, 'sector']
-    industry_name = filtered_df.loc[stock_name, 'industry']
+    if stock_name in filtered_df.index:
+        sector_name = filtered_df.loc[stock_name, 'sector']
+        industry_name = filtered_df.loc[stock_name, 'industry']
 
-    try:
-        sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
-        industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
-    except Exception:
+        try:
+            sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
+            industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
+        except Exception:
+            sector_pe = industry_pe = -1
+            print('sector or industry not found')
+    else:
         sector_pe = industry_pe = -1
-        print('sector or industry not found')
 
     start_date = datetime.now() - timedelta(days=365*year)
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
     pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
-    current_price = filtered_df.loc[stock_name, 'price']
+    # current_price = filtered_df.loc[stock_name, 'price']
+    current_price = price_df['close'].values[-1]
     median_pe = pe_df['pe'].median()
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
