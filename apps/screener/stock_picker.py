@@ -213,12 +213,16 @@ with full_table_section:
 
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
+select_stock = st.text_input('Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information')
+
 if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
 elif len(st.query_params) > 0:
     stock_name = st.query_params['stock']
+elif select_stock:
+    stock_name = select_stock.upper()
 else:
     st.stop()
 
