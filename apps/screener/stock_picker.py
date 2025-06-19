@@ -349,8 +349,7 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
 
     pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
-    # current_price = filtered_df.loc[stock_name, 'price']
-    current_price = price_df['close'].values[-1]
+    current_price = price_df['close'].values[0]
     median_pe = pe_df['pe'].median()
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
     val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
