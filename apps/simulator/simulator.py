@@ -18,16 +18,7 @@ st.title('# Simulator')
 @st.cache_data
 def simulate_compounding(initial_value, num_year, avg_yield):
     
-    investments = [initial_value]
-    returns = []
-    for i in range(num_year):
-        returns += [int(investments[i] * avg_yield)]
-        investments += [investments[i] + returns[i]]
-    returns += [investments[-1] * avg_yield]
-
-    return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
-    return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
-
+    return_df = hd.simulate_simple_compounding(initial_value, num_year, avg_yield)
     return return_df
 
 

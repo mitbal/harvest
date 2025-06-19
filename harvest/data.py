@@ -401,3 +401,18 @@ def prep_div_cal(div_dict, cp, year=2025):
     div_df['date'] = div_df['date'].dt.strftime('%Y-%m-%d')
 
     return div_df
+
+
+def simulate_simple_compounding(initial_value, num_year, avg_yield):
+    
+    investments = [initial_value]
+    returns = []
+    for i in range(num_year):
+        returns += [int(investments[i] * avg_yield)]
+        investments += [investments[i] + returns[i]]
+    returns += [investments[-1] * avg_yield]
+
+    return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
+    return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
+
+    return return_df
