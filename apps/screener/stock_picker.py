@@ -384,3 +384,38 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     else:
         assessment = f'**:red[Overvalued]**. Potential Downside: **:red[{(1-diff)*100:.2f}% - {abs((ci[0]/pe_ttm-1)*100):.2f}%]**'
     st.write(f'Assessment: {assessment}')
+
+
+with st.expander(f'Compounding Simulation: {stock_name}'):
+
+    this_year = datetime.now().year
+    
+    cols = st.columns(2)
+    start_year = cols[0].number_input(label='Start Year', value=2021, min_value=2010, max_value=this_year-2)
+    end_year = cols[1].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
+
+    cols = st.columns(2)
+    initial_value = cols[0].number_input(label='Initial investment (in million)', value=10, min_value=1, max_value=1000)
+    monthly_topup = cols[1].number_input(label='Monthly Topup (in million)', value=1, min_value=0, max_value=100)
+
+    porto, activities = hd.simulate_dividend_compounding(stock_name, 
+                                                price_df,
+                                                sdf,
+                                                start_year,
+                                                end_year,
+                                                initial_value * 1_000_000,
+                                                monthly_topup * 1_000_000)
+    
+    # st.write(f'Number of stocks: {num_stock}')
+    st.write('Activities:')
+    st.write(activities)
+    st.write('Portfolio:')
+
+    porto_df = pd.DataFrame(porto)
+    porto_df['total'] = porto_df['num_stock'] * porto_df['price'] * 100
+    porto_df['cum_stock'] = porto_df['num_stock'].cumsum()
+    porto_df['cum_total'] = porto_df['total'].cumsum()
+    porto_df['avg_price'] = porto_df['cum_total'] / porto_df['cum_stock'] / 100
+
+    st.write(pd.DataFrame(porto_df))
+    # st.write(f'Assessment: {assessment}')

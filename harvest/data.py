@@ -428,29 +428,36 @@ def simulate_dividend_compounding(
         monthly_topup=0,
 ):
     
-    def buy_stock(cash, price, stock_name, date):
-        buy = cash / price / 100
-        cash -= int(buy) * price * 100
-        return int(buy), cash
-    
     cash = initial_investment
     num_stock = 0
     activities = []
+    porto = []
+    
+    def buy_stock(cash, price_df, date):
+        
+        buy_date = price_df[price_df['date'] >= date].iloc[-1]
+        price = buy_date['close']
+        buy = cash / price / 100
+        cash -= int(buy) * price * 100
+        
+        activities.append(f'{buy_date["date"]}: buy {int(buy)} lots of {stock_name} @ {price}')
+        porto.append({'date': buy_date['date'], 'num_stock': int(buy), 'price': price})
+
+        return int(buy), cash
 
     for y in range(start_year, end_year+1):
 
         if y == start_year:
-            # first year, buy at the end of the year
-            buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
-            close_price = buy_date['close']
-            buy_lot = cash / close_price / 100
-            num_stock += int(buy_lot)
-            cash -= int(buy_lot) * close_price * 100
-            activities.append(f'buy {int(buy_lot)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
+            buy_lot, cash = buy_stock(cash, price_df, f'{y}-01-01')
+            num_stock += buy_lot
 
         for m in range(1, 13):
+
+            if y == start_year and m == 1:
+                continue
+
             cash += monthly_topup
-            activities.append(f'monthly_topup. current cash {cash}')
+            # activities.append(f'{y}-{m:02d}-01: monthly_topup. current cash {cash}')
 
             buy_date = price_df[price_df['date'] >= f'{y}-{m:02d}-01'].iloc[-1]
             div_date = div_df[(div_df['date'] >= f'{y}-{m:02d}-01') & (div_df['date'] <= f'{y}-{m:02d}-31')]
@@ -458,22 +465,18 @@ def simulate_dividend_compounding(
             print(buy_date, div_date)
             if len(div_date) == 0:
                 # no dividend this month
-                close_price = buy_date['close']
-                buy_lot = cash / close_price / 100
-                num_stock += int(buy_lot)
-                cash -= int(buy_lot) * close_price * 100
-                activities.append(f'buy {int(buy_lot)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
+                buy_lot, cash = buy_stock(cash, price_df, f'{y}-{m:02d}-01')
+                num_stock += buy_lot
 
             elif buy_date['date'][0] < div_date['date'].iloc[0]:
                 # buy first and then get dividend with the new number of stock
-                close_price = buy_date['close']
-                buy_lot = cash / close_price / 100
-                num_stock += int(buy_lot)
-                cash -= int(buy_lot) * close_price * 100
+                buy_lot, cash = buy_stock(cash, price_df, f'{y}-{m:02d}-01')
+                num_stock += buy_lot
 
                 div_payment = div_date['adjDividend'].sum()
                 div = int(div_payment * num_stock * 100)
                 cash += div
+                activities.append(f'{div_date["date"].iloc[0]} receive dividend {div_payment} for {num_stock}. Total {div}')
             
             else:
                 # get dividend first and then buy with the new cash
@@ -487,4 +490,5 @@ def simulate_dividend_compounding(
                 cash -= int(buy_lot) * close_price * 100
                 activities.append(f'buy {int(buy_lot)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
 
-    return num_stock, activities
+    # porto_df = pd.DataFrame(porto)
+    return porto, activities
