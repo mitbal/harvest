@@ -3,6 +3,7 @@ import json
 import time
 
 import redis
+import altair as alt
 import pandas as pd
 import streamlit as st
 from datetime import date, datetime, timedelta
@@ -406,7 +407,6 @@ with st.expander(f'Compounding Simulation: {stock_name}'):
                                                 initial_value * 1_000_000,
                                                 monthly_topup * 1_000_000)
     
-    # st.write(f'Number of stocks: {num_stock}')
     st.write('Activities:')
     st.write(activities)
     st.write('Portfolio:')
@@ -417,5 +417,15 @@ with st.expander(f'Compounding Simulation: {stock_name}'):
     porto_df['cum_total'] = porto_df['total'].cumsum()
     porto_df['avg_price'] = porto_df['cum_total'] / porto_df['cum_stock'] / 100
 
-    st.write(pd.DataFrame(porto_df))
-    # st.write(f'Assessment: {assessment}')
+    cols = st.columns(2)
+    cols[0].write(porto_df)
+
+    return_chart1 = alt.Chart(porto_df).mark_line().encode(
+        x='date',
+        y='price'
+    )
+    return_chart2 = alt.Chart(porto_df).mark_line().encode(
+        x='date',
+        y='avg_price'
+    )
+    cols[1].altair_chart(return_chart1 + return_chart2)
