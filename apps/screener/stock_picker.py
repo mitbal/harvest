@@ -417,15 +417,18 @@ with st.expander(f'Compounding Simulation: {stock_name}'):
     porto_df['cum_total'] = porto_df['total'].cumsum()
     porto_df['avg_price'] = porto_df['cum_total'] / porto_df['cum_stock'] / 100
 
+    porto_df['current_value'] = porto_df['price'] * porto_df['cum_stock'] * 100
+
     cols = st.columns(2)
-    cols[0].write(porto_df)
+    cols[0].write(porto_df[['date', 'cum_total', 'current_value']])
 
     return_chart1 = alt.Chart(porto_df).mark_line().encode(
-        x='date',
-        y='price'
+        x=alt.X('date', axis=alt.Axis(labels=False)),
+        y=alt.Y('cum_total').scale(zero=False)
     )
     return_chart2 = alt.Chart(porto_df).mark_line().encode(
-        x='date',
-        y='avg_price'
+        x=alt.X('date', axis=alt.Axis(labels=False)),
+        y=alt.Y('current_value').scale(zero=False),
+        color=alt.value('green')
     )
     cols[1].altair_chart(return_chart1 + return_chart2)
