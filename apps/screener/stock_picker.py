@@ -81,7 +81,8 @@ def get_specific_stock_detail(stock_name):
     progress_bar.progress(100, text='Progress 100% complete')
 
     end_time = time.time()
-    print(f'Total download time for {stock_name}: {end_time-start_time}')
+    # print(f'Total download time for {stock_name}: {end_time-start_time}')
+    logger.info(f'Total download time for {stock_name}: {end_time-start_time}')  # Log the elapsed time
 
     time.sleep(0.5)
     progress_bar.empty()
@@ -97,7 +98,7 @@ sl = st.sidebar.segmented_control(label='Stock List',
                          default='JKSE')
 
 if sl is None:
-    print('Please select one of the options above')
+    # print('Please select one of the options above')
     st.stop()
 
 if sl == 'JKSE':
@@ -113,7 +114,8 @@ start = time.time()
 final_df = get_div_score_table(key)
 
 end = time.time()
-print(f'Elapsed time {end-start}')
+# print(f'Elapsed time {end-start}')
+logger.info(f'Table download time {end-start}')  # Log the elapsed time
 
 minimum_market_cap = st.sidebar.number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
 minimum_year = st.sidebar.number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
@@ -266,7 +268,8 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
         inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
         extrapolate = True
     except:
-        print(f'value last_val and inc_val not found on table for {stock_name}')
+        # print(f'value last_val and inc_val not found on table for {stock_name}')
+        logger.error(f'Stock {stock_name} not found on table')
         last_val = 0
         inc_val = 0
         extrapolate = False
@@ -351,7 +354,8 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
             industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
         except Exception:
             sector_pe = industry_pe = -1
-            print('sector or industry not found')
+            # print('sector or industry not found')
+            logger.error(f'sector or industry not found for {stock_name} in sector {sector_name} and industry {industry_name}')
     else:
         sector_pe = industry_pe = -1
 
