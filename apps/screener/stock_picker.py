@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import logging
 
 import redis
 import altair as alt
@@ -11,10 +12,18 @@ from datetime import date, datetime, timedelta
 import harvest.plot as hp
 import harvest.data as hd
 
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
 try:
     st.set_page_config(layout='wide')
 except Exception as e:
-    print('Set Page config has been called before')
+    logger.exception('Set Page config has been called before')
 
 st.title('Jajan Saham')
 
@@ -36,7 +45,8 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
     if rjson is not None:
         div_score_json = json.loads(rjson)
         last_updated = div_score_json['date']
-        print('data last updated', last_updated)
+        # print('data last updated', last_updated)
+        logger.info(f'data last updated: {last_updated}')
         final_df = pd.DataFrame(json.loads(div_score_json['content']))
     else:
         final_df = pd.read_csv('dividend_historical.csv')
