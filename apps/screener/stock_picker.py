@@ -30,6 +30,7 @@ st.title('Jajan Saham')
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
 
+
 @st.cache_resource
 def connect_redis(redis_url):
     r = redis.from_url(redis_url)
@@ -40,13 +41,18 @@ def connect_redis(redis_url):
 def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend table...'):
 
     # try from cache from redis first
+    start = time.time()
+
     r = connect_redis(redis_url)
     rjson = r.get(key)
+
+    end = time.time()
+    logger.info(f'redis get {key} took {end-start:.04f} seconds')
+
     if rjson is not None:
         div_score_json = json.loads(rjson)
         last_updated = div_score_json['date']
-        # print('data last updated', last_updated)
-        logger.info(f'data last updated: {last_updated}')
+        logger.info(f'dividend table last updated: {last_updated}')
         final_df = pd.DataFrame(json.loads(div_score_json['content']))
     else:
         final_df = pd.read_csv('dividend_historical.csv')
@@ -110,20 +116,15 @@ else:
     mcap_value = 100
     currency = 'USD'
 
-start = time.time()
-final_df = get_div_score_table(key)
-
-end = time.time()
-# print(f'Elapsed time {end-start}')
-logger.info(f'Table download time {end-start}')  # Log the elapsed time
-
 minimum_market_cap = st.sidebar.number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
 minimum_year = st.sidebar.number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
 
+final_df = get_div_score_table(key)
+
 if sl == 'JKSE':
-        is_syariah = st.sidebar.toggle('Syariah Only?')
-        if is_syariah:
-            final_df = final_df[final_df['is_syariah'] == True]
+    is_syariah = st.sidebar.toggle('Syariah Only?')
+    if is_syariah:
+        final_df = final_df[final_df['is_syariah'] == True]
 
 full_table_section = st.container(border=True)
 with full_table_section:
@@ -240,6 +241,7 @@ else:
     st.stop()
 
 fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_detail(stock_name)
+
 
 with st.expander('Company Profile', expanded=False):    
     st.write(cp_df.loc[stock_name, 'description'])
