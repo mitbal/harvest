@@ -462,7 +462,7 @@ def simulate_dividend_compounding(
             buy_date = price_df[price_df['date'] >= f'{y}-{m:02d}-01'].iloc[-1]
             div_date = div_df[(div_df['date'] >= f'{y}-{m:02d}-01') & (div_df['date'] <= f'{y}-{m:02d}-31')]
             
-            print(buy_date, div_date)
+            # print(buy_date, div_date)
             if len(div_date) == 0:
                 # no dividend this month
                 buy_lot, cash = buy_stock(cash, price_df, f'{y}-{m:02d}-01')
