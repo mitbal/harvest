@@ -13,17 +13,26 @@ import harvest.plot as hp
 import harvest.data as hd
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 
 try:
     st.set_page_config(layout='wide')
 except Exception as e:
-    logger.exception('Set Page config has been called before')
+    print('Set Page config has been called before')
+
+
+@st.cache_resource
+def setup_logging(name, level=logging.INFO):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    return logger
+
+logger = setup_logging(__name__)
+
 
 st.title('Jajan Saham')
 
