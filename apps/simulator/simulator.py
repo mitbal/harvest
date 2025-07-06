@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 import numpy as np
@@ -13,6 +14,19 @@ except Exception as e:
     print('Set Page config has been called before')
 
 st.title('# Simulator')
+
+### Start of Function definition
+
+@st.cache_resource
+def setup_logging(name, level=logging.INFO):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    return logger
 
 
 @st.cache_data
@@ -140,9 +154,11 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
         investments += [inv]
     return investments, returns, without_drip, porto_df, transactions
 
+### End of Function definition
 
 ################################################################################
 
+logger = setup_logging('simulator')
 
 with st.container(border=True):
     st.write('## #1 Basic single instrument compounding simulation')
@@ -258,6 +274,7 @@ with st.container(border=True):
     start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
+    logger.info(f'Stock Name: {stock_name}, Start Year: {start_year}, End Year: {end_year}')
     div_df = hd.get_dividend_history_single_stock(stock_name)
 
     try:
