@@ -125,7 +125,7 @@ else:
 minimum_market_cap = st.sidebar.number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
 minimum_year = st.sidebar.number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
 
-logger = setup_logging(__name__)
+logger = setup_logging('screener')
 
 final_df = get_div_score_table(key)
 
