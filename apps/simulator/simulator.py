@@ -139,7 +139,7 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
             val = porto[s]['lot'] * buy_date['close'] * 100
             inv += val
             porto_df = pd.concat([porto_df,
-                                pd.DataFrame({'stock': [s], 'lot': [porto[s]], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
+                                pd.DataFrame({'stock': [s], 'lot': [porto[s]['lot']], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
                                 ])
             without_drip = pd.concat([without_drip,
                                     pd.DataFrame({
