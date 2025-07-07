@@ -83,20 +83,20 @@ def get_specific_stock_detail(stock_name):
     n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
 
     fin = hd.get_financial_data(stock_name)
-    progress_bar.progress(20, text='Downloading stock data... Progresss 20%')
+    progress_bar.progress(20, text='Downloading historical financial data... Progresss 20%')
 
     cp_df = hd.get_company_profile([stock_name])
     progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
 
     start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
     price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
-    progress_bar.progress(60, text='Downloading stock data... Progresss 60%')
+    progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
     
     if sl == 'JKSE':
         sdf = hd.get_dividend_history_single_stock(stock_name, source='dag')
     else:
         sdf = hd.get_dividend_history_single_stock(stock_name, source='fmp')
-    progress_bar.progress(80, text='Downloading stock data... Progresss 80%')
+    progress_bar.progress(80, text='Downloading historical dividend data... Progresss 80%')
 
     sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
     progress_bar.progress(100, text='Progress 100% complete')
