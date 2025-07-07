@@ -92,6 +92,8 @@ def get_dividend_history_single_stock(stock, api_key=None, source='fmp'):
 
     if source == 'fmp':
         return get_dividend_history_single_stock_fmp(stock, api_key)
+    elif source == 'dag':
+        return get_dividend_history_single_stock_dag(stock)
     else:
         raise ValueError("Invalid source. Currently only 'fmp' is supported.")
 
@@ -143,9 +145,10 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None):
 
 def get_dividend_history_single_stock_dag(stock):
 
-    url = f'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/dividends/{stock[:3]}.csv'
+    url = f'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/dividends/{stock[:4]}.csv'
     r = requests.get(url)
     df = pd.read_csv(io.StringIO(r.text))
+    df.rename(columns={'ex_date': 'date', 'dividend': 'adjDividend'}, inplace=True)
 
     return df
 
