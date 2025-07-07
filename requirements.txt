@@ -15,4 +15,5 @@ streamlit==1.45.0
 matplotlib==3.9.1
 scikit_learn==1.5.1
 streamlit_lottie==0.0.5
+python-json-logger==2.0.7
 st-supabase-connection==2.0.1
