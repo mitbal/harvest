@@ -88,7 +88,15 @@ def get_company_ratio(stock, api_key):
     return pd.DataFrame(ratio)
 
 
-def get_dividend_history_single_stock(stock, api_key=None):
+def get_dividend_history_single_stock(stock, api_key=None, source='fmp'):
+
+    if source == 'fmp':
+        return get_dividend_history_single_stock_fmp(stock, api_key)
+    else:
+        raise ValueError("Invalid source. Currently only 'fmp' is supported.")
+
+
+def get_dividend_history_single_stock_fmp(stock, api_key=None):
     """
     Downloads dividend history for a single stock from Financial Modeling Prep and returns it as a Pandas DataFrame.
 
@@ -131,6 +139,15 @@ def get_dividend_history_single_stock(stock, api_key=None):
     else:
         print(f"No data received for {stock}.")
         return None
+
+
+def get_dividend_history_single_stock_dag(stock):
+
+    url = f'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/dividends/{stock[:3]}.csv'
+    r = requests.get(url)
+    df = pd.read_csv(io.StringIO(r.text))
+
+    return df
 
 
 def get_dividend_history(stocks, api_key=None):
