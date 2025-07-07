@@ -1,7 +1,9 @@
 import os
 import json
 import time
+
 import logging
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import redis
 import altair as alt
@@ -29,10 +31,13 @@ redis_url = os.environ['REDIS_URL']
 
 @st.cache_resource
 def setup_logging(name, level=logging.INFO):
+
     logger = logging.getLogger(name)
     logger.setLevel(level)
+
     handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = JsonFormatter(fmt='{asctime}{name}{levelname}{message}', 
+                              style='{')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
