@@ -218,7 +218,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     """Computes the dividend score for each stock."""
 
     df = cp_df[(cp_df['lastDiv'] != 0)].copy()
-    # df['yield'] = df['lastDiv'] / df['price'] * 100
+    df['yield'] = 0
     df['revenueGrowth'] = np.nan
     df['netIncomeGrowth'] = np.nan
     df['avgFlatAnnualDivIncrease'] = np.nan
