@@ -184,7 +184,7 @@ def download_single_dividend(stock: str):
     """Downloads dividend history for a single stock."""
     print(f'download dividend history for {stock}')
     try:
-        div = hd.get_dividend_history_single_stock(stock)
+        div = hd.get_dividend_history_single_stock(stock, source='dag')
         return div
     except Exception as e:
         print(f'Error downloading dividend history for {stock}: {e}')
@@ -218,7 +218,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     """Computes the dividend score for each stock."""
 
     df = cp_df[(cp_df['lastDiv'] != 0)].copy()
-    df['yield'] = df['lastDiv'] / df['price'] * 100
+    # df['yield'] = df['lastDiv'] / df['price'] * 100
     df['revenueGrowth'] = np.nan
     df['netIncomeGrowth'] = np.nan
     df['avgFlatAnnualDivIncrease'] = np.nan
@@ -236,8 +236,10 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
             df.loc[symbol, 'medianProfitMargin'] = fin_stats['median_profit_margin']
-                    
+            
             div_df = div_dict[symbol]
+            agg_year = df.groupby('fiscal_year')['dividend'].sum().to_frame()
+            last_div = agg_year.loc[2024, 'dividend']
             div_df = hd.preprocess_div(div_df)
             div_stats = hd.calc_div_stats(div_df)
             
@@ -245,6 +247,8 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
                                 div_stats['div_inc_5y_mean_flat']])
             div_incs = np.nan_to_num(div_incs, nan=0.0)
             
+            df.loc[symbol, 'lastDiv'] = last_div
+            df.loc[symbol, 'yield'] = last_div / df.loc[symbol, 'price'] * 100
             df.loc[symbol, 'avgFlatAnnualDivIncrease'] = np.min(div_incs)
             df.loc[symbol, 'avgPctAnnualDivIncrease'] = div_stats['historical_mean_pct']
             df.loc[symbol, 'numDividendYear'] = div_stats['num_dividend_year']
@@ -291,4 +295,4 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
 if __name__ == '__main__':
     
     run_daily(exch='jkse', mcap_filter=100_000_000_000)
-    run_daily(exch='sp500', mcap_filter=10_000_000_000)
+    # run_daily(exch='sp500', mcap_filter=10_000_000_000)
