@@ -238,7 +238,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             df.loc[symbol, 'medianProfitMargin'] = fin_stats['median_profit_margin']
             
             div_df = div_dict[symbol]
-            agg_year = div_df.groupby('fiscal_year')['adjDividend'].sum().to_frame()
+            agg_year = div_df[div_df['dividend_type'] != 'special'].groupby('fiscal_year')['adjDividend'].sum().to_frame()
             final_year = div_df[div_df['dividend_type'] == 'final']['fiscal_year'].to_list()[0]
             last_div = agg_year.loc[final_year, 'adjDividend']
 
