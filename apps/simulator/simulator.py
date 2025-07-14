@@ -64,7 +64,7 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
     divs = {}
     prices = {}
     for stock in stock_list:
-        divs[stock] = hd.get_dividend_history_single_stock(stock)
+        divs[stock] = hd.get_dividend_history_single_stock(stock, source='dag')
         prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
 
     porto = {s: {'lot': 0, 'avg_price': 0} for s in stock_list}
@@ -275,7 +275,7 @@ with st.container(border=True):
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
     logger.info(f'Stock Name: {stock_name}, Start Year: {start_year}, End Year: {end_year}')
-    div_df = hd.get_dividend_history_single_stock(stock_name)
+    div_df = hd.get_dividend_history_single_stock(stock_name, source='dag')
 
     try:
         price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
