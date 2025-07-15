@@ -118,7 +118,6 @@ sl = st.sidebar.segmented_control(label='Stock List',
                          default='JKSE')
 
 if sl is None:
-    # print('Please select one of the options above')
     st.stop()
 
 if sl == 'JKSE':
@@ -286,7 +285,6 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
         inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
         extrapolate = True
     except:
-        # print(f'value last_val and inc_val not found on table for {stock_name}')
         logger.error(f'Stock {stock_name} not found on table')
         last_val = 0
         inc_val = 0
@@ -372,7 +370,6 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
             industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
         except Exception:
             sector_pe = industry_pe = -1
-            # print('sector or industry not found')
             logger.error(f'sector or industry not found for {stock_name} in sector {sector_name} and industry {industry_name}')
     else:
         sector_pe = industry_pe = -1
