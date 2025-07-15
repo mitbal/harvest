@@ -1,7 +1,9 @@
 import io
 import os
+import json
 from datetime import datetime
 
+import redis
 import lesley
 import calendar
 import numpy as np
@@ -49,6 +51,12 @@ def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email:
             ).eq("email", user_email),
             ttl=0,
         )
+
+
+@st.cache_resource
+def connect_redis(redis_url):
+    r = redis.from_url(redis_url)
+    return r
 
 
 st.set_page_config(layout='wide')
@@ -158,8 +166,18 @@ api_key = os.environ['FMP_API_KEY']
 @st.cache_data
 def get_company_profile_data(porto):
 
-    stocks = [x+'.JK' for x in porto['Symbol'].to_list()]
-    cp_df = hd.get_company_profile(stocks)
+    # stocks = [x+'.JK' for x in porto['Symbol'].to_list()]
+    # cp_df = hd.get_company_profile(stocks)
+
+    redis_url = os.environ['REDIS_URL']
+    r = connect_redis(redis_url)
+
+    rjson = r.get('div_score_jkse')
+    div_score_json = json.loads(rjson)
+    # st.write(div_score_json)
+    cp_df = pd.DataFrame(json.loads(div_score_json['content']))
+    cp_df.rename(columns={'symbol': 'stock'}, inplace=True)
+    cp_df.set_index('stock', inplace=True)
     
     cp_df['Symbol'] = [x[:-3] for x in cp_df.index.to_list()]
     df = porto.merge(cp_df[['Symbol', 'price', 'sector', 'lastDiv']])

@@ -219,6 +219,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
 
     df = cp_df[(cp_df['lastDiv'] != 0)].copy()
     df['yield'] = 0
+    df['lastDiv'] = 0
     df['revenueGrowth'] = np.nan
     df['netIncomeGrowth'] = np.nan
     df['avgFlatAnnualDivIncrease'] = np.nan
