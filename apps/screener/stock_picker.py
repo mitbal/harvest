@@ -248,7 +248,7 @@ if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
-elif len(st.query_params) > 0:
+elif 'stock' in st.query_params:
     stock_name = st.query_params['stock']
 elif select_stock:
     stock_name = select_stock.upper()
