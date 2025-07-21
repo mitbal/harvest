@@ -249,7 +249,7 @@ if len(event.selection['rows']) > 0:
 elif 'stock' in st.query_params:
     stock_name = st.query_params['stock']
 else:
-    st.stop()
+    stock_name = None
 
 select_stock = st.text_input(
     label='Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information',
@@ -258,6 +258,8 @@ select_stock = st.text_input(
 
 if select_stock:
     stock_name = select_stock.upper()
+else:
+    st.stop()
 
 fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_detail(stock_name)
 
