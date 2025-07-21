@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 
 import harvest.plot as hp
 import harvest.data as hd
+from harvest.utils import setup_logging
 
 
 try:
@@ -30,17 +31,9 @@ redis_url = os.environ['REDIS_URL']
 
 
 @st.cache_resource
-def setup_logging(name, level=logging.INFO):
+def get_logger(name, level=logging.INFO):
 
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-
-    handler = logging.StreamHandler()
-    formatter = JsonFormatter(fmt='{asctime}{name}{levelname}{message}', 
-                              style='{')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
+    logger = setup_logging(name, level)
     return logger
 
 
