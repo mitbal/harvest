@@ -242,18 +242,22 @@ with full_table_section:
 
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
-select_stock = st.text_input('Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information')
-
 if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
 elif 'stock' in st.query_params:
     stock_name = st.query_params['stock']
-elif select_stock:
-    stock_name = select_stock.upper()
 else:
     st.stop()
+
+select_stock = st.text_input(
+    label='Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information',
+    value=stock_name
+)
+
+if select_stock:
+    stock_name = select_stock.upper()
 
 fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_detail(stock_name)
 
