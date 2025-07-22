@@ -7,6 +7,7 @@ import altair as alt
 import streamlit as st
 
 import harvest.data as hd
+from harvest.utils import setup_logging
 
 try:
     st.set_page_config(layout='wide')
@@ -18,19 +19,18 @@ st.title('# Simulator')
 ### Start of Function definition
 
 @st.cache_resource
-def setup_logging(name, level=logging.INFO):
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+def get_logger(name, level=logging.INFO):
 
+    logger = setup_logging(name, level)
     return logger
+
+logger = get_logger('simulator')
 
 
 @st.cache_data
 def simulate_compounding(initial_value, num_year, avg_yield):
+
+    logger.info(f'sim #1 simple compounding. {initial_value=}, {num_year=}, {avg_yield=}')
     
     return_df = hd.simulate_simple_compounding(initial_value, num_year, avg_yield)
     return return_df
@@ -158,7 +158,6 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
 
 ################################################################################
 
-logger = setup_logging('simulator')
 
 with st.container(border=True):
     st.write('## #1 Basic single instrument compounding simulation')
