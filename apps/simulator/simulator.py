@@ -129,6 +129,8 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
 @st.cache_data
 def simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list):
     
+    logger.info(f'sim #4 historical multistock. {stock_list=}, {initial_value=}, {investment_per_stock=}, {start_year=}, {end_year=}')
+
     divs = {}
     prices = {}
     for stock in stock_list:
