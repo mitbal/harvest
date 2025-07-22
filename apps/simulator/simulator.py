@@ -38,6 +38,9 @@ def simulate_compounding(initial_value, num_year, avg_yield):
 
 @st.cache_data
 def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_stock, yield_per_stock):
+    
+    logger.info(f'sim #2 multi stock compounding. {num_year=}, {num_of_stocks=}, {investment_per_stock=}, {yield_per_stock=}')
+    
     investments = np.zeros((num_year, num_of_stocks))
     returns = np.zeros((num_year, num_of_stocks))
 
