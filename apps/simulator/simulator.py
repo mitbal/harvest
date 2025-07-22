@@ -62,6 +62,71 @@ def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_sto
 
 
 @st.cache_data
+def simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year):
+    
+    logger.info(f'sim #3 single stock. {stock_name=}, {initial_value=}, {start_year=}, {end_year=}')
+    div_df = hd.get_dividend_history_single_stock(stock_name, source='dag')
+
+    try:
+        price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
+    except Exception as e:
+        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
+        st.stop()
+
+    activities = []
+    cash = initial_value
+    porto = []
+    divs = []
+    investments = []
+    returns = []
+
+    initial_investment = 0
+    without_drip = pd.DataFrame()
+
+    if f'{start_year}-12-31' < price_df['date'].min():
+        st.error(f'Data for {stock_name} is not available before {price_df["date"].min()}, Please change the year or select different stocks')
+        st.stop()
+
+    for y in range(start_year, end_year+1):
+        buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
+        close_price = buy_date['close']
+        
+        buy = cash / close_price / 100
+        porto += [int(buy)]
+        cash -= int(buy) * close_price * 100
+        activities.append(f'buy {int(buy)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
+
+        if y == start_year:
+            initial_investment = buy
+
+        buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
+        investments += [np.sum(porto) * buy_date['close'] * 100]
+        
+        div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
+        div = int(div_payment * np.sum(porto) * 100)
+        cash += div
+        activities.append(f'receive dividend payment {div_payment}')
+
+        returns += [div]
+
+        without_drip = pd.concat([without_drip, 
+                                pd.DataFrame({'year': [f'Year {y}'], 
+                                                'returns': [div_payment * initial_investment * 100],
+                                                'investment': [ initial_investment * buy_date['close'] * 100 + div]
+                                                })
+                                ])
+
+    with st.expander('Activity Log'):
+        st.write(activities)
+
+    return_df = pd.DataFrame({'investment': investments, 'returns': returns})
+    return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
+    return_df['type'] = 'reinvest'
+    
+    return return_df,without_drip
+
+
+@st.cache_data
 def simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list):
     
     divs = {}
@@ -276,65 +341,7 @@ with st.container(border=True):
     start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
-    logger.info(f'Stock Name: {stock_name}, Start Year: {start_year}, End Year: {end_year}')
-    div_df = hd.get_dividend_history_single_stock(stock_name, source='dag')
-
-    try:
-        price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
-    except Exception as e:
-        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
-        st.stop()
-
-    activities = []
-    cash = initial_value
-    porto = []
-    divs = []
-    investments = []
-    returns = []
-
-    initial_investment = 0
-    without_drip = pd.DataFrame()
-
-    if f'{start_year}-12-31' < price_df['date'].min():
-        st.error(f'Data for {stock_name} is not available before {price_df["date"].min()}, Please change the year or select different stocks')
-        st.stop()
-
-    for y in range(start_year, end_year+1):
-
-        buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
-        close_price = buy_date['close']
-        
-        buy = cash / close_price / 100
-        porto += [int(buy)]
-        cash -= int(buy) * close_price * 100
-        activities.append(f'buy {int(buy)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
-
-        if y == start_year:
-            initial_investment = buy
-
-        buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
-        investments += [np.sum(porto) * buy_date['close'] * 100]
-        
-        div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
-        div = int(div_payment * np.sum(porto) * 100)
-        cash += div
-        activities.append(f'receive dividend payment {div_payment}')
-
-        returns += [div]
-
-        without_drip = pd.concat([without_drip, 
-                                pd.DataFrame({'year': [f'Year {y}'], 
-                                                'returns': [div_payment * initial_investment * 100],
-                                                'investment': [ initial_investment * buy_date['close'] * 100 + div]
-                                                })
-                                ])
-
-    with st.expander('Activity Log'):
-        st.write(activities)
-
-    return_df = pd.DataFrame({'investment': investments, 'returns': returns})
-    return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
-    return_df['type'] = 'reinvest'
+    return_df, without_drip = simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year)
 
     cols = st.columns([0.33, 0.67])
 
