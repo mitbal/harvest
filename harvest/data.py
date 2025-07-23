@@ -147,8 +147,11 @@ def get_dividend_history_single_stock_dag(stock):
 
     url = f'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/dividends/{stock[:4]}.csv'
     r = requests.get(url)
-    df = pd.read_csv(io.StringIO(r.text))
-    df.rename(columns={'ex_date': 'date', 'dividend': 'adjDividend'}, inplace=True)
+    if r.text != '404: Not Found':
+        df = pd.read_csv(io.StringIO(r.text))
+        df.rename(columns={'ex_date': 'date', 'dividend': 'adjDividend'}, inplace=True)
+    else:
+        df = None
 
     return df
 

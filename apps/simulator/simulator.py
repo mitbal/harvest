@@ -67,6 +67,9 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
     logger.info(f'sim #3 single stock. {stock_name=}, {initial_value=}, {start_year=}, {end_year=}')
     div_df = hd.get_dividend_history_single_stock(stock_name, source='dag')
 
+    if div_df is None:
+        logger.error(f'No dividend data found for {stock_name}')
+
     try:
         price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
     except Exception as e:
@@ -102,12 +105,17 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
         buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
         investments += [np.sum(porto) * buy_date['close'] * 100]
         
-        div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
-        div = int(div_payment * np.sum(porto) * 100)
-        cash += div
-        activities.append(f'receive dividend payment {div_payment}')
+        try:
+            div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
+            div = int(div_payment * np.sum(porto) * 100)
+            cash += div
+            activities.append(f'receive dividend payment {div_payment}')
 
-        returns += [div]
+            returns += [div]
+        except:
+            div_payment = 0
+            div = 0
+            returns += [0]
 
         without_drip = pd.concat([without_drip, 
                                 pd.DataFrame({'year': [f'Year {y}'], 
