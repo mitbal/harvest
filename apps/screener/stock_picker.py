@@ -106,7 +106,7 @@ def get_specific_stock_detail(stock_name):
 
     except:
         logger.error(f'Error in downloading data for {stock_name}')
-        st.write(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
+        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks', icon="🚨")
         progress_bar.empty()
         st.stop()
 
