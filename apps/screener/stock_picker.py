@@ -70,37 +70,44 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
 @st.cache_data(ttl=60*60, show_spinner=False)
 def get_specific_stock_detail(stock_name):
 
-    start_time = time.time()
-    progress_bar = st.progress(0, text='Downloading stock data... Please wait')
+    try:
 
-    n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
+        start_time = time.time()
+        progress_bar = st.progress(0, text='Downloading stock data... Please wait')
 
-    fin = hd.get_financial_data(stock_name)
-    progress_bar.progress(20, text='Downloading historical financial data... Progresss 20%')
+        n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
 
-    cp_df = hd.get_company_profile([stock_name])
-    progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
+        fin = hd.get_financial_data(stock_name)
+        progress_bar.progress(20, text='Downloading historical financial data... Progresss 20%')
 
-    start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
-    price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
-    progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
-    
-    if sl == 'JKSE':
-        sdf = hd.get_dividend_history_single_stock(stock_name, source='dag')
-    else:
-        sdf = hd.get_dividend_history_single_stock(stock_name, source='fmp')
-    progress_bar.progress(80, text='Downloading historical dividend data... Progresss 80%')
+        cp_df = hd.get_company_profile([stock_name])
+        progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
 
-    sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
-    progress_bar.progress(100, text='Progress 100% complete')
+        start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
+        price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
+        progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
+        
+        if sl == 'JKSE':
+            sdf = hd.get_dividend_history_single_stock(stock_name, source='dag')
+        else:
+            sdf = hd.get_dividend_history_single_stock(stock_name, source='fmp')
+        progress_bar.progress(80, text='Downloading historical dividend data... Progresss 80%')
 
-    end_time = time.time()
-    logger.info(f'Total download time for {stock_name}: {end_time-start_time:.04f}')
+        sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
+        progress_bar.progress(100, text='Progress 100% complete')
 
-    time.sleep(0.2)
-    progress_bar.empty()
+        end_time = time.time()
+        logger.info(f'Total download time for {stock_name}: {end_time-start_time:.04f}')
 
-    return fin, cp_df, price_df, sdf, sector_df, industry_df, n_share
+        time.sleep(0.2)
+        progress_bar.empty()
+
+        return fin, cp_df, price_df, sdf, sector_df, industry_df, n_share
+
+    except:
+        logger.error(f'Error in downloading data for {stock_name}')
+        st.write(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
+        st.stop()
 
 
 ### End of Function definition
