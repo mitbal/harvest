@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import calendar
 
 import redis
@@ -7,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 import harvest.plot as hp
+from harvest.utils import setup_logging
 
 
 try:
@@ -42,15 +44,33 @@ div_score_key = f'div_score_{exch}'
 url = os.environ['REDIS_URL']
 r = redis.from_url(url)
 
+
+#### Function definition
+
+
+@st.cache_resource
+def get_logger(name, level=logging.INFO):
+
+    logger = setup_logging(name, level)
+    return logger
+
+logger = get_logger('calendar')
+
+
 @st.cache_data(ttl=60*60, show_spinner='Downloading dividend data')
 def get_data_from_redis(key):
     j = r.get(key)
 
     rjson = json.loads(j)
     last_updated = rjson['date']
-    print(f'Last Updated: {last_updated}')
+    
+    logger.info(f'download data from redis: {key}, last updated: {last_updated}')
+
     content = rjson['content']
     return pd.DataFrame(json.loads(content))
+
+
+#### End of Function definition
 
 
 df = get_data_from_redis(div_cal_key)
