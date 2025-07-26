@@ -227,6 +227,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['numDividendYear'] = np.nan
     df['positiveYear'] = np.nan
     df['numOfYear'] = np.nan
+    df['mktCap'] = df['mktCap'].astype(int)
 
     stock_list = df.index.tolist()
     for symbol in stock_list:
