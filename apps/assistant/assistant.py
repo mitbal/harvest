@@ -1,10 +1,13 @@
 import os
 import json
+import logging
 from datetime import datetime
 
 import redis
 import streamlit as st
 from openai import OpenAI
+
+from harvest.utils import setup_logging
 
 
 # Set page configuration
@@ -14,6 +17,12 @@ st.set_page_config(
     layout='wide'
 )
 
+@st.cache_resource
+def get_logger(name, level=logging.INFO):
+
+    logger = setup_logging(name, level)
+    return logger
+logger = get_logger('assistant')
 
 # Get additional data from precomputed dividend table
 @st.cache_resource
@@ -163,3 +172,6 @@ if prompt := st.chat_input("Message the AI assistant..."):
         with st.chat_message("assistant", avatar=avatars['assistant']):
             st.markdown(response)
             st.caption(timestamp)
+
+        logger.info(f'user: {prompt}')
+        logger.info(f'ai: {response}')
