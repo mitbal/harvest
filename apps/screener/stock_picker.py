@@ -272,59 +272,63 @@ with st.expander('Company Profile', expanded=False):
 
 with st.expander(f'Dividend History: {stock_name}', expanded=True):
     
-    dividend_history_cols = st.columns([3, 10, 4])
-    dividend_history_cols[0].dataframe(
-        sdf[['date', 'adjDividend']],
-        column_config={
-            'date': st.column_config.DateColumn(
-                'Ex-Date',
-            ),
-            'adjDividend': st.column_config.NumberColumn(
-                'Dividend',
-                help='Dividend paid per share',
-                format='%.01f',
-            ),
-        },
-        hide_index=True)
+    if sdf is not None:
 
-    try:
-        last_val = final_df.loc[stock_name, 'lastDiv']
-        inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-        extrapolate = True
-    except:
-        logger.error(f'Stock {stock_name} not found on table')
-        last_val = 0
-        inc_val = 0
-        extrapolate = False
+        dividend_history_cols = st.columns([3, 10, 4])
+        dividend_history_cols[0].dataframe(
+            sdf[['date', 'adjDividend']],
+            column_config={
+                'date': st.column_config.DateColumn(
+                    'Ex-Date',
+                ),
+                'adjDividend': st.column_config.NumberColumn(
+                    'Dividend',
+                    help='Dividend paid per share',
+                    format='%.01f',
+                ),
+            },
+            hide_index=True)
 
-    yearly_dividend_chart = hp.plot_dividend_history(sdf, 
-                                                    extrapolote=True, 
-                                                    n_future_years=5, 
-                                                    last_val=last_val, 
-                                                    inc_val=inc_val)
-    dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
+        try:
+            last_val = final_df.loc[stock_name, 'lastDiv']
+            inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
+            extrapolate = True
+        except:
+            logger.error(f'Stock {stock_name} not found on table')
+            last_val = 0
+            inc_val = 0
+            extrapolate = False
 
-    with dividend_history_cols[2]:
-        if stock_name in filtered_df.index:
-            last_div = filtered_df.loc[stock_name, 'lastDiv']
-            inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-            curr_price = filtered_df.loc[stock_name, 'price']
-            next_div = last_div + inc_val
-            next_yield = next_div / curr_price * 100
+        yearly_dividend_chart = hp.plot_dividend_history(sdf, 
+                                                        extrapolote=True, 
+                                                        n_future_years=5, 
+                                                        last_val=last_val, 
+                                                        inc_val=inc_val)
+        dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
 
-            stats = hd.calc_div_stats(hd.preprocess_div(sdf))
+        with dividend_history_cols[2]:
+            if stock_name in filtered_df.index:
+                last_div = filtered_df.loc[stock_name, 'lastDiv']
+                inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
+                curr_price = filtered_df.loc[stock_name, 'price']
+                next_div = last_div + inc_val
+                next_yield = next_div / curr_price * 100
 
-            dividend_markdown = f'''
-            Estimated next year dividend payment: **:green[{next_div:0.2f} IDR]**\n
-            Yield on current price: **:green[{next_yield:0.2f}%]**
+                stats = hd.calc_div_stats(hd.preprocess_div(sdf))
 
-            Number of years paying dividend: **{stats['num_dividend_year']:,}**
+                dividend_markdown = f'''
+                Estimated next year dividend payment: **:green[{next_div:0.2f} IDR]**\n
+                Yield on current price: **:green[{next_yield:0.2f}%]**
 
-            Number of years increasing dividend: **{stats['num_positive_year']:,}**
+                Number of years paying dividend: **{stats['num_dividend_year']:,}**
 
-            Positive consistency rate: **:green[{stats['num_positive_year']/stats['num_dividend_year']*100:.2f}%]**
-            '''
-            st.markdown(dividend_markdown)
+                Number of years increasing dividend: **{stats['num_positive_year']:,}**
+
+                Positive consistency rate: **:green[{stats['num_positive_year']/stats['num_dividend_year']*100:.2f}%]**
+                '''
+                st.markdown(dividend_markdown)
+    else:
+        st.write('No dividend history available')
 
 
 with st.expander(f'Financial Information: {stock_name}', expanded=True):
