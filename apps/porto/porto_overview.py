@@ -40,7 +40,10 @@ def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
         conn.table("users").select("portfolio").eq("email", user_email),
         ttl=0,
     )
-    return user_in_db.data[0]['portfolio']
+    if len(user_in_db.data) > 0:
+        return user_in_db.data[0]['portfolio']
+    else:
+        return None
 
 
 def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email: str) -> None:
@@ -77,7 +80,9 @@ if 'porto_df' not in st.session_state:
     if st.user.is_logged_in:
         data = get_user_portfolio(conn, st.user.email)
         print(st.user.email, data)
-        if len(data) > 0:
+        if data is None:
+            st.session_state['porto_df'] = None
+        elif len(data) > 0:
             st.session_state['porto_df'] = pd.DataFrame(data)
         else:
             st.session_state['porto_df'] = None
