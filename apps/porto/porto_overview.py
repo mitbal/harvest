@@ -49,9 +49,10 @@ def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
 def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email: str) -> None:
 
     execute_query(
-            conn.table("users").update(
-                {"email": user_email, "portfolio": portfolio, 'modified_at': datetime.now().isoformat()}
-            ).eq("email", user_email),
+            conn.table("users").upsert(
+                {"email": user_email, "portfolio": portfolio, 'modified_at': datetime.now().isoformat()},
+                on_conflict="email",
+            ),
             ttl=0,
         )
 
