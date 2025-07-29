@@ -1,6 +1,7 @@
 import io
 import os
 import json
+import logging
 from datetime import datetime
 
 import redis
@@ -14,6 +15,16 @@ from st_supabase_connection import SupabaseConnection, execute_query
 
 import harvest.plot as hp
 import harvest.data as hd
+from harvest.utils import setup_logging
+
+
+@st.cache_resource
+def get_logger(name, level=logging.INFO):
+
+    logger = setup_logging(name, level)
+    return logger
+
+logger = get_logger('porto')
 
 
 @st.cache_resource(show_spinner=False)
@@ -41,8 +52,10 @@ def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
         ttl=0,
     )
     if len(user_in_db.data) > 0:
+        logger.info(f'portfolio found for {user_email}')
         return user_in_db.data[0]['portfolio']
     else:
+        logger.info(f'{user_email} has no portfolio saved in db')
         return None
 
 
@@ -55,6 +68,7 @@ def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email:
             ),
             ttl=0,
         )
+    logger.info(f'portfolio updated for {user_email}')
 
 
 @st.cache_resource
@@ -143,6 +157,7 @@ with st.expander('Data Input', expanded=True):
                 if st.session_state['porto_file'] != 'EMPTY':
                     st.session_state['porto_file'].seek(0)
                     st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], sep=',', dtype='str')
+                    logger.info(f'Porto data submitted via upload csv')
 
             elif method == 'Paste Raw':
                 rows = np.array(raw.split())
@@ -157,15 +172,19 @@ with st.expander('Data Input', expanded=True):
                     'Average Price': price
                 })
                 st.session_state['porto_df'] = df
+                logger.info(f'Porto data submitted via paste raw')
 
             elif method == 'Paste CSV':
                 input_str = io.StringIO(raw)
                 df = pd.read_csv(input_str, sep=';', dtype='str')
                 st.session_state['porto_df'] = df
+                logger.info(f'Porto data submitted via paste csv')
                 
             elif method == 'Form':
                 df = edited_df.copy(deep=True)
                 st.session_state['porto_df'] = df
+                logger.info(f'Porto data submitted via form')
+
 
 api_key = os.environ['FMP_API_KEY']
 
