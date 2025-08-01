@@ -146,13 +146,13 @@ with st.expander('Data Input', expanded=True):
 
         target = form_cols[0].number_input(
             label='Input Target Annual Income (in million IDR)',
-            value=240, step=1, min_value=1,
+            value=240, step=1, min_value=1, max_value=10_000,
             format='%d'
         )
 
         baseline = form_cols[1].number_input(
             label='Benchmark Performance (in percent)',
-            value=6.35, step=.01
+            value=6.35, step=.01, min_value=0.01, max_value=99.99
         )
 
         submit = st.form_submit_button('Submit data')
