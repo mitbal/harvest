@@ -5,7 +5,6 @@ import logging
 from datetime import datetime
 
 import redis
-import lesley
 import calendar
 import numpy as np
 import pandas as pd
@@ -105,7 +104,13 @@ if 'porto_df' not in st.session_state:
         st.session_state['porto_df'] = None
 
 with st.expander('Data Input', expanded=True):
-    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], horizontal=True)
+
+    if os.environ == 'prod':
+        default_input = 2
+    else:
+        default_input = 0
+
+    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], index=default_input, horizontal=True)
 
     with st.form('abc'):
 
@@ -191,15 +196,11 @@ api_key = os.environ['FMP_API_KEY']
 @st.cache_data
 def get_company_profile_data(porto):
 
-    # stocks = [x+'.JK' for x in porto['Symbol'].to_list()]
-    # cp_df = hd.get_company_profile(stocks)
-
     redis_url = os.environ['REDIS_URL']
     r = connect_redis(redis_url)
 
     rjson = r.get('div_score_jkse')
     div_score_json = json.loads(rjson)
-    # st.write(div_score_json)
     cp_df = pd.DataFrame(json.loads(div_score_json['content']))
     cp_df.rename(columns={'symbol': 'stock'}, inplace=True)
     cp_df.set_index('stock', inplace=True)
