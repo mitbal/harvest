@@ -112,6 +112,18 @@ model_options = {
 
 model_id = 'google/gemini-2.0-flash-exp:free'
 
+# add sample questions
+question = st.sidebar.pills(
+    '**Sample questions**',
+    [
+        'saham sawit apa yang dividennya paling tinggi',
+        'jelaskan kenapa bjtm bagus untuk dividen',
+        'bagusan mana itmg atau bssr',
+        'mending ipcm atau ipcc'
+    ],
+    selection_mode='single'
+)
+
 # Reset chat button
 if st.sidebar.button("Reset Chat"):
     st.session_state.messages = []
@@ -136,7 +148,7 @@ for message in st.session_state.messages:
 
 
 # Chat input
-if prompt := st.chat_input("Message the AI assistant..."):
+if prompt := st.chat_input("Message the AI assistant...") or question:
     # Add user message to chat history
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.messages.append({
@@ -175,3 +187,11 @@ if prompt := st.chat_input("Message the AI assistant..."):
 
         logger.info(f'user: {prompt}')
         logger.info(f'ai: {response}')
+
+disclaimer_text = """
+Even with thousands of years of wisdom, Om Jin can still makes mistakes.
+Please double check the answer given and always do your own research.
+Remember, YOU are responsible for your own financial decisions
+"""
+st.sidebar.header('Disclaimer')
+st.sidebar.write(disclaimer_text)
