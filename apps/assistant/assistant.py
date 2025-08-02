@@ -100,9 +100,6 @@ if "OPENROUTER_API_KEY" not in st.session_state:
     api_key = os.getenv("OPENROUTER_API_KEY")
     if api_key:
         st.session_state.OPENROUTER_API_KEY = api_key
-
-# Sidebar for configuration
-st.sidebar.title("Settings")
         
 # Model selection
 model_options = {
@@ -111,6 +108,9 @@ model_options = {
 }
 
 model_id = 'google/gemini-2.0-flash-exp:free'
+
+# Sidebar for configuration
+st.sidebar.header('Sample Questions')
 
 # add sample questions
 question = st.sidebar.pills(
@@ -121,7 +121,8 @@ question = st.sidebar.pills(
         'bagusan mana itmg atau bssr',
         'mending ipcm atau ipcc'
     ],
-    selection_mode='single'
+    selection_mode='single',
+    label_visibility='collapsed'
 )
 
 # Reset chat button
