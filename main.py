@@ -8,6 +8,7 @@ page_calendar = st.Page('apps/calendar/calendar.py', title='Dividend Calendar', 
 page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
+# page_trading = st.Page('apps/voc/copenhagen.py', title='Copenhagen Model', icon='🎮')
 
 pages = st.navigation(
     {
@@ -18,7 +19,8 @@ pages = st.navigation(
                  page_article,
                  page_simulator,
                  page_porto,
-                 page_history,
+                #  page_history,
+                #  page_trading
                  ]
     }
 )
