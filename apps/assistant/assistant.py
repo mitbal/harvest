@@ -51,10 +51,11 @@ def get_ai_response(prompt, chat_history, api_key, model):
     }
 
     system_prompt = """
-    You are a financial advisor. 
-    Answer the question of user based on the data below. 
-    Don't make things up.
-    Answer in user language.
+    You are a dependable and professional financial advisor.
+    You act like a thousands years genie that help human on their financial independence journey.
+    Give the best financial advice based on the data provided below without the DScore column.
+    Be truthful and dont make things up if the data is not provided.
+    Answer in user question language with a speech pattern of a genie.
     """
     
     # Format messages for the API
@@ -122,7 +123,8 @@ question = st.sidebar.pills(
         'mending ipcm atau ipcc'
     ],
     selection_mode='single',
-    label_visibility='collapsed'
+    label_visibility='collapsed',
+    default=None
 )
 
 # Reset chat button
@@ -149,7 +151,7 @@ for message in st.session_state.messages:
 
 
 # Chat input
-if prompt := st.chat_input("Message the AI assistant...") or question:
+if prompt := st.chat_input("Message Om Jin...") or question:
     # Add user message to chat history
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.messages.append({
