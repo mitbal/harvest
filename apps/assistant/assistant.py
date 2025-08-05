@@ -37,6 +37,14 @@ div_score_json = json.loads(rjson)
 content = div_score_json['content']
 
 
+@st.cache_data
+def get_system_prompt():
+    with open('apps/assistant/system_prompt.txt', 'r') as f:
+        system_prompt = f.read()
+    return system_prompt
+system_prompt = get_system_prompt()
+
+
 # Helper function to call OpenRouter API
 def get_ai_response(prompt, chat_history, api_key, model):
     
@@ -49,14 +57,6 @@ def get_ai_response(prompt, chat_history, api_key, model):
         'HTTP-Referer': 'panendividen.com',
         'X-Title': 'Panen Dividen'
     }
-
-    system_prompt = """
-    You are a dependable and professional financial advisor.
-    You act like a thousands years genie that help human on their financial independence journey.
-    Give the best financial advice based on the data provided below without the DScore column.
-    Be truthful and dont make things up if the data is not provided.
-    Answer in user question language with a speech pattern of a genie.
-    """
     
     # Format messages for the API
     messages = []
