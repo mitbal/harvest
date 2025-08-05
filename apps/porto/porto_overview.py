@@ -106,11 +106,11 @@ if 'porto_df' not in st.session_state:
 with st.expander('Data Input', expanded=True):
 
     if os.environ == 'prod':
-        default_input = 2
+        default_input = 1
     else:
-        default_input = 0
+        default_input = 1
 
-    method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], index=default_input, horizontal=True)
+    method = st.radio('Method', ['Upload CSV', 'Form'], index=default_input, horizontal=True)
 
     with st.form('abc'):
 
@@ -125,19 +125,7 @@ with st.expander('Data Input', expanded=True):
         
         elif method == 'Form':
             if st.session_state['porto_df'] is None:
-                example_df = pd.DataFrame(
-                    [
-                        {'Symbol': 'ASII', 'Available Lot': '200', 'Average Price': '5000'},
-                        {'Symbol': 'BBRI', 'Available Lot': '200', 'Average Price': '4500'},
-                        {'Symbol': 'TLKM', 'Available Lot': '200', 'Average Price': '3000'},
-                        {'Symbol': 'INDF', 'Available Lot': '200', 'Average Price': '6000'},
-                        {'Symbol': 'PTBA', 'Available Lot': '200', 'Average Price': '2500'},
-                        {'Symbol': 'IPCC', 'Available Lot': '2000', 'Average Price': '650'},
-                        {'Symbol': 'PGAS', 'Available Lot': '200', 'Average Price': '1500'},
-                        {'Symbol': 'SIDO', 'Available Lot': '2000', 'Average Price': '550'},
-                        {'Symbol': 'ANTM', 'Available Lot': '200', 'Average Price': '1500'}
-                    ]
-                )
+                example_df = pd.read_csv('data/porto_sample1.csv')
             else:
                 example_df = st.session_state['porto_df'].copy(deep=True)
             edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True)
@@ -226,8 +214,8 @@ st.session_state['porto_df'].dropna(inplace=True)
 df = get_company_profile_data(st.session_state['porto_df'])
 divs = get_dividend_data(st.session_state['porto_df'])
 
-df['current_lot'] = df['Available Lot'].apply(lambda x: x.replace(',', '')).astype(float)
-df['avg_price'] = df['Average Price'].apply(lambda x: x.replace(',', '')).astype(float)
+df['current_lot'] = df['Available Lot'].astype(float)
+df['avg_price'] = df['Average Price'].astype(float)
 df['total_invested'] = df['current_lot'] * df['avg_price'] * 100
 df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
 df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
