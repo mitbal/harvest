@@ -203,7 +203,12 @@ def get_company_profile_data(porto):
 @st.cache_data
 def get_dividend_data(porto):
     stock_list = [x+'.JK' for x in porto['Symbol']]
-    return hd.get_dividend_history(stock_list)
+    divs = {}
+    for stock in stock_list:
+        div_df = hd.get_dividend_history_single_stock_dag(stock)
+        div_df = div_df[div_df['dividend_type'] != 'special']
+        divs[stock] = div_df
+    return divs
 
 
 if st.session_state['porto_df'] is None:
@@ -398,8 +403,8 @@ with st.container(border=True):
         all_divs = pd.concat(div_lists).reset_index(drop=True)       
         all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['adjDividend'] * 100).astype('int')
         all_divs['Date'] = pd.to_datetime(all_divs['date']).dt.tz_localize(None)
-        all_divs['new_date'] = all_divs['date'].apply(lambda x: x + pd.Timedelta(days=14)) # payment date on average 2 weeks after ex-date
-        all_divs['month'] = all_divs['new_date'].apply(lambda x: x.month)
+        # all_divs['new_date'] = all_divs['date'].apply(lambda x: x + pd.Timedelta(days=14))
+        all_divs['month'] = all_divs['date'].apply(lambda x: x.month)
         
         month_div = all_divs.groupby('month')['total_dividend'].sum().to_frame().reset_index()
         month_div['month_name'] = month_div['month'].apply(lambda x: calendar.month_name[x])
