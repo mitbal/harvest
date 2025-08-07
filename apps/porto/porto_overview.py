@@ -404,8 +404,10 @@ with st.container(border=True):
         month_div = all_divs.groupby('month')['total_dividend'].sum().to_frame().reset_index()
         month_div['month_name'] = month_div['month'].apply(lambda x: calendar.month_name[x])
         
+        # st.write(all_divs)
         if view_type == 'Calendar':
             all_divs['date'] = all_divs['Date']
+            all_divs['date'] = all_divs['date'].apply(lambda x: x.replace(year=current_year-1))
             all_divs['symbol'] = all_divs['Symbol']
             cal = hp.plot_dividend_calendar(all_divs)
             st.altair_chart(cal)
