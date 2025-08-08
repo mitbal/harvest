@@ -150,7 +150,6 @@ with st.expander('Data Input', expanded=True):
                 if st.session_state['porto_file'] != 'EMPTY':
                     st.session_state['porto_file'].seek(0)
                     st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], sep=',', dtype='str')
-                    logger.info(f'Porto data submitted via upload csv')
 
             elif method == 'Paste Raw':
                 rows = np.array(raw.split())
@@ -165,18 +164,18 @@ with st.expander('Data Input', expanded=True):
                     'Average Price': price
                 })
                 st.session_state['porto_df'] = df
-                logger.info(f'Porto data submitted via paste raw')
 
             elif method == 'Paste CSV':
                 input_str = io.StringIO(raw)
                 df = pd.read_csv(input_str, sep=';', dtype='str')
                 st.session_state['porto_df'] = df
-                logger.info(f'Porto data submitted via paste csv')
                 
             elif method == 'Form':
                 df = edited_df.copy(deep=True)
                 st.session_state['porto_df'] = df
-                logger.info(f'Porto data submitted via form')
+
+            logger.info(f'Porto data submitted via {method}')
+            logger.info(f'target: {target}. baseline: {baseline}. porto: {st.session_state["porto_df"].to_records()}')
 
 
 api_key = os.environ['FMP_API_KEY']
