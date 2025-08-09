@@ -10,6 +10,9 @@ from openai import OpenAI
 from harvest.utils import setup_logging
 
 
+SEARCH_KEYWORD = "cari di web"  # maybe replace with "open sesame" :p
+
+
 # Set page configuration
 st.set_page_config(
     page_title='Om Jin the Financial Advisor',
@@ -45,9 +48,23 @@ def get_system_prompt():
 system_prompt = get_system_prompt()
 
 
+# # Model selection
+# model_options = {
+#     'Gemini 2.0 Flash': 'google/gemini-2.0-flash-exp:free',
+#     'Gemini 2.5 Pro': 'google/gemini-2.5-pro-exp-03-25:free'
+# }
+
+model_id_default    = 'google/gemini-2.0-flash-exp:free'
+model_id_web_search = 'openai/gpt-5-mini:online'
+
 # Helper function to call OpenRouter API
-def get_ai_response(prompt, chat_history, api_key, model):
-    
+def get_ai_response(prompt, chat_history, api_key, use_web_search=False):
+
+    # Pick model_id
+    model = model_id_default
+    if use_web_search:
+        model = model_id_web_search
+
     client = OpenAI(
         base_url='https://openrouter.ai/api/v1',
         api_key=api_key,
@@ -64,7 +81,10 @@ def get_ai_response(prompt, chat_history, api_key, model):
         "role": "system",
         "content": system_prompt
     })
-    messages[0]['content'] += '\n' + content
+
+    if not use_web_search:
+        # if use_web_search no need additional context, maybe a bit cheaper
+        messages[0]['content'] += '\n' + content
     
     for msg in chat_history:
         messages.append({
@@ -83,7 +103,7 @@ def get_ai_response(prompt, chat_history, api_key, model):
             model=model,
             messages=messages,
             extra_headers=extra_headers,
-            timeout=30
+            timeout=30,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -101,14 +121,6 @@ if "OPENROUTER_API_KEY" not in st.session_state:
     api_key = os.getenv("OPENROUTER_API_KEY")
     if api_key:
         st.session_state.OPENROUTER_API_KEY = api_key
-        
-# Model selection
-model_options = {
-    'Gemini 2.0 Flash': 'google/gemini-2.0-flash-exp:free',
-    'Gemini 2.5 Pro': 'google/gemini-2.5-pro-exp-03-25:free'
-}
-
-model_id = 'google/gemini-2.0-flash-exp:free'
 
 # Sidebar for configuration
 st.sidebar.header('Sample Questions')
@@ -164,7 +176,7 @@ if prompt := st.chat_input("Message Om Jin...") or question:
     with st.chat_message("user", avatar=avatars['user']):
         st.markdown(prompt)
         st.caption(timestamp)
-    
+
     # Get AI response
     with st.spinner(f"Om Jin is thinking..."):
         api_key = st.session_state.OPENROUTER_API_KEY
@@ -172,7 +184,7 @@ if prompt := st.chat_input("Message Om Jin...") or question:
             prompt, 
             st.session_state.messages[:-1],  # Exclude the just-added message
             api_key,
-            model_id
+            use_web_search=(SEARCH_KEYWORD in prompt.lower())
         )
         
         # Add AI response to chat history
