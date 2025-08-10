@@ -19,6 +19,8 @@ GA_SCRIPT = """
 
   gtag('config', 'GA_TAG_ID');
 </script>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5027985566203504"
+     crossorigin="anonymous"></script>
 """
 
 META_TAG = """
