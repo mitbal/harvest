@@ -110,7 +110,7 @@ with st.expander('Data Input', expanded=True):
     else:
         default_input = 1
 
-    method = st.radio('Method', ['Upload CSV', 'Form'], index=default_input, horizontal=True)
+    method = st.radio('Method', ['Upload CSV', 'Form', 'Paste Raw'], index=default_input, horizontal=True)
 
     with st.form('abc'):
 
@@ -121,7 +121,7 @@ with st.expander('Data Input', expanded=True):
                 st.session_state['porto_file'] = uploaded_file
             
         elif method == 'Paste Raw':
-            raw = st.text_area('Paste the Raw Data Here')
+            raw = st.text_area('Paste the Raw Data here from Stockbit Portfolio page')
         
         elif method == 'Form':
             if st.session_state['porto_df'] is None:
