@@ -274,7 +274,7 @@ with st.container(border=True):
 # Table List
 with st.container(border=True):
 
-    tabs = st.tabs(['Table View', 'Bar Chart View', 'Sectoral View', 'Calendar View'])
+    tabs = st.tabs(['Table View', 'Bar Chart View', 'Calendar View'])
     
     with tabs[0]:
         st.write('Current Portfolio')
@@ -335,44 +335,6 @@ with st.container(border=True):
         st.altair_chart(combined_chart)
 
     with tabs[2]:
-        sector_cols = st.columns([.7,.5,1])
-        
-        with sector_cols[0]:
-            sector_df = df.groupby('sector')['total_dividend'].sum().to_frame().sort_values('total_dividend', ascending=False).reset_index()
-            event = st.dataframe(
-                sector_df,
-                selection_mode=['single-row'],
-                on_select='rerun',
-                hide_index=True,
-                key='data',
-                column_config={
-                    'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
-                }
-            )
-
-        with sector_cols[1]:
-            if len(event.selection['rows']) > 0:
-                row_idx = event.selection['rows'][0]
-                sector_name = sector_df.loc[row_idx, 'sector']
-                st.dataframe(
-                    df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), 
-                    hide_index=True, 
-                    column_config={
-                        'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
-                    }
-                )
-            else:
-                st.info('Select one of the sector on the table on the left')
-
-        sector_pie = alt.Chart(df).mark_arc().encode(
-            theta='sum(total_dividend)',
-            color='sector'
-        ).interactive()
-
-        with sector_cols[2]:
-            st.altair_chart(sector_pie)
-
-    with tabs[3]:
 
         view_type = st.radio('Select View', ['Calendar', 'Bar Chart', 'Table'], horizontal=True)
 
@@ -515,6 +477,45 @@ with st.expander('Dividend History', expanded=True):
 
             st.write(f'Number of Positive Years (Dividend increase from the year before): {num_positive_year}')
             st.write(f'Percentage of positive years: {pct_positive_year:.02f} %')
+
+
+with st.expander('Sectoral View'):
+
+    sector_cols = st.columns([.7,.5,1])    
+    with sector_cols[0]:
+        sector_df = df.groupby('sector')['total_dividend'].sum().to_frame().sort_values('total_dividend', ascending=False).reset_index()
+        event = st.dataframe(
+            sector_df,
+            selection_mode=['single-row'],
+            on_select='rerun',
+            hide_index=True,
+            key='data',
+            column_config={
+                'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+            }
+        )
+
+    with sector_cols[1]:
+        if len(event.selection['rows']) > 0:
+            row_idx = event.selection['rows'][0]
+            sector_name = sector_df.loc[row_idx, 'sector']
+            st.dataframe(
+                df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), 
+                hide_index=True, 
+                column_config={
+                    'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                }
+            )
+        else:
+            st.info('Select one of the sector on the table on the left')
+
+    sector_pie = alt.Chart(df).mark_arc().encode(
+        theta='sum(total_dividend)',
+        color='sector'
+    ).interactive()
+
+    with sector_cols[2]:
+        st.altair_chart(sector_pie)
 
 # Project future earnings
 with st.expander('Future Projection', expanded=True):
