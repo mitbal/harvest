@@ -335,10 +335,10 @@ with st.container(border=True):
         st.altair_chart(combined_chart)
 
 
-# Detailed single stock
-with st.expander('Dividend History', expanded=True):
-    
-    if main_event.selection['rows']:
+if main_event.selection['rows']:
+    with st.expander('Dividend History', expanded=True):
+        
+
         symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
         div_df = pd.DataFrame(divs[symbol+'.JK'])
 
@@ -358,10 +358,10 @@ with st.expander('Dividend History', expanded=True):
             stats = hd.calc_div_stats(hd.preprocess_div(div_df))
 
             div_bar = hp.plot_dividend_history(div_df,
-                                               extrapolote=True,
-                                               n_future_years=5,
-                                               last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
-                                               inc_val=stats['historical_mean_flat'])
+                                                extrapolote=True,
+                                                n_future_years=5,
+                                                last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
+                                                inc_val=stats['historical_mean_flat'])
 
             st.altair_chart(div_bar)
 
