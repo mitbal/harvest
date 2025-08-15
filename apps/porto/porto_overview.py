@@ -274,7 +274,7 @@ with st.container(border=True):
 # Table List
 with st.container(border=True):
 
-    tabs = st.tabs(['Table View', 'Bar Chart View', 'Calendar View'])
+    tabs = st.tabs(['Table View', 'Bar Chart View'])
     
     with tabs[0]:
         st.write('Current Portfolio')
@@ -334,97 +334,6 @@ with st.container(border=True):
         combined_chart = (div_bar + yield_bar).resolve_scale(y='independent')
         st.altair_chart(combined_chart)
 
-    with tabs[2]:
-
-        view_type = st.radio('Select View', ['Calendar', 'Bar Chart', 'Table'], horizontal=True)
-
-        # prepare calendar data
-        div_lists = []
-        for index, row in df.iterrows():
-
-            r = row.to_dict()
-            stock = r['Symbol']+'.JK'
-            if len(divs[stock]) == 0:
-                continue
-            div_df = pd.DataFrame(divs[stock])
-            div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
-            div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
-
-            end_date = pd.Timestamp('today').to_datetime64()
-            start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
-
-            current_year = datetime.today().year
-            last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
-            last_year_div['Symbol'] = stock
-            last_year_div['Lot'] = r['current_lot']
-            last_year_div['yield'] = last_year_div['adjDividend'] / r['last_price'] * 100
-
-            div_lists += [last_year_div]
-
-        all_divs = pd.concat(div_lists).reset_index(drop=True)       
-        all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['adjDividend'] * 100).astype('int')
-        all_divs['Date'] = pd.to_datetime(all_divs['date']).dt.tz_localize(None)
-        # all_divs['new_date'] = all_divs['date'].apply(lambda x: x + pd.Timedelta(days=14))
-        all_divs['month'] = all_divs['date'].apply(lambda x: x.month)
-        
-        month_div = all_divs.groupby('month')['total_dividend'].sum().to_frame().reset_index()
-        month_div['month_name'] = month_div['month'].apply(lambda x: calendar.month_name[x])
-        
-        # st.write(all_divs)
-        if view_type == 'Calendar':
-            all_divs['date'] = all_divs['Date']
-            all_divs['date'] = all_divs['date'].apply(lambda x: x.replace(year=current_year-1))
-            all_divs['symbol'] = all_divs['Symbol']
-            cal = hp.plot_dividend_calendar(all_divs)
-            st.altair_chart(cal)
-        
-        elif view_type == 'Bar Chart':
-            bar_cols = st.columns(2)
-            bar_cols[0].dataframe(
-                month_div[['month_name', 'total_dividend']],
-                column_config={
-                    'month_name': 'Month',
-                    'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
-                },
-                hide_index=True
-            )
-
-            month_bar = alt.Chart(month_div).mark_bar().encode(
-                x=alt.X('month:N'),
-                y=alt.Y('total_dividend')
-            )
-            bar_cols[1].altair_chart(month_bar)
-        
-        else:
-            row_1 = st.container()
-            with row_1:
-                row_1_cols = st.columns(6)
-                for c, i in zip(row_1_cols, range(1, 7)):
-                    m = all_divs[all_divs['month'] == i]
-                    c.write(calendar.month_name[i])
-                    c.dataframe(
-                        m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
-                        hide_index=True,
-                        column_config={
-                            'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
-                        },
-                        height=210
-                    )
-
-            row_2 = st.container()
-            with row_2:
-                row_2_cols = st.columns(6)
-                for c, i in zip(row_2_cols, range(7, 13)):
-                    m = all_divs[all_divs['month'] == i]
-                    c.write(calendar.month_name[i])
-                    c.dataframe(
-                        m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
-                        hide_index=True,
-                        column_config={
-                            'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
-                        },
-                        height=210
-                    )
 
 # Detailed single stock
 with st.expander('Dividend History', expanded=True):
@@ -516,6 +425,99 @@ with st.expander('Sectoral View'):
 
     with sector_cols[2]:
         st.altair_chart(sector_pie)
+
+
+with st.expander('Calendar View'):
+
+    view_type = st.radio('Select View', ['Calendar', 'Bar Chart', 'Table'], horizontal=True)
+
+    # prepare calendar data
+    div_lists = []
+    for index, row in df.iterrows():
+
+        r = row.to_dict()
+        stock = r['Symbol']+'.JK'
+        if len(divs[stock]) == 0:
+            continue
+        div_df = pd.DataFrame(divs[stock])
+        div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
+        div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
+
+        end_date = pd.Timestamp('today').to_datetime64()
+        start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
+
+        current_year = datetime.today().year
+        last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
+        last_year_div['Symbol'] = stock
+        last_year_div['Lot'] = r['current_lot']
+        last_year_div['yield'] = last_year_div['adjDividend'] / r['last_price'] * 100
+
+        div_lists += [last_year_div]
+
+    all_divs = pd.concat(div_lists).reset_index(drop=True)       
+    all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['adjDividend'] * 100).astype('int')
+    all_divs['Date'] = pd.to_datetime(all_divs['date']).dt.tz_localize(None)
+    # all_divs['new_date'] = all_divs['date'].apply(lambda x: x + pd.Timedelta(days=14))
+    all_divs['month'] = all_divs['date'].apply(lambda x: x.month)
+    
+    month_div = all_divs.groupby('month')['total_dividend'].sum().to_frame().reset_index()
+    month_div['month_name'] = month_div['month'].apply(lambda x: calendar.month_name[x])
+    
+    # st.write(all_divs)
+    if view_type == 'Calendar':
+        all_divs['date'] = all_divs['Date']
+        all_divs['date'] = all_divs['date'].apply(lambda x: x.replace(year=current_year-1))
+        all_divs['symbol'] = all_divs['Symbol']
+        cal = hp.plot_dividend_calendar(all_divs)
+        st.altair_chart(cal)
+    
+    elif view_type == 'Bar Chart':
+        bar_cols = st.columns(2)
+        bar_cols[0].dataframe(
+            month_div[['month_name', 'total_dividend']],
+            column_config={
+                'month_name': 'Month',
+                'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+            },
+            hide_index=True
+        )
+
+        month_bar = alt.Chart(month_div).mark_bar().encode(
+            x=alt.X('month:N'),
+            y=alt.Y('total_dividend')
+        )
+        bar_cols[1].altair_chart(month_bar)
+    
+    else:
+        row_1 = st.container()
+        with row_1:
+            row_1_cols = st.columns(6)
+            for c, i in zip(row_1_cols, range(1, 7)):
+                m = all_divs[all_divs['month'] == i]
+                c.write(calendar.month_name[i])
+                c.dataframe(
+                    m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
+                    hide_index=True,
+                    column_config={
+                        'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                    },
+                    height=210
+                )
+
+        row_2 = st.container()
+        with row_2:
+            row_2_cols = st.columns(6)
+            for c, i in zip(row_2_cols, range(7, 13)):
+                m = all_divs[all_divs['month'] == i]
+                c.write(calendar.month_name[i])
+                c.dataframe(
+                    m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
+                    hide_index=True,
+                    column_config={
+                        'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                    },
+                    height=210
+                )
 
 # Project future earnings
 with st.expander('Future Projection', expanded=True):
