@@ -158,9 +158,11 @@ with st.expander('Data Input', expanded=data_input_expand_flag):
             elif method == 'Paste Raw':
                 rows = np.array(raw.split())
 
-                stock = rows[range(0, len(rows), 9)]
-                lot = rows[range(1, len(rows), 9)]
-                price = rows[range(3, len(rows), 9)]
+                stock = rows[range(0, len(rows), 11)]
+                lot = rows[range(1, len(rows), 11)]
+                lot = [x.replace(',', '') for x in lot]
+                price = rows[range(3, len(rows), 11)]
+                price = [p.replace(',', '') for p in price]
 
                 df = pd.DataFrame({
                     'Symbol': stock,
@@ -209,8 +211,10 @@ def get_dividend_data(porto):
     divs = {}
     for stock in stock_list:
         div_df = hd.get_dividend_history_single_stock_dag(stock)
-        div_df = div_df[div_df['dividend_type'] != 'special']
-        divs[stock] = div_df
+        if div_df is not None:
+            logger.info(f'stock {stock} do not have dividend history')
+            div_df = div_df[div_df['dividend_type'] != 'special']
+            divs[stock] = div_df
     return divs
 
 
