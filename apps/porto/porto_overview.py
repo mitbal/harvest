@@ -90,6 +90,7 @@ with st.sidebar:
 
 conn = get_db_connection()
 
+data_input_expand_flag = True
 if 'porto_df' not in st.session_state:
     if st.user.is_logged_in:
         data = get_user_portfolio(conn, st.user.email)
@@ -102,8 +103,11 @@ if 'porto_df' not in st.session_state:
             st.session_state['porto_df'] = None
     else:
         st.session_state['porto_df'] = None
+else:
+    data_input_expand_flag = False
 
-with st.expander('Data Input', expanded=True):
+
+with st.expander('Data Input', expanded=data_input_expand_flag):
 
     if os.environ == 'prod':
         default_input = 1
@@ -388,7 +392,7 @@ if main_event.selection['rows']:
             st.write(f'Percentage of positive years: {pct_positive_year:.02f} %')
 
 
-with st.expander('Sectoral View'):
+with st.expander('Sectoral View', expanded=True):
 
     sector_cols = st.columns([.7,.5,1])    
     with sector_cols[0]:
@@ -427,7 +431,7 @@ with st.expander('Sectoral View'):
         st.altair_chart(sector_pie)
 
 
-with st.expander('Calendar View'):
+with st.expander('Calendar View', expanded=True):
 
     view_type = st.radio('Select View', ['Calendar', 'Bar Chart', 'Table'], horizontal=True)
 
