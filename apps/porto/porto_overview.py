@@ -233,24 +233,6 @@ df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
 df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
 df['total_dividend'] = (df['div_rate'] * df['current_lot'] * 100).astype(int)
 
-incs = []
-years = []
-for symbol in df['Symbol']:
-
-    div = pd.DataFrame(divs[symbol+'.JK'])
-    if len(div) == 0:
-        incs += [0]
-        years += [0]
-        continue
-    div['year'] = [x.year for x in pd.to_datetime(div['date'])]
-    agg_year = div.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-    inc = agg_year['adjDividend'].shift(-1) - agg_year['adjDividend']
-    avg_annual_increase = np.mean(inc)
-    incs += [avg_annual_increase]
-    years += [len(agg_year)]
-df['numDividendYear'] = years
-df['avgAnnualDivIncrease'] = incs
-
 annual_dividend = df['total_dividend'].sum()
 total_investment = df['total_invested'].sum()
 current_investment_value = (df['current_lot'] * df['last_price'] * 100).sum()
@@ -344,56 +326,40 @@ with st.container(border=True):
 
 
 if main_event.selection['rows']:
+
+    symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
+
     with st.expander('Dividend History', expanded=True):
-        
 
-        symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
-        div_df = pd.DataFrame(divs[symbol+'.JK'])
+        if symbol+'.JK' not in divs.keys():
+            st.write(f'No dividend history available for {symbol}')
+        else:
+            div_df = pd.DataFrame(divs[symbol+'.JK'])
 
-        div_hist_cols = st.columns([3, 10, 5])
-        with div_hist_cols[0]:
-            st.dataframe(
-                div_df[['date', 'adjDividend']],
-                column_config={
-                    'date': st.column_config.DateColumn('Ex-Date'),
-                    'adjDividend': st.column_config.NumberColumn('Dividend', format='localized')
-                },
-                height=420,
-                hide_index=True
-            )
+            div_hist_cols = st.columns([3, 10, 5])
+            with div_hist_cols[0]:
+                st.dataframe(
+                    div_df[['date', 'adjDividend']],
+                    column_config={
+                        'date': st.column_config.DateColumn('Ex-Date'),
+                        'adjDividend': st.column_config.NumberColumn('Dividend', format='localized')
+                    },
+                    height=420,
+                    hide_index=True
+                )
 
-        with div_hist_cols[1]:
-            stats = hd.calc_div_stats(hd.preprocess_div(div_df))
+            with div_hist_cols[1]:
+                stats = hd.calc_div_stats(hd.preprocess_div(div_df))
 
-            div_bar = hp.plot_dividend_history(div_df,
-                                                extrapolote=True,
-                                                n_future_years=5,
-                                                last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
-                                                inc_val=stats['historical_mean_flat'])
+                div_bar = hp.plot_dividend_history(div_df,
+                                                    extrapolote=True,
+                                                    n_future_years=5,
+                                                    last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
+                                                    inc_val=stats['historical_mean_flat'])
 
-            st.altair_chart(div_bar)
+                st.altair_chart(div_bar)
 
-        with div_hist_cols[2]:
-
-            symbol_last_div = df[df['Symbol'] == symbol].iloc[0]['div_rate']
-            symbol_flat_inc = df[df['Symbol'] == symbol].iloc[0]['avgAnnualDivIncrease']
-            next_year_dividend = symbol_last_div + symbol_flat_inc
-            inc_rate = symbol_flat_inc / symbol_last_div * 100
-
-            st.markdown(f'Next Year Dividend Prediction: **:{"green"}[{next_year_dividend:.2f}]** IDR')
-            st.write(f'Percentage Increase from Last Year: {inc_rate:.2f} %')
-            
-            df_train = div_df.copy()
-            df_train['year'] = df_train['date'].apply(lambda x: int(x.split('-')[0]))
-            df_train = df_train.groupby('year')['adjDividend'].sum().to_frame().reset_index()
-            df_train['inc'] = df_train['adjDividend'].shift(-1) - df_train['adjDividend']
-            
-            num_positive_year = np.sum(df_train['inc'] > 0) + 1 # the first year is considered positive
-            num_dividend_year = df[df['Symbol'] == symbol].iloc[0]['numDividendYear']
-            pct_positive_year = num_positive_year/num_dividend_year * 100
-
-            st.write(f'Number of Positive Years (Dividend increase from the year before): {num_positive_year}')
-            st.write(f'Percentage of positive years: {pct_positive_year:.02f} %')
+            # with div_hist_cols[2]:
 
 
 with st.expander('Sectoral View', expanded=True):
