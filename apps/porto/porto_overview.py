@@ -212,9 +212,10 @@ def get_dividend_data(porto):
     for stock in stock_list:
         div_df = hd.get_dividend_history_single_stock_dag(stock)
         if div_df is not None:
-            logger.info(f'stock {stock} do not have dividend history')
             div_df = div_df[div_df['dividend_type'] != 'special']
             divs[stock] = div_df
+        else:
+            logger.info(f'stock {stock} do not have dividend history')
     return divs
 
 
