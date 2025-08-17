@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import logging
 import calendar
 
@@ -42,8 +43,6 @@ div_cal_key = f'div_cal_{exch}'
 div_score_key = f'div_score_{exch}'
 
 url = os.environ['REDIS_URL']
-r = redis.from_url(url)
-
 
 #### Function definition
 
@@ -55,16 +54,28 @@ def get_logger(name, level=logging.INFO):
     return logger
 
 logger = get_logger('calendar')
+logger.info('opening the calendar page')
+
+
+@st.cache_resource
+def connect_redis(redis_url):
+    r = redis.from_url(redis_url)
+    return r
+
+r = redis.from_url(url)
 
 
 @st.cache_data(ttl=60*60, show_spinner='Downloading dividend data')
 def get_data_from_redis(key):
+
+    start = time.time()
     j = r.get(key)
+    end = time.time()
 
     rjson = json.loads(j)
     last_updated = rjson['date']
     
-    logger.info(f'download data from redis: {key}, last updated: {last_updated}')
+    logger.info(f'get redis key: {key}, total time: {end-start} seconds, last updated: {last_updated}')
 
     content = rjson['content']
     return pd.DataFrame(json.loads(content))
