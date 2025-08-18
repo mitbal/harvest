@@ -412,8 +412,9 @@ with st.expander('Calendar View', expanded=True):
 
         r = row.to_dict()
         stock = r['Symbol']+'.JK'
-        if len(divs[stock]) == 0:
+        if stock not in divs.keys():
             continue
+        
         div_df = pd.DataFrame(divs[stock])
         div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
         div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
