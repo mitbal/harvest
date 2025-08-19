@@ -75,7 +75,7 @@ def get_data_from_redis(key):
     rjson = json.loads(j)
     last_updated = rjson['date']
     
-    logger.info(f'get redis key: {key}, total time: {end-start} seconds, last updated: {last_updated}')
+    logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds, last updated: {last_updated}')
 
     content = rjson['content']
     return pd.DataFrame(json.loads(content))
