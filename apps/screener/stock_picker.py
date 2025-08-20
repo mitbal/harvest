@@ -34,6 +34,7 @@ redis_url = os.environ['REDIS_URL']
 def get_logger(name, level=logging.INFO):
 
     logger = setup_logging(name, level)
+    logger.info('a new user is opening the stock picker page')
     return logger
 
 
