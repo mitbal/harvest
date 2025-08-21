@@ -51,10 +51,10 @@ url = os.environ['REDIS_URL']
 def get_logger(name, level=logging.INFO):
 
     logger = setup_logging(name, level)
+    logger.info('a new user is opening the calendar page')
     return logger
 
 logger = get_logger('calendar')
-logger.info('opening the calendar page')
 
 
 @st.cache_resource
