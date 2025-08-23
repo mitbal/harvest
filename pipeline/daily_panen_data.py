@@ -92,7 +92,10 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
     cp_df = hd.get_company_profile(stock_list)
     stock_dividend_list = cp_df[(cp_df['lastDiv'] != 0)].index.to_list()
 
-    dividends = download_dividends(stock_dividend_list)
+    if exch == 'jkse':
+        dividends = download_dividends(stock_dividend_list)
+    elif exch == 'sp500':
+        dividends = download_us_dividends(stock_dividend_list)
     financials = download_financials(stock_dividend_list)
     # prices = download_prices(stock_dividend_list)
 
@@ -122,6 +125,12 @@ def download_financials(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURREN
 def download_dividends(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
     """Download dividend data in parallel using ThreadPoolExecutor."""
     return _download_data(stock_list, download_single_dividend, "dividend", max_concurrency)
+
+
+@flow
+def download_us_dividends(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
+    """Download dividend data in parallel using ThreadPoolExecutor."""
+    return _download_data(stock_list, download_single_us_dividend, "dividend", max_concurrency)
 
 
 @flow
@@ -185,6 +194,18 @@ def download_single_dividend(stock: str):
     print(f'download dividend history for {stock}')
     try:
         div = hd.get_dividend_history_single_stock(stock, source='dag')
+        return div
+    except Exception as e:
+        print(f'Error downloading dividend history for {stock}: {e}')
+        raise e
+
+
+@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
+def download_single_us_dividend(stock: str):
+    """Downloads dividend history for a single stock."""
+    print(f'download dividend history for {stock}')
+    try:
+        div = hd.get_dividend_history_single_stock(stock, source='fmp')
         return div
     except Exception as e:
         print(f'Error downloading dividend history for {stock}: {e}')
