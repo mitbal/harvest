@@ -261,12 +261,15 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             df.loc[symbol, 'medianProfitMargin'] = fin_stats['median_profit_margin']
             
             div_df = div_dict[symbol]
-            agg_year = div_df[div_df['dividend_type'] != 'special'].groupby('fiscal_year')['adjDividend'].sum().to_frame()
-            final_year = div_df[div_df['dividend_type'] == 'final']['fiscal_year'].to_list()[0]
-            last_div = agg_year.loc[final_year, 'adjDividend']
-
             div_df = hd.preprocess_div(div_df)
             div_stats = hd.calc_div_stats(div_df)
+
+            if sl == 'jkse':
+                agg_year = div_df[div_df['dividend_type'] != 'special'].groupby('fiscal_year')['adjDividend'].sum().to_frame()
+                final_year = div_df[div_df['dividend_type'] == 'final']['fiscal_year'].to_list()[0]
+                last_div = agg_year.loc[final_year, 'adjDividend']
+            elif sl == 'sp500':
+                last_div = cp_df.loc[symbol, 'lastDiv']
             
             div_incs = np.array([div_stats['historical_mean_flat'],
                                 div_stats['div_inc_5y_mean_flat']])
