@@ -260,6 +260,8 @@ select_stock = st.text_input(
 
 if select_stock:
     stock_name = select_stock.upper()
+    if sl == 'JKSE' and '.JK' not in stock_name:
+        stock_name += '.JK'
 else:
     st.stop()
 
