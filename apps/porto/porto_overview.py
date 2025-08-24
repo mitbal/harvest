@@ -222,7 +222,6 @@ def get_dividend_data(porto):
 if st.session_state['porto_df'] is None:
     st.stop()
 
-
 st.session_state['porto_df'].dropna(inplace=True)
 df = get_company_profile_data(st.session_state['porto_df'])
 divs = get_dividend_data(st.session_state['porto_df'])
@@ -414,7 +413,7 @@ with st.expander('Calendar View', expanded=True):
         stock = r['Symbol']+'.JK'
         if stock not in divs.keys():
             continue
-        
+
         div_df = pd.DataFrame(divs[stock])
         div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
         div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
@@ -508,7 +507,10 @@ with st.expander('Future Projection', expanded=True):
 
     df_future = pd.DataFrame({'years': [f'Year {i+1:2d}' for i in range(number_of_year)], 'returns': futures})
     df_future['achieved'] = df_future['returns'] > (target*1_000_000)
-    future_chart = alt.Chart(df_future).mark_bar().encode(
+    df_future['yield'] = df_future['returns'] / total_investment * 100
+    
+    base_chart = alt.Chart(df_future)
+    return_chart = base_chart.mark_bar().encode(
         x=alt.X('years'),
         y=alt.Y('returns'),
         color=alt.condition(alt.datum['achieved'], alt.value('#008631'), alt.value('#87CEFA')),
@@ -516,6 +518,15 @@ with st.expander('Future Projection', expanded=True):
     ).properties(
         width=1000
     )
+
+    yield_chart = base_chart.mark_line(point=True).encode(
+        x=alt.X('years'),
+        y=alt.Y('yield'),
+        color=alt.value("#FF0000"),
+        size=alt.value(3)
+    )
+
+    future_chart = (return_chart + yield_chart).resolve_scale(y='independent')
     st.altair_chart(future_chart)
 
 
