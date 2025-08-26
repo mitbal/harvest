@@ -426,6 +426,50 @@ def prep_div_cal(div_dict, cp, year=2025):
     return div_df
 
 
+def prep_treemap(df, size_attribute='mktCap', color_attribute='yield'):
+
+    sector_df = df.groupby('sector')['mktCap'].sum().to_frame()
+    industry_df = df.groupby('industry')['mktCap'].sum().to_frame()
+
+    map_sec_ind = df.groupby('sector')['industry'].apply(list).to_frame()
+    map_ind_stock = df.reset_index().groupby('industry')['stock'].apply(list).to_frame()
+
+    tree_data = []
+    sectors = sector_df.index.to_list()
+    for sector in sectors:
+        print('sector', sector)
+
+        children = []
+        industries = set(map_sec_ind.loc[sector, 'industry'])
+        for industry in industries:
+            print('industry', industry)
+            gc = []
+            stocks = set(map_ind_stock.loc[industry, 'stock'])
+            for stock in stocks:
+                print('stock', stock)
+                gc += [{
+                    'value': df.loc[stock, 'mktCap'] / 1000_000,
+                    'name': stock,
+                    'path': sector+'/'+industry+'/'+stock
+                }]
+
+            children += [{
+                'value': industry_df.loc[industry, 'mktCap'] / 1000_000,
+                'name': industry,
+                'path': sector+'/'+industry,
+                'children': gc
+            }]
+            
+        tree_data += [{
+            'value': sector_df.loc[sector, 'mktCap'] / 1000_000,
+            'name': sector,
+            'path': sector,
+            'children': children
+        }]
+
+    return tree_data
+
+
 def simulate_simple_compounding(initial_value, num_year, avg_yield):
     
     investments = [initial_value]
