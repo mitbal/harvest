@@ -5,6 +5,7 @@ import lesley
 import numpy as np
 import pandas as pd
 import altair as alt
+from streamlit_echarts5 import JsCode
 
 
 def format_currency():
@@ -329,3 +330,37 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
             column = column & c
         full_chart = full_chart | column
     return full_chart
+
+
+def plot_treemap(tree_data):
+    option = {
+        "title": {"text": "Market Cap", "left": "center"},
+        "tooltip": {
+            "formatter": JsCode(
+                "function(info){var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){treePath.push(treePathInfo[i].name)}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','value: '+ value +''].join('')};"
+            ).js_code,
+    },
+    "series": [
+        {
+            "name": "ALL",
+            "type": "treemap",
+            "visibleMin": 300,
+            "label": {"show": True, "formatter": "{b}"},
+            'upperLabel': {
+            "show": True,
+            },
+            "itemStyle": {"borderColor": "#fff"},
+            "levels": [
+                {"itemStyle": {"borderWidth": 0, "gapWidth": 5}},
+                {"itemStyle": {"gapWidth": 1}},
+                {
+                    "colorSaturation": [0.35, 0.5],
+                    "itemStyle": {"gapWidth": 1, "borderColorSaturation": 0.6},
+                },
+            ],
+            "data": tree_data,
+        }
+    ],
+    }
+
+    return option
