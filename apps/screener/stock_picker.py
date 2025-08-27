@@ -9,6 +9,7 @@ import redis
 import altair as alt
 import pandas as pd
 import streamlit as st
+from streamlit_echarts5 import st_echarts
 from datetime import date, datetime, timedelta
 
 import harvest.plot as hp
@@ -150,8 +151,12 @@ with full_table_section:
                             & (final_df['numDividendYear'] > minimum_year)
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
 
-    tabs = st.tabs(['Table View'])
-    with tabs[0]:
+    view = st.segmented_control(label='View Option', 
+                         options=['Table', 'Treemap'],
+                         selection_mode='single',
+                         default='Table')
+
+    if view == 'Table':
 
         cfig={
             'stock': st.column_config.TextColumn(
@@ -244,7 +249,12 @@ with full_table_section:
 
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
-if len(event.selection['rows']) > 0:
+    elif view == 'Treemap':
+        tree_data = hd.prep_treemap(filtered_df)
+        option = hp.plot_treemap(tree_data)
+        st_echarts(option, height='600px', width='1200px')
+
+if view == 'Table' and len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
