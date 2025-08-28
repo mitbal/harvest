@@ -444,20 +444,20 @@ def prep_treemap(df, size_var='mktCap', color_var=None):
             stocks = set(map_ind_stock.loc[industry, 'stock'])
             for stock in stocks:
                 gc += [{
-                    'value': df.loc[stock, 'mktCap'] / 1000_000,
+                    'value': df.loc[stock, size_var],
                     'name': stock,
                     'path': sector+'/'+industry+'/'+stock
                 }]
 
             children += [{
-                'value': industry_df.loc[industry, 'mktCap'] / 1000_000,
+                'value': industry_df.loc[industry, size_var],
                 'name': industry,
                 'path': sector+'/'+industry,
                 'children': gc
             }]
             
         tree_data += [{
-            'value': sector_df.loc[sector, 'mktCap'] / 1000_000,
+            'value': sector_df.loc[sector, size_var],
             'name': sector,
             'path': sector,
             'children': children

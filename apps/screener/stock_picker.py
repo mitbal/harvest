@@ -252,7 +252,10 @@ with full_table_section:
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
     elif view == 'Treemap':
-        tree_data = hd.prep_treemap(filtered_df)
+
+        df_tree = filtered_df[['sector', 'industry', 'yield']]
+        df_tree['Market Cap'] = filtered_df['mktCap'] / 1_000_000
+        tree_data = hd.prep_treemap(df_tree, size_var='Market Cap')
         option = hp.plot_treemap(tree_data)
         st_echarts(option, height='600px', width='1200px')
     
