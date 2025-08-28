@@ -6,8 +6,10 @@ import logging
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import redis
+import numpy as np
 import altair as alt
 import pandas as pd
+import seaborn as sns
 import streamlit as st
 from streamlit_echarts5 import st_echarts
 from datetime import date, datetime, timedelta
@@ -152,7 +154,7 @@ with full_table_section:
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
 
     view = st.segmented_control(label='View Option', 
-                         options=['Table', 'Treemap'],
+                         options=['Table', 'Treemap', 'Scatter Plot'],
                          selection_mode='single',
                          default='Table')
 
@@ -253,6 +255,19 @@ with full_table_section:
         tree_data = hd.prep_treemap(filtered_df)
         option = hp.plot_treemap(tree_data)
         st_echarts(option, height='600px', width='1200px')
+    
+    elif view == 'Scatter Plot':
+
+        sp = alt.Chart(filtered_df.reset_index()).mark_circle().encode(
+            y='yield',
+            x='revenueGrowth',
+            color='sector',
+            tooltip=[
+                'stock', 'yield', 'revenueGrowth'
+            ]
+        ).interactive()
+        st.altair_chart(sp)
+
 
 if view == 'Table' and len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
