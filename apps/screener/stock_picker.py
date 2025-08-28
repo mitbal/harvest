@@ -154,7 +154,7 @@ with full_table_section:
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
 
     view = st.segmented_control(label='View Option', 
-                         options=['Table', 'Treemap', 'Scatter Plot'],
+                         options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
                          selection_mode='single',
                          default='Table')
 
@@ -267,6 +267,17 @@ with full_table_section:
             ]
         ).interactive()
         st.altair_chart(sp)
+
+    elif view == 'Distribution':
+
+        dist = alt.Chart(filtered_df).mark_bar(
+            opacity=0.3,
+            binSpacing=0
+        ).encode(
+            x=alt.X('yield').bin(maxbins=100),
+            y=alt.Y('count()').stack(None),
+        )
+        st.altair_chart(dist)
 
 
 if view == 'Table' and len(event.selection['rows']) > 0:
