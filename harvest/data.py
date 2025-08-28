@@ -426,10 +426,10 @@ def prep_div_cal(div_dict, cp, year=2025):
     return div_df
 
 
-def prep_treemap(df, size_attribute='mktCap', color_attribute='yield'):
+def prep_treemap(df, size_var='mktCap', color_var=None):
 
-    sector_df = df.groupby('sector')['mktCap'].sum().to_frame()
-    industry_df = df.groupby('industry')['mktCap'].sum().to_frame()
+    sector_df = df.groupby('sector')[size_var].sum().to_frame()
+    industry_df = df.groupby('industry')[size_var].sum().to_frame()
 
     map_sec_ind = df.groupby('sector')['industry'].apply(list).to_frame()
     map_ind_stock = df.reset_index().groupby('industry')['stock'].apply(list).to_frame()
