@@ -253,10 +253,11 @@ with full_table_section:
 
     elif view == 'Treemap':
 
-        df_tree = filtered_df[['sector', 'industry', 'yield']]
+        size_var = 'yield'
+        df_tree = filtered_df[['sector', 'industry', 'yield', 'revenueGrowth']]
         df_tree['Market Cap'] = filtered_df['mktCap'] / 1_000_000
-        tree_data = hd.prep_treemap(df_tree, size_var='Market Cap')
-        option = hp.plot_treemap(tree_data)
+        tree_data = hd.prep_treemap(df_tree, size_var=size_var)
+        option = hp.plot_treemap(tree_data, title=f'Biggest stock in each sector based on {size_var}')
         st_echarts(option, height='600px', width='1200px')
     
     elif view == 'Scatter Plot':

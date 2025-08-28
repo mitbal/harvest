@@ -332,9 +332,10 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     return full_chart
 
 
-def plot_treemap(tree_data):
+def plot_treemap(tree_data, title='Market Cap'):
+    
     option = {
-        "title": {"text": "Market Cap", "left": "center"},
+        "title": {"text": title, "left": "center"},
         "tooltip": {
             "formatter": JsCode(
                 "function(info){var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){treePath.push(treePathInfo[i].name)}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','value: '+ value +''].join('')};"
