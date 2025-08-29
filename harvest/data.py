@@ -428,8 +428,19 @@ def prep_div_cal(div_dict, cp, year=2025):
 
 def prep_treemap(df, size_var='mktCap', color_var=None):
 
-    sector_df = df.groupby('sector')[size_var].sum().to_frame()
-    industry_df = df.groupby('industry')[size_var].sum().to_frame()
+    if color_var is not None:
+        yields = df[color_var]
+        threshold = np.percentile(yields, [25, 50, 75])
+        df['color_grad'] = pd.cut(df[color_var],
+                                        bins=[0, threshold[0], threshold[1], threshold[2], float('inf')],
+                                        labels=[0, 33, 66, 100]).astype(int)
+
+        sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
+        industry_df = df.groupby('industry')[[size_var, 'color_grad']].sum()
+    
+    else:
+        sector_df = df.groupby('sector')[size_var].sum().to_frame()
+        industry_df = df.groupby('industry')[size_var].sum().to_frame()
 
     map_sec_ind = df.groupby('sector')['industry'].apply(list).to_frame()
     map_ind_stock = df.reset_index().groupby('industry')['stock'].apply(list).to_frame()
@@ -443,21 +454,35 @@ def prep_treemap(df, size_var='mktCap', color_var=None):
             gc = []
             stocks = set(map_ind_stock.loc[industry, 'stock'])
             for stock in stocks:
+
+                value = [df.loc[stock, size_var]]
+                if color_var is not None:
+                    value += [int(df.loc[stock, 'color_grad'])]
+
+                path = sector+'/'+industry+'/'+stock
                 gc += [{
-                    'value': df.loc[stock, size_var],
+                    'value': value,
                     'name': stock,
-                    'path': sector+'/'+industry+'/'+stock
+                    'path': path
                 }]
 
+            value = [industry_df.loc[industry, size_var]]
+            if color_var is not None:
+                value += [int(industry_df.loc[industry, 'color_grad'])]
+
+            path = sector+'/'+industry
             children += [{
-                'value': industry_df.loc[industry, size_var],
+                'value': value,
                 'name': industry,
-                'path': sector+'/'+industry,
+                'path': path,
                 'children': gc
             }]
-            
+        
+        value = [sector_df.loc[sector, size_var]]
+        if color_var is not None:
+            value += [int(sector_df.loc[sector, 'color_grad'])]
         tree_data += [{
-            'value': sector_df.loc[sector, size_var],
+            'value': value,
             'name': sector,
             'path': sector,
             'children': children
