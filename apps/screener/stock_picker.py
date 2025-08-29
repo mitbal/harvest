@@ -252,11 +252,16 @@ with full_table_section:
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
     elif view == 'Treemap':
+        
+        treemap_cols = st.columns([1,1,3])
+        size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Dividend Yield'], label='Select Size Variable')
 
-        size_var = 'yield'
-        df_tree = filtered_df[['sector', 'industry', 'yield', 'revenueGrowth']]
-        df_tree['Market Cap'] = filtered_df['mktCap'] / 1_000_000
-        tree_data = hd.prep_treemap(df_tree, size_var=size_var)
+        color_var = 'yield'
+        df_tree = filtered_df[['sector', 'industry', 'yield', 'mktCap', 'revenueGrowth']]
+        df_tree['Market Cap'] = df_tree['mktCap'] / 1_000_000_000
+        df_tree['Dividend Yield'] = df_tree['yield']
+
+        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var)
         option = hp.plot_treemap(tree_data, title=f'Biggest stock in each sector based on {size_var}')
         st_echarts(option, height='600px', width='1200px')
     
