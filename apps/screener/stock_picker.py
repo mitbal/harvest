@@ -255,12 +255,17 @@ with full_table_section:
         
         treemap_cols = st.columns([1,1,3])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Dividend Yield'], label='Select Size Variable')
+        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth'], label='Select Color Variable', index=1)
 
-        color_var = 'yield'
-        df_tree = filtered_df[['sector', 'industry', 'yield', 'mktCap', 'revenueGrowth']]
-        df_tree['Market Cap'] = df_tree['mktCap'] / 1_000_000_000
-        df_tree['Dividend Yield'] = df_tree['yield']
+        df_tree = filtered_df[['sector', 'industry']]
+        df_tree['Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
+        df_tree['Dividend Yield'] = filtered_df['yield']
+        df_tree['Profit Margin'] = filtered_df['medianProfitMargin']
+        df_tree['Revenue Growth'] = filtered_df['revenueGrowth']
+        df_tree = df_tree.dropna()
 
+        if color_var == 'None':
+            color_var = None
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var)
         option = hp.plot_treemap(tree_data, title=f'Biggest stock in each sector based on {size_var}')
         st_echarts(option, height='600px', width='1200px')

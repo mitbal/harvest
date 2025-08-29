@@ -337,10 +337,8 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
     red_green = ['#942e38', '#aaa', '#269f3c']
     green_shade = ["#79ab78", "#08701b"]
 
-    if show_gradient and gradient_type == 'positive_only':
-        colormap = green_shade
-    else:
-        colormap = red_green
+    # if show_gradient:
+    colormap = green_shade
 
     option = {
         "title": {"text": title, "left": "center"},

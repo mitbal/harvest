@@ -432,8 +432,8 @@ def prep_treemap(df, size_var='mktCap', color_var=None):
         yields = df[color_var]
         threshold = np.percentile(yields, [25, 50, 75])
         df['color_grad'] = pd.cut(df[color_var],
-                                        bins=[0, threshold[0], threshold[1], threshold[2], float('inf')],
-                                        labels=[0, 33, 66, 100]).astype(int)
+                                        bins=[-float('inf'), threshold[0], threshold[1], threshold[2], float('inf')],
+                                        labels=[0, 33, 66, 100]).astype(float)
 
         sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
         industry_df = df.groupby('industry')[[size_var, 'color_grad']].sum()
