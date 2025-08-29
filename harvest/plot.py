@@ -332,7 +332,7 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     return full_chart
 
 
-def plot_treemap(tree_data, title='Market Cap'):
+def plot_treemap(tree_data, title='Market Cap', show_gradient=False):
     
     option = {
         "title": {"text": title, "left": "center"},
@@ -342,26 +342,87 @@ def plot_treemap(tree_data, title='Market Cap'):
             ).js_code,
     },
     "series": [
-        {
-            "name": "ALL",
-            "type": "treemap",
-            "visibleMin": 300,
-            "label": {"show": True, "formatter": "{b}"},
-            'upperLabel': {
+    {
+        "name": "ALL",
+        "type": "treemap",
+        "visibleMin": 300,
+        "label": {
+            "show": True, 
+            "formatter": "{b}",
+            "position": "inside",
+            "verticalAlign": "middle",
+            "align": "center"
+        },
+        'visualMin': 0,
+        'visualMax': 100,
+        'visualDimension': 1,
+        'colorMappingBy': 'value',  # Move this to series level
+        'color': ['#942e38', '#aaa', '#269f3c'],  # Move color palette to series level
+        'upperLabel': {
             "show": True,
-            },
-            "itemStyle": {"borderColor": "#fff"},
-            "levels": [
-                {"itemStyle": {"borderWidth": 0, "gapWidth": 5}},
-                {"itemStyle": {"gapWidth": 1}},
-                {
-                    "colorSaturation": [0.35, 0.5],
-                    "itemStyle": {"gapWidth": 1, "borderColorSaturation": 0.6},
+            "formatter": "{b}",
+            "color": "#000",
+            "fontWeight": "bold",
+            "fontSize": 14
+        },
+        # Global itemStyle settings
+        "itemStyle": {
+            "borderColor": "#fff",
+            "borderWidth": 1,
+            "gapWidth": 2
+        },
+        "levels": [
+            # Level 0 - Root level (parent containers only)
+            {
+                "itemStyle": {
+                    "borderWidth": 3,
+                    "gapWidth": 4,
+                    "borderColor": "#333"
                 },
-            ],
-            "data": tree_data,
-        }
-    ],
+                "label": {
+                    "show": True,
+                    "color": "#000",
+                    "fontWeight": "bold",
+                    "fontSize": 16
+                }
+                # No color override - let visualDimension handle colors
+            },
+            # Level 1 - Category level
+            {
+                "itemStyle": {
+                    "borderWidth": 2, 
+                    "gapWidth": 2,
+                    "borderColor": "#666"
+                },
+                "label": {
+                    "show": True,
+                    "color": "#000",
+                    "fontWeight": "600",
+                    "fontSize": 12
+                }
+                # No color override - preserve data-driven colors
+            },
+            # Level 2 - Subcategories
+            {
+                "itemStyle": {
+                    "gapWidth": 1,
+                    "borderWidth": 1,
+                    "borderColor": "#999"
+                }
+            },
+            # Level 3 - Individual items (leaf nodes)
+            {
+                "colorSaturation": [0.35, 0.5],
+                "itemStyle": {
+                    "gapWidth": 0,
+                    "borderWidth": 0.5,
+                    "borderColor": "#ccc",
+                    "borderColorSaturation": 0.6
+                }
+            }
+        ],
+        "data": tree_data,
+    }]
     }
 
     return option
