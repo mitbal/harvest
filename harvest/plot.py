@@ -332,8 +332,16 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     return full_chart
 
 
-def plot_treemap(tree_data, title='Market Cap', show_gradient=False):
+def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_type='positive_only'):
     
+    red_green = ['#942e38', '#aaa', '#269f3c']
+    green_shade = ["#79ab78", "#08701b"]
+
+    if show_gradient and gradient_type == 'positive_only':
+        colormap = green_shade
+    else:
+        colormap = red_green
+
     option = {
         "title": {"text": title, "left": "center"},
         "tooltip": {
@@ -357,7 +365,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False):
         'visualMax': 100,
         'visualDimension': 1,
         'colorMappingBy': 'value',  # Move this to series level
-        'color': ['#942e38', '#aaa', '#269f3c'],  # Move color palette to series level
+        'color': colormap,  # Move color palette to series level
         'upperLabel': {
             "show": True,
             "formatter": "{b}",
