@@ -347,12 +347,8 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient
         "name": "ALL",
         "type": "treemap",
         "visibleMin": 200,
-        # 'grid': {
-        #     'left': '10%',
-        #     'right': '10%',
-        #     'top': 0,
-        #     'bottom': 0
-        # },
+        "width": "95%",
+        "height": "90%",
         "label": {
             "show": True,
             "formatter": "{b}",
@@ -446,7 +442,7 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient
         "data": tree_data
     }
     ]
-    
+
     import copy
     gradient_series = copy.deepcopy(base_series)
     gradient_series[0]['visualMin'] = 0
@@ -462,6 +458,12 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient
 
     option = {
         "title": {"text": title, "left": "center"},
+        'grid': {
+            'left': '10%',
+            'right': '10%',
+            'top': 0,
+            'bottom': 0
+        },
         "tooltip": {
             "formatter": JsCode(
                 f"function(info){{var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){{treePath.push(treePathInfo[i].name)}}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','{size_var}: '+ value[0] +''].join('')}};"
