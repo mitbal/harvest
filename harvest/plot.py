@@ -340,14 +340,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
     # if show_gradient:
     colormap = green_shade
 
-    option = {
-        "title": {"text": title, "left": "center"},
-        "tooltip": {
-            "formatter": JsCode(
-                "function(info){var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){treePath.push(treePathInfo[i].name)}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','value: '+ value +''].join('')};"
-            ).js_code,
-    },
-    "series": [
+    gradient_series = [
     {
         "name": "ALL",
         "type": "treemap",
@@ -367,7 +360,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
         'upperLabel': {
             "show": True,
             "formatter": "{b}",
-            "color": "#000",
+            "color": "#111",
             "fontWeight": "bold",
             "fontSize": 14
         },
@@ -383,11 +376,11 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
                 "itemStyle": {
                     "borderWidth": 3,
                     "gapWidth": 4,
-                    "borderColor": "#333"
+                    "borderColor": "#eee"
                 },
                 "label": {
                     "show": True,
-                    "color": "#000",
+                    "color": "#ccc",
                     "fontWeight": "bold",
                     "fontSize": 16
                 }
@@ -398,7 +391,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
                 "itemStyle": {
                     "borderWidth": 2, 
                     "gapWidth": 2,
-                    "borderColor": "#666"
+                    "borderColor": "#ddd"
                 },
                 "label": {
                     "show": True,
@@ -413,7 +406,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
                 "itemStyle": {
                     "gapWidth": 1,
                     "borderWidth": 1,
-                    "borderColor": "#999"
+                    "borderColor": "#ccc"
                 }
             },
             # Level 3 - Individual items (leaf nodes)
@@ -429,6 +422,119 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
         ],
         "data": tree_data,
     }]
+
+    flat_series = [
+    {
+        "name": "ALL",
+        "type": "treemap",
+        "visibleMin": 200,
+        "label": {
+            "show": True,
+            "formatter": "{b}",
+            "position": "inside",
+            "verticalAlign": "middle",
+            "align": "center",
+            "fontSize": 11,
+            "overflow": "truncate"
+        },
+        "upperLabel": {
+            "show": True,
+            "formatter": "{b}",
+            "color": "#111",
+            "fontSize": 14,
+            "fontWeight": "bold"
+        },
+        "itemStyle": {
+            "borderColor": "#fff",
+            "borderWidth": 1,
+            "gapWidth": 2
+        },
+        "levels": [
+            # Level 0 → Root (sector containers)
+            {
+                "itemStyle": {
+                    "borderWidth": 3,
+                    "gapWidth": 4,
+                    "borderColor": "#eee"
+                },
+                "upperLabel": {
+                    "show": True,
+                    "color": "#111",
+                    "fontWeight": "bold",
+                    "fontSize": 14
+                },
+                "label": {"show": False}
+            },
+            # Level 1 → Subsector containers
+            {
+                "itemStyle": {
+                    "borderWidth": 2,
+                    "gapWidth": 2,
+                    "borderColor": "#ddd"
+                },
+                "upperLabel": {
+                    "show": True,         # ✅ make subsectors visible
+                    "color": "#333",
+                    "fontWeight": "600",
+                    "fontSize": 12
+                },
+                "label": {"show": False} # hide stock labels at this level
+            },
+            # level 2 -> sector
+            {
+                "itemStyle": {
+                    "gapWidth": 1,
+                    "borderWidth": 1,
+                    "borderColor": "#ccc"
+                },
+                "upperLabel": {
+                    "show": True,         # ✅ make subsectors visible
+                    "color": "#333",
+                    "fontWeight": "600",
+                    "fontSize": 10
+                },
+                # "label": {
+                #     "show": True,
+                #     "color": "#000",
+                #     "fontWeight": "600",
+                #     "fontSize": 10
+                # }
+            },
+            # Level 3 → Individual stocks
+            {
+                "itemStyle": {
+                    "borderWidth": 1,
+                    "gapWidth": 1,
+                    "borderColor": "#ccc"
+                },
+                "label": {
+                    "show": True,
+                    "color": "#fff",
+                    "fontSize": 12,
+                    'fontWeight': 'bold',
+                    "overflow": "truncate"
+                },
+                "upperLabel": {"show": False}
+            }
+        ],
+        "colorMappingBy": "index",
+        "data": tree_data
+    }
+]
+
+    if show_gradient:
+        series = gradient_series
+    else:
+        series = flat_series
+
+    option = {
+        "title": {"text": title, "left": "center"},
+        "tooltip": {
+            "formatter": JsCode(
+                "function(info){var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){treePath.push(treePathInfo[i].name)}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','value: '+ value +''].join('')};"
+            ).js_code,
+    },
+        "series": series,
     }
 
     return option

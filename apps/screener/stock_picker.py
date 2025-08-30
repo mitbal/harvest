@@ -266,8 +266,12 @@ with full_table_section:
 
         if color_var == 'None':
             color_var = None
+            show_gradient = False
+        else:
+            show_gradient = True
+
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var)
-        option = hp.plot_treemap(tree_data, title=f'Biggest stock in each sector based on {size_var}')
+        option = hp.plot_treemap(tree_data, title=f'Biggest stock in each sector based on {size_var}', show_gradient=show_gradient)
         st_echarts(option, height='600px', width='1200px')
     
     elif view == 'Scatter Plot':
