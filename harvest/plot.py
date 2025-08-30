@@ -342,94 +342,17 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient
     # if show_gradient:
     colormap = green_shade
 
-    gradient_series = [
-    {
-        "name": "ALL",
-        "type": "treemap",
-        "visibleMin": 300,
-        "label": {
-            "show": True, 
-            "formatter": "{b}",
-            "position": "inside",
-            "verticalAlign": "middle",
-            "align": "center"
-        },
-        'visualMin': 0,
-        'visualMax': 100,
-        'visualDimension': 2,
-        'colorMappingBy': 'value',  # Move this to series level
-        'color': colormap,  # Move color palette to series level
-        'upperLabel': {
-            "show": True,
-            "formatter": "{b}",
-            "color": "#111",
-            "fontWeight": "bold",
-            "fontSize": 14
-        },
-        # Global itemStyle settings
-        "itemStyle": {
-            "borderColor": "#fff",
-            "borderWidth": 1,
-            "gapWidth": 2
-        },
-        "levels": [
-            # Level 0 - Root level (parent containers only)
-            {
-                "itemStyle": {
-                    "borderWidth": 3,
-                    "gapWidth": 4,
-                    "borderColor": "#eee"
-                },
-                "label": {
-                    "show": True,
-                    "color": "#ccc",
-                    "fontWeight": "bold",
-                    "fontSize": 16
-                }
-                # No color override - let visualDimension handle colors
-            },
-            # Level 1 - Category level
-            {
-                "itemStyle": {
-                    "borderWidth": 2, 
-                    "gapWidth": 2,
-                    "borderColor": "#ddd"
-                },
-                "label": {
-                    "show": True,
-                    "color": "#000",
-                    "fontWeight": "600",
-                    "fontSize": 12
-                }
-                # No color override - preserve data-driven colors
-            },
-            # Level 2 - Subcategories
-            {
-                "itemStyle": {
-                    "gapWidth": 1,
-                    "borderWidth": 1,
-                    "borderColor": "#ccc"
-                }
-            },
-            # Level 3 - Individual items (leaf nodes)
-            {
-                "colorSaturation": [0.35, 0.5],
-                "itemStyle": {
-                    "gapWidth": 0,
-                    "borderWidth": 0.5,
-                    "borderColor": "#ccc",
-                    "borderColorSaturation": 0.6
-                }
-            }
-        ],
-        "data": tree_data,
-    }]
-
-    flat_series = [
+    base_series = [
     {
         "name": "ALL",
         "type": "treemap",
         "visibleMin": 200,
+        # 'grid': {
+        #     'left': '10%',
+        #     'right': '10%',
+        #     'top': 0,
+        #     'bottom': 0
+        # },
         "label": {
             "show": True,
             "formatter": "{b}",
@@ -522,12 +445,20 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient
         "colorMappingBy": "index",
         "data": tree_data
     }
-]
+    ]
+    
+    import copy
+    gradient_series = copy.deepcopy(base_series)
+    gradient_series[0]['visualMin'] = 0
+    gradient_series[0]['visualMax'] = 100
+    gradient_series[0]['visualDimension'] = 2
+    gradient_series[0]['colorMappingBy'] = 'value'
+    gradient_series[0]['color'] = colormap
 
     if show_gradient:
         series = gradient_series
     else:
-        series = flat_series
+        series = base_series
 
     option = {
         "title": {"text": title, "left": "center"},
