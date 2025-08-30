@@ -332,15 +332,16 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     return full_chart
 
 
-def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient_type='positive_only'):
+def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, colormap='green_shade'):
     
     title = f'Biggest stock for each sector based on {size_var}'
 
-    red_green = ['#942e38', '#aaa', '#269f3c']
-    green_shade = ["#79ab78", "#08701b"]
+    cmap_options = {
+        'red_green' : ['#942e38', '#aaa', '#269f3c'],
+        'green_shade' : ["#79ab78", "#08701b"]
+    }
 
-    # if show_gradient:
-    colormap = green_shade
+    color = cmap_options[colormap]
 
     base_series = [
     {
@@ -449,7 +450,7 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient
     gradient_series[0]['visualMax'] = 100
     gradient_series[0]['visualDimension'] = 2
     gradient_series[0]['colorMappingBy'] = 'value'
-    gradient_series[0]['color'] = colormap
+    gradient_series[0]['color'] = color
 
     if show_gradient:
         series = gradient_series
