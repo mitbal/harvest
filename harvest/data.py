@@ -457,7 +457,7 @@ def prep_treemap(df, size_var='mktCap', color_var=None):
 
                 value = [df.loc[stock, size_var]]
                 if color_var is not None:
-                    value += [int(df.loc[stock, 'color_grad'])]
+                    value += [float(df.loc[stock, color_var]), int(df.loc[stock, 'color_grad'])]
 
                 path = sector+'/'+industry+'/'+stock
                 gc += [{
@@ -468,7 +468,7 @@ def prep_treemap(df, size_var='mktCap', color_var=None):
 
             value = [industry_df.loc[industry, size_var]]
             if color_var is not None:
-                value += [int(industry_df.loc[industry, 'color_grad'])]
+                value += [0, int(industry_df.loc[industry, 'color_grad'])]
 
             path = sector+'/'+industry
             children += [{
@@ -480,7 +480,7 @@ def prep_treemap(df, size_var='mktCap', color_var=None):
         
         value = [sector_df.loc[sector, size_var]]
         if color_var is not None:
-            value += [int(sector_df.loc[sector, 'color_grad'])]
+            value += [0, int(sector_df.loc[sector, 'color_grad'])]
         tree_data += [{
             'value': value,
             'name': sector,

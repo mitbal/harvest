@@ -332,8 +332,10 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     return full_chart
 
 
-def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_type='positive_only'):
+def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, gradient_type='positive_only'):
     
+    title = f'Biggest stock for each sector based on {size_var}'
+
     red_green = ['#942e38', '#aaa', '#269f3c']
     green_shade = ["#79ab78", "#08701b"]
 
@@ -354,7 +356,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
         },
         'visualMin': 0,
         'visualMax': 100,
-        'visualDimension': 1,
+        'visualDimension': 2,
         'colorMappingBy': 'value',  # Move this to series level
         'color': colormap,  # Move color palette to series level
         'upperLabel': {
@@ -531,7 +533,7 @@ def plot_treemap(tree_data, title='Market Cap', show_gradient=False, gradient_ty
         "title": {"text": title, "left": "center"},
         "tooltip": {
             "formatter": JsCode(
-                "function(info){var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){treePath.push(treePathInfo[i].name)}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','value: '+ value +''].join('')};"
+                f"function(info){{var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){{treePath.push(treePathInfo[i].name)}}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','{size_var}: '+ value[0] +''].join('')}};"
             ).js_code,
     },
         "series": series,
