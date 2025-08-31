@@ -426,14 +426,20 @@ def prep_div_cal(div_dict, cp, year=2025):
     return div_df
 
 
-def prep_treemap(df, size_var='mktCap', color_var=None):
+def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 2]):
 
     if color_var is not None:
-        yields = df[color_var]
-        threshold = np.percentile(yields, [25, 50, 75])
+        if color_threshold is None:
+            yields = df[color_var]
+            threshold = np.percentile(yields, [25, 50, 75])
+        else:
+            threshold = color_threshold
+
+        bins = [-float('inf'), *threshold, float('inf')]
+        labels = list(range(0, 101, int(100/len(threshold))))
         df['color_grad'] = pd.cut(df[color_var],
-                                        bins=[-float('inf'), threshold[0], threshold[1], threshold[2], float('inf')],
-                                        labels=[0, 33, 66, 100]).astype(float)
+                                    bins=bins,
+                                    labels=labels).astype(float)
 
         sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
         industry_df = df.groupby('industry')[[size_var, 'color_grad']].sum()
