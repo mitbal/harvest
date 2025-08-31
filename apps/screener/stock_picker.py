@@ -258,10 +258,10 @@ with full_table_section:
         color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth'], label='Select Color Variable', index=1)
 
         df_tree = filtered_df[['sector', 'industry']]
-        df_tree['Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
-        df_tree['Dividend Yield'] = filtered_df['yield']
-        df_tree['Profit Margin'] = filtered_df['medianProfitMargin']
-        df_tree['Revenue Growth'] = filtered_df['revenueGrowth']
+        df_tree.loc[:, 'Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
+        df_tree.loc[:, 'Dividend Yield'] = filtered_df['yield']
+        df_tree.loc[:, 'Profit Margin'] = filtered_df['medianProfitMargin']
+        df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
         df_tree = df_tree.dropna()
 
         if color_var == 'None':
@@ -272,7 +272,7 @@ with full_table_section:
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var)
         option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient)
-        st_echarts(option, height='600px', width='1200px')
+        st_echarts(option, height='800px', width='1200px')
     
     elif view == 'Scatter Plot':
 
