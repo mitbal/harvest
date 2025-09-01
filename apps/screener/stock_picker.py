@@ -258,6 +258,8 @@ with full_table_section:
         color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth'], label='Select Color Variable', index=1)
 
         df_tree = filtered_df[['sector', 'industry']].copy()
+        # cp_tree_df = hd.get_company_profile(df_tree.index.to_list())
+
         df_tree.loc[:, 'Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
         df_tree.loc[:, 'Dividend Yield'] = filtered_df['yield']
         df_tree.loc[:, 'Profit Margin'] = filtered_df['medianProfitMargin']
@@ -267,10 +269,12 @@ with full_table_section:
         if color_var == 'None':
             color_var = None
             show_gradient = False
+            add_label = None
         else:
             show_gradient = True
+            add_label = 'color_var'
 
-        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=None)
+        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=None, add_label=add_label)
         option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient, colormap='green_shade')
         st_echarts(option, height='800px', width='1200px')
     
