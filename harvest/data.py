@@ -426,7 +426,7 @@ def prep_div_cal(div_dict, cp, year=2025):
     return div_df
 
 
-def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 2]):
+def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 2], add_label=None):
 
     if color_var is not None:
         if color_threshold is None:
@@ -466,9 +466,15 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                     value += [float(df.loc[stock, color_var]), int(df.loc[stock, 'color_grad'])]
 
                 path = sector+'/'+industry+'/'+stock
+                name = stock
+                if add_label is not None:
+                    if add_label == 'color_var':
+                        name = stock+'\n'+f'{float(df.loc[stock, color_var]):.2f}%'
+                    else:
+                        name = stock+'\n'+f'{float(df.loc[stock, size_var]):.2f} B'
                 gc += [{
                     'value': value,
-                    'name': stock,
+                    'name': name,
                     'path': path
                 }]
 
