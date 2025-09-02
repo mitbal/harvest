@@ -68,6 +68,11 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
         final_df = pd.read_csv('dividend_historical.csv')
 
     final_df.rename(columns={'symbol': 'stock'}, inplace=True)
+
+    cp_df = hd.get_company_profile(final_df['stock'].to_list())
+    final_df.drop(columns=['price'], inplace=True)
+    final_df = final_df.merge(cp_df[['price', 'changes']], left_on='stock', right_on='symbol')
+
     return final_df.set_index('stock')
 
 
@@ -255,15 +260,15 @@ with full_table_section:
         
         treemap_cols = st.columns([1,1,3])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Dividend Yield'], label='Select Size Variable')
-        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth'], label='Select Color Variable', index=1)
+        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth', 'Daily Return'], label='Select Color Variable', index=1)
 
         df_tree = filtered_df[['sector', 'industry']].copy()
-        # cp_tree_df = hd.get_company_profile(df_tree.index.to_list())
 
         df_tree.loc[:, 'Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
         df_tree.loc[:, 'Dividend Yield'] = filtered_df['yield']
         df_tree.loc[:, 'Profit Margin'] = filtered_df['medianProfitMargin']
         df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
+        df_tree.loc[:, 'Daily Return'] = filtered_df['changes'] / filtered_df['price'] * 100
         df_tree = df_tree.dropna()
 
         if color_var == 'None':
@@ -274,8 +279,14 @@ with full_table_section:
             show_gradient = True
             add_label = 'color_var'
 
-        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=None, add_label=add_label)
-        option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient, colormap='green_shade')
+        color_map = 'green_shade'
+        color_threshold = None
+        if color_var == 'Daily Return':
+            color_map = 'red_green'
+            color_threshold = [-3, -1, 0, 1, 3]
+
+        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label)
+        option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient, colormap=color_map)
         st_echarts(option, height='800px', width='1200px')
     
     elif view == 'Scatter Plot':
