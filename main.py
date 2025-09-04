@@ -19,7 +19,7 @@ pages = st.navigation(
                  page_article,
                  page_simulator,
                  page_porto,
-                 page_viz,
+                #  page_viz,
                 #  page_history,
                 #  page_trading
                  ]
