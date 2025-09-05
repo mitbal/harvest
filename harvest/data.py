@@ -2,6 +2,8 @@ import os
 import io
 import datetime
 import requests
+from typing import Dict
+# from datetime import datetime, timedelta
 
 import scipy
 import numpy as np
@@ -593,3 +595,144 @@ def simulate_dividend_compounding(
                 activities.append(f'buy {int(buy_lot)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
 
     return porto, activities
+
+
+def calc_price_changes(
+    stock_dataframes: Dict[str, pd.DataFrame], 
+    price_column: str = 'price',
+    date_column: str = 'date'
+) -> Dict[str, pd.DataFrame]:
+    """
+    Transform stock price dataframes into daily price change dataframes with multiple time period calculations.
+    
+    Args:
+        stock_dataframes: Dictionary with stock symbols as keys and DataFrames as values
+                         Each DataFrame should have columns for date and price
+        price_column: Name of the column containing prices (default: 'price')
+        date_column: Name of the column containing dates (default: 'date')
+    
+    Returns:
+        Dictionary with dates as keys and DataFrames as values
+        Each DataFrame contains price changes for all stocks on that date, including:
+        - daily, weekly, monthly, and yearly price changes (absolute and percentage)
+    """
+    
+    def get_lookback_price(df, current_idx, days_back):
+        """Get the price from the specified number of days ago"""
+        current_date = df.iloc[current_idx][date_column]
+        target_date = current_date - datetime.timedelta(days=days_back)
+        
+        # Find the closest date that's not later than target_date
+        valid_dates = df[df[date_column] <= target_date]
+        if valid_dates.empty:
+            return None
+        
+        closest_idx = valid_dates.iloc[-1].name
+        return df.loc[closest_idx, price_column]
+    
+    # Dictionary to collect all price changes by date
+    daily_changes_data = {}
+    
+    # Process each stock's dataframe
+    for stock_symbol, df in stock_dataframes.items():
+        # Make a copy to avoid modifying original
+        stock_df = df.copy()
+        
+        # Ensure date column is datetime
+        if date_column in stock_df.columns:
+            stock_df[date_column] = pd.to_datetime(stock_df[date_column])
+        else:
+            # If date is in index, reset it to a column
+            if stock_df.index.name == date_column or isinstance(stock_df.index, pd.DatetimeIndex):
+                stock_df = stock_df.reset_index()
+                if date_column not in stock_df.columns:
+                    stock_df.rename(columns={stock_df.columns[0]: date_column}, inplace=True)
+        
+        # Sort by date and reset index
+        stock_df = stock_df.sort_values(date_column).reset_index(drop=True)
+        
+        # Calculate all price changes for each row
+        for idx in range(len(stock_df)):
+            current_price = stock_df.iloc[idx][price_column]
+            current_date = stock_df.iloc[idx][date_column]
+            
+            # Initialize change data
+            change_data = {
+                'stock': stock_symbol,
+                'current_price': current_price,
+            }
+            
+            # Daily changes (skip first row)
+            if idx > 0:
+                previous_price_1d = stock_df.iloc[idx-1][price_column]
+                change_data.update({
+                    'price_change': current_price - previous_price_1d,
+                    'price_change_pct': ((current_price - previous_price_1d) / previous_price_1d) * 100 if previous_price_1d != 0 else 0,
+                    'previous_price': previous_price_1d
+                })
+            else:
+                # First row - no daily change available
+                change_data.update({
+                    'price_change': None,
+                    'price_change_pct': None,
+                    'previous_price': None
+                })
+            
+            # Weekly changes (7 days back)
+            previous_price_7d = get_lookback_price(stock_df, idx, 7)
+            if previous_price_7d is not None:
+                change_data.update({
+                    'weekly_price_change': current_price - previous_price_7d,
+                    'weekly_price_change_pct': ((current_price - previous_price_7d) / previous_price_7d) * 100 if previous_price_7d != 0 else 0,
+                    'previous_price_7d': previous_price_7d
+                })
+            else:
+                change_data.update({
+                    'weekly_price_change': None,
+                    'weekly_price_change_pct': None,
+                    'previous_price_7d': None
+                })
+            
+            # Monthly changes (30 days back)
+            previous_price_30d = get_lookback_price(stock_df, idx, 30)
+            if previous_price_30d is not None:
+                change_data.update({
+                    'monthly_price_change': current_price - previous_price_30d,
+                    'monthly_price_change_pct': ((current_price - previous_price_30d) / previous_price_30d) * 100 if previous_price_30d != 0 else 0,
+                    'previous_price_30d': previous_price_30d
+                })
+            else:
+                change_data.update({
+                    'monthly_price_change': None,
+                    'monthly_price_change_pct': None,
+                    'previous_price_30d': None
+                })
+            
+            # Yearly changes (365 days back)
+            previous_price_365d = get_lookback_price(stock_df, idx, 365)
+            if previous_price_365d is not None:
+                change_data.update({
+                    'yearly_price_change': current_price - previous_price_365d,
+                    'yearly_price_change_pct': ((current_price - previous_price_365d) / previous_price_365d) * 100 if previous_price_365d != 0 else 0,
+                    'previous_price_365d': previous_price_365d
+                })
+            else:
+                change_data.update({
+                    'yearly_price_change': None,
+                    'yearly_price_change_pct': None,
+                    'previous_price_365d': None
+                })
+            
+            # Add to daily changes data (only include rows with daily changes, except for first day)
+            date_str = current_date.strftime('%Y-%m-%d')
+            if date_str not in daily_changes_data:
+                daily_changes_data[date_str] = []
+            
+            daily_changes_data[date_str].append(change_data)
+    
+    # Convert to DataFrames for each date
+    result = {}
+    for date, changes_list in daily_changes_data.items():
+        result[date] = pd.DataFrame(changes_list)
+    
+    return result
