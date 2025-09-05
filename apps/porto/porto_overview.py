@@ -178,6 +178,7 @@ with st.expander('Data Input', expanded=data_input_expand_flag):
                 
             elif method == 'Form':
                 df = edited_df.copy(deep=True)
+                df['Symbol'] = df['Symbol'].str.upper()
                 st.session_state['porto_df'] = df
 
             logger.info(f'Porto data submitted via {method}')
