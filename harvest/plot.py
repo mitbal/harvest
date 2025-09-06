@@ -370,14 +370,14 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, colormap
         "itemStyle": {
             "borderColor": "#fff",
             "borderWidth": 1,
-            "gapWidth": 2
+            "gapWidth": 1
         },
         "levels": [
-            # Level 0 → Root (sector containers)
+            # Level 0 → Root ALL
             {
                 "itemStyle": {
-                    "borderWidth": 3,
-                    "gapWidth": 4,
+                    "borderWidth": 1,
+                    "gapWidth": 1,
                     "borderColor": "#eee"
                 },
                 "upperLabel": {
@@ -388,52 +388,46 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, colormap
                 },
                 "label": {"show": False}
             },
-            # Level 1 → Subsector containers
+            # Level 1 → Sector
             {
                 "itemStyle": {
-                    "borderWidth": 2,
-                    "gapWidth": 2,
-                    "borderColor": "#ddd"
+                    "borderWidth": 1,
+                    "gapWidth": 1,
+                    "borderColor": "#ddd",
                 },
                 "upperLabel": {
-                    "show": True,         # ✅ make subsectors visible
+                    "show": True,
                     "color": "#333",
                     "fontWeight": "600",
                     "fontSize": 12
                 },
                 "label": {"show": False} # hide stock labels at this level
             },
-            # level 2 -> sector
+            # level 2 -> Industry
             {
                 "itemStyle": {
                     "gapWidth": 1,
                     "borderWidth": 1,
-                    "borderColor": "#ccc"
+                    "borderColor": "#ccc",
                 },
                 "upperLabel": {
-                    "show": True,         # ✅ make subsectors visible
+                    "show": True,
                     "color": "#333",
                     "fontWeight": "600",
                     "fontSize": 10
                 },
-                # "label": {
-                #     "show": True,
-                #     "color": "#000",
-                #     "fontWeight": "600",
-                #     "fontSize": 10
-                # }
             },
             # Level 3 → Individual stocks
             {
                 "itemStyle": {
                     "borderWidth": 1,
                     "gapWidth": 1,
-                    "borderColor": "#ccc"
+                    "borderColor": "#ccc",
                 },
                 "label": {
                     "show": True,
                     "color": "#fff",
-                    "fontSize": 12,
+                    "fontSize": 10,
                     'fontWeight': 'bold',
                     "overflow": "truncate"
                 },
@@ -470,7 +464,7 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, colormap
             "formatter": JsCode(
                 f"function(info){{var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){{treePath.push(treePathInfo[i].name)}}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','{size_var}: '+ value[0] +''].join('')}};"
             ).js_code,
-    },
+        },
         "series": series,
     }
 
