@@ -159,6 +159,11 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
         for i, s in enumerate(stock_list):
             if y == start_year:
                 price_df = prices[s]
+                if f'{start_year}-12-31' < price_df['date'].min():
+                    st.error(f'Data for {s} is not available before {price_df["date"].min()}, Please change the year or select different stocks')
+                    st.stop()
+                    break
+
                 buy_date = price_df[price_df['date'] >= f'{y}-01-01'].iloc[-1]
                 close_price = buy_date['close']
                 
