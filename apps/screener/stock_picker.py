@@ -92,7 +92,8 @@ def get_specific_stock_detail(stock_name):
         cp_df = hd.get_company_profile([stock_name])
         progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
 
-        start_date = (datetime.today() - timedelta(days=365*2)).isoformat()
+        # start_date = (datetime.today() - timedelta(days=365*10)).isoformat()
+        start_date = '2015-01-01'
         price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
         progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
         
@@ -287,7 +288,7 @@ with full_table_section:
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label)
         option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient, colormap=color_map)
-        st_echarts(option, height='800px', width='1200px')
+        st_echarts(option, height='900px', width='1550px')
     
     elif view == 'Scatter Plot':
 
@@ -440,7 +441,7 @@ with st.expander('Price Movement', expanded=True):
 
 with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     cols = st.columns(3, gap='large')
-    year = cols[0].slider('Select Number of Year', min_value=1, max_value=5)
+    year = cols[0].slider('Select Number of Year', min_value=1, max_value=10)
 
     val_cols = st.columns(3, gap='large')
 
