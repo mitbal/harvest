@@ -61,7 +61,7 @@ def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_sto
     return multi_return_df
 
 
-@st.cache_data
+# @st.cache_data
 def simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year):
     
     logger.info(f'sim #3 single stock. {stock_name=}, {initial_value=}, {start_year=}, {end_year=}')
@@ -70,11 +70,7 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
     if div_df is None:
         logger.error(f'No dividend data found for {stock_name}')
 
-    try:
-        price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
-    except Exception as e:
-        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
-        st.stop()
+    price_df = hd.get_daily_stock_price(stock_name, start_from=f'{start_year}-01-01')
 
     activities = []
     cash = initial_value
@@ -356,7 +352,12 @@ with st.container(border=True):
     start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
 
-    return_df, without_drip = simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year)
+    try:
+        return_df, without_drip = simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year)
+    except:
+        logger.error(f'Error running sim3 for {stock_name}')
+        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
+        st.stop()
 
     cols = st.columns([0.33, 0.67])
 
