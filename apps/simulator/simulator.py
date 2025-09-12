@@ -424,7 +424,12 @@ with st.container(border=True):
         investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
 
     # run the simulation
-    investments, returns, without_drip, porto_df, transactions = simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list)
+    try:
+        investments, returns, without_drip, porto_df, transactions = simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list)
+    except:
+        st.error('Cannot find the stocks. Please check again and dont forget to add .JK for Indonesian stocks')
+        logger.error(f'Error on sim4 for stocks {stock_list}')
+        st.stop()
 
     # show log, display result table, and plot the graph
     with st.expander('Activity Log'):
