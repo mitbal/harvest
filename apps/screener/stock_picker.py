@@ -262,7 +262,8 @@ with full_table_section:
         treemap_cols = st.columns([1,1,3])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Dividend Yield'], label='Select Size Variable')
         color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth', 'Daily Return'], label='Select Color Variable', index=1)
-
+        sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
+        
         df_tree = filtered_df[['sector', 'industry']].copy()
 
         df_tree.loc[:, 'Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
@@ -271,6 +272,9 @@ with full_table_section:
         df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
         df_tree.loc[:, 'Daily Return'] = filtered_df['changes'] / filtered_df['price'] * 100
         df_tree = df_tree.dropna()
+
+        if sector_var != 'ALL':
+            df_tree = df_tree[df_tree['sector'] == sector_var]
 
         if color_var == 'None':
             color_var = None
