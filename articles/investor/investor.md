@@ -1,11 +1,11 @@
 # Investor Indonesia 2025
-![Peta persebaran persentase investor di Indonesia](map_of_investor_percentage.png)
+![Peta persebaran persentase investor di Indonesia](app/static/map_of_investor_percentage.png)
 
 Last updated: 2025 September 15
 
 Berdasarkan data OJK di bulan Januari 2025, jumlah yang mempunyai Single Investor Identification (SID) adalah sekitar 15 juta orang dari 284 juta orang atau sekitar 5.2% dengan persebarannya di tiap provinsi sebagai berikut.
 
-![Jumlah investor di tiap provinsi Indonesia 2025](province_investor_percentage.png)
+![Jumlah investor di tiap provinsi Indonesia 2025](app/static/province_investor_percentage.png)
 
 Bisa kita lihat kalau walaupun dari jumlah DKI Jakarta relatif sama dengan Jawa Barat di  hampir 3 juta orang, secara persentase Jakarta adalah yang tertinggi di 27%, alias 1 dari 4 di Jakarta adalah investor. Sementara Jawa Barat hanya sekitar 5.8% dari 50 juta penduduknya.
 
@@ -13,6 +13,6 @@ Di luar pulau Jawa, persentase tertinggi dipimpin oleh Bali, Kepulauan Riau, dan
 
 Kalau dilihat lagi secara nasional, ini tentunya masih sangat jauh apabila dibandingkan dengan negara maju seperti Amerika yang persentase-nya mencapai 55%. Bahkan dibandingkan negara Vietnam yang sama-sama di ASEAN, secara jumlah absolut dan persentase juga kalah di 16 juta orang dan 16% populasi.
 
-![Persentase investor di negara seluruh dunia](world_investor_percentage.jpg)
+![Persentase investor di negara seluruh dunia](app/static/world_investor_percentage.jpg)
 
 Namun dilihat dalam kaca mata positif, sebenarnya growth-nya bisa dibilang baik dan bahkan cukup tinggi, karena di Januari 2024 sendiri jumlahnya masih berkisar di 12 jutaan, sehingga ada pertumbuhan lebih dari 25%.
