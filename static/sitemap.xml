@@ -51,6 +51,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://panendividen.com/article?name=investor</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://panendividen.com/simulator</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
