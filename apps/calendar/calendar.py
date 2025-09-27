@@ -89,7 +89,8 @@ column_config = {
         'Stock',
         help='The code of the stock',
         max_chars=10,
-        display_text=r"https://panendividen\.com/stock_picker\?stock=([A-Z]+(?:\.JK)?)"
+
+        display_text=r"https://panendividen\.com/stock_picker\?stock=([A-Z]+)(?=\.JK|$)"
     ),
     'rank': st.column_config.NumberColumn(
         'Rank',
