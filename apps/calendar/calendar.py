@@ -82,6 +82,22 @@ def get_data_from_redis(key):
     return pd.DataFrame(json.loads(content))
 
 
+def prep_div_month(df, month_idx=1):
+    
+    month_df = df[df.date.dt.month == month_idx].copy().reset_index(drop=True)
+    month_df.sort_values(by='yield', ascending=False, inplace=True)
+
+    month_df['rank'] = list(range(1, len(month_df)+1))
+    month_df['div_yield'] = month_df['yield'].apply(lambda x: f'{x:2.2f}%')
+    month_df['ex_date'] = month_df['date'].dt.strftime('%d %b')
+    month_df['url_link'] = month_df['symbol'].apply(lambda x: f'https://panendividen.com/stock_picker?stock={x}')
+    
+    month_df.rename(columns={'symbol': 'stock',
+                            'adjDividend': 'dividend'}, inplace=True)
+    
+    return month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']]
+
+
 #### End of Function definition
 
 column_config = {
@@ -150,24 +166,13 @@ if view_control == 'Full Year':
         row_cols = row.columns(4)
 
         for j in range(4):
-
-            month_df = df[df.date.dt.month == idx].copy().reset_index(drop=True)
-            month_df.sort_values(by='yield', ascending=False, inplace=True)
-
-            month_df['rank'] = list(range(1, len(month_df)+1))
-            month_df['div_yield'] = month_df['yield'].apply(lambda x: f'{x:2.2f}%')
-            month_df['ex_date'] = month_df['date'].dt.strftime('%d %b')
-            month_df['url_link'] = month_df['symbol'].apply(lambda x: f'https://panendividen.com/stock_picker?stock={x}')
-            if sl == 'JKSE':
-                month_df['symbol'] = month_df['symbol'].apply(lambda x: x[:-3])
-            month_df.rename(columns={'symbol': 'stock',
-                                    'adjDividend': 'dividend'}, inplace=True)
-
             row_cols[j].write(f'{calendar.month_name[idx]}')
+
+            month_df = prep_div_month(df, month_idx=idx)
             row_cols[j].dataframe(
                 hide_index=True,
                 column_config=column_config,
-                data=month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']], height=210)
+                data=month_df, height=210)
             idx += 1
 
 else:
