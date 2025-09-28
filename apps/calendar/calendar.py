@@ -184,8 +184,7 @@ else:
     month_cal = lesley.month_plot(df['date'], df['yield'], labels=labels, month=month_index, show_date=True, width=500)
     cols[0].altair_chart(month_cal)
 
-    month_df = df[df.date.dt.month == month_index].copy().reset_index(drop=True)
-    month_df.sort_values(by='yield', ascending=False, inplace=True)
+    month_df = prep_div_month(df, month_idx=month_index)
     cols[1].dataframe(
         hide_index=True,
         column_config=column_config,
