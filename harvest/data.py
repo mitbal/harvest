@@ -269,7 +269,30 @@ def calc_div_score(df):
             * (1+(df['revenueGrowth']*0.5)*5)*df['lastDiv'] / 100
             
     return score
-            
+
+
+def calc_ratio_history(price_df, fin_df, n_shares=None, ratio='pe'):
+
+    pdf = price_df[['date', 'close']].copy()
+    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf = pdf.sort_values('date')
+
+    if ratio == 'pe':
+        fin_metric = 'eps'
+    elif ratio == 'ps':
+        fin_metric = 'revenue'
+
+    k = f'{fin_metric}_per_share'
+    fin_df[k] = fin_df[fin_metric] / n_shares
+    ratio_df = fin_df[['date', k]].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
+    ratio_df['date'] = pd.to_datetime(ratio_df['date'])
+    ratio_df = ratio_df.sort_values('date')
+
+    pratio_df = pd.merge_asof(pdf, ratio_df, on='date', direction='backward')
+    pratio_df['pe'] = pratio_df['close'] / pratio_df[k]
+
+    return pratio_df
+
 
 def calc_pe_history(price_df, fin_df, n_shares=None, currency='IDR', exchange_rate=16_276):
 
