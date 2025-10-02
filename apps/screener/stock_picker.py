@@ -445,7 +445,8 @@ with st.expander('Price Movement', expanded=True):
 
 with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     cols = st.columns(3, gap='large')
-    year = cols[0].slider('Select Number of Year', min_value=1, max_value=10)
+    year = cols[0].slider('Select Number of Year', min_value=1, max_value=15)
+    val_metric = cols[1].radio('Valuation Metric', ['Price-to-Earnings', 'Price-to-Sales/Revenue'], index=0, horizontal=True)
 
     val_cols = st.columns(3, gap='large')
 
@@ -465,7 +466,12 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     start_date = datetime.now() - timedelta(days=365*year)
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
-    pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
+    if val_metric == 'Price-to-Earnings':
+        pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
+    else:
+        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps')
+        
+    # pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     current_price = price_df['close'].values[0]
     median_pe = pe_df['pe'].median()
