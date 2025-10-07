@@ -420,22 +420,43 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
             st.altair_chart(fin_chart, use_container_width=False)
 
     else:
-        annual_cols = st.columns([40,40,20])
-        
-        annual_cols[0].write('Annual Revenue Chart')
-        revenue_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
-        annual_cols[0].altair_chart(revenue_chart, use_container_width=True)
-        
-        annual_cols[1].write('Annual Net Income Chart')
-        income_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
-        annual_cols[1].altair_chart(income_chart, use_container_width=True)
+        fin_view = fin_cols[1].radio('Select View', ['Separate', 'Combined'], horizontal=True)
 
-        with annual_cols[2]:
-            if stock_name in filtered_df.index:
-                st.write('**Financial Metrics Summary**')
-                st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
-                st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
-                st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
+        if fin_view == 'Separate':
+            annual_cols = st.columns([40,40,20])
+            
+            annual_cols[0].write('Annual Revenue Chart')
+            revenue_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
+            annual_cols[0].altair_chart(revenue_chart, use_container_width=True)
+            
+            annual_cols[1].write('Annual Net Income Chart')
+            income_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
+            annual_cols[1].altair_chart(income_chart, use_container_width=True)
+
+            with annual_cols[2]:
+                if stock_name in filtered_df.index:
+                    st.write('**Financial Metrics Summary**')
+                    st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
+                    st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
+                    st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
+
+        else:
+
+            fin_df = fin.groupby('calendarYear').sum().reset_index()
+            fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue'] * 100
+            combined_chart = alt.Chart(fin_df[['calendarYear', 'revenue', 'netIncome']]).transform_fold(
+                ['revenue', 'netIncome']
+            ).mark_bar().encode(
+                x='calendarYear:N',
+                y='value:Q',
+                color='key:N',
+                xOffset='key:N'
+            )
+            margin_chart = alt.Chart(fin_df).mark_line(point=True).encode(
+                x='calendarYear',
+                y='netProfitMargin'
+            )
+            st.altair_chart((combined_chart+margin_chart).resolve_scale(y='independent'))
 
 
 with st.expander('Price Movement', expanded=True):
