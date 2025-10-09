@@ -37,7 +37,7 @@ def format_tooltip_currency(val, currency):
 def plot_fin_chart(fin_df):
 
     fin_df = fin_df.groupby('calendarYear').sum().reset_index()
-    fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue'] * 100
+    fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue']
     combined_chart = alt.Chart(fin_df[['calendarYear', 'revenue', 'netIncome']]).transform_fold(
         ['revenue', 'netIncome']
     ).mark_bar().encode(
@@ -46,11 +46,13 @@ def plot_fin_chart(fin_df):
             labelExpr=format_currency()
         )),
         color='key:N',
-        xOffset='key:N'
+        xOffset='key:N',
+        tooltip=['calendarYear', alt.Tooltip('value:Q', format=',.2f')]
     )
     margin_chart = alt.Chart(fin_df).mark_line(point=True).encode(
         x='calendarYear',
-        y='netProfitMargin'
+        y='netProfitMargin',
+        tooltip=['calendarYear', alt.Tooltip('netProfitMargin', format='.2%')]
     )
     return (combined_chart+margin_chart).resolve_scale(y='independent')
 
