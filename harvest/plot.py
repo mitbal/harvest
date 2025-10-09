@@ -42,7 +42,9 @@ def plot_fin_chart(fin_df):
         ['revenue', 'netIncome']
     ).mark_bar().encode(
         x='calendarYear:N',
-        y='value:Q',
+        y=alt.Y('value:Q', axis=alt.Axis(
+            labelExpr=format_currency()
+        )),
         color='key:N',
         xOffset='key:N'
     )
