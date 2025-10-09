@@ -444,21 +444,8 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
             annual_cols = st.columns([80, 20])
             annual_cols[0].write('Annual Financial Chart')
 
-            fin_df = fin.groupby('calendarYear').sum().reset_index()
-            fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue'] * 100
-            combined_chart = alt.Chart(fin_df[['calendarYear', 'revenue', 'netIncome']]).transform_fold(
-                ['revenue', 'netIncome']
-            ).mark_bar().encode(
-                x='calendarYear:N',
-                y='value:Q',
-                color='key:N',
-                xOffset='key:N'
-            )
-            margin_chart = alt.Chart(fin_df).mark_line(point=True).encode(
-                x='calendarYear',
-                y='netProfitMargin'
-            )
-            annual_cols[0].altair_chart((combined_chart+margin_chart).resolve_scale(y='independent'), use_container_width=True)
+            fin_chart = hp.plot_fin_chart(fin)
+            annual_cols[0].altair_chart(fin_chart, use_container_width=True)
 
             with annual_cols[1]:
                 if stock_name in filtered_df.index:
