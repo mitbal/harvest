@@ -441,6 +441,8 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
                     st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
 
         else:
+            annual_cols = st.columns([80, 20])
+            annual_cols[0].write('Annual Financial Chart')
 
             fin_df = fin.groupby('calendarYear').sum().reset_index()
             fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue'] * 100
@@ -456,7 +458,14 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
                 x='calendarYear',
                 y='netProfitMargin'
             )
-            st.altair_chart((combined_chart+margin_chart).resolve_scale(y='independent'))
+            annual_cols[0].altair_chart((combined_chart+margin_chart).resolve_scale(y='independent'), use_container_width=True)
+
+            with annual_cols[1]:
+                if stock_name in filtered_df.index:
+                    st.write('**Financial Metrics Summary**')
+                    st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
+                    st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
+                    st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
 
 
 with st.expander('Price Movement', expanded=True):
