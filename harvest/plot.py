@@ -34,6 +34,25 @@ def format_tooltip_currency(val, currency):
         return f"-{formatted}" if is_negative else formatted
 
 
+def plot_fin_chart(fin_df):
+
+    fin_df = fin_df.groupby('calendarYear').sum().reset_index()
+    fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue'] * 100
+    combined_chart = alt.Chart(fin_df[['calendarYear', 'revenue', 'netIncome']]).transform_fold(
+        ['revenue', 'netIncome']
+    ).mark_bar().encode(
+        x='calendarYear:N',
+        y='value:Q',
+        color='key:N',
+        xOffset='key:N'
+    )
+    margin_chart = alt.Chart(fin_df).mark_line(point=True).encode(
+        x='calendarYear',
+        y='netProfitMargin'
+    )
+    return (combined_chart+margin_chart).resolve_scale(y='independent')
+
+
 def plot_financial(fin_df, period='quarter', metric='netIncome', currency='idr'):
     
     if period == 'quarter':
