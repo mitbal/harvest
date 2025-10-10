@@ -383,6 +383,9 @@ def plot_treemap(tree_data, size_var='Market Cap', show_gradient=False, colormap
             "fontSize": 11,
             "overflow": "truncate"
         },
+        "labelLayout": JsCode(
+                "function(params){if(params.rect.width<5||params.rect.height<5)return{fontSize:0};return{fontSize:Math.min(Math.sqrt(params.rect.width*params.rect.height)/7,25)};}"
+            ).js_code,
         "upperLabel": {
             "show": True,
             "formatter": "{b}",
