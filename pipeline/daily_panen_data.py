@@ -243,6 +243,8 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['lastDiv'] = 0
     df['revenueGrowth'] = np.nan
     df['netIncomeGrowth'] = np.nan
+    df['earningTTM'] = np.nan
+    df['revenueTTM'] = np.nan
     df['avgFlatAnnualDivIncrease'] = np.nan
     df['avgPctAnnualDivIncrease'] = np.nan
     df['numDividendYear'] = np.nan
@@ -259,7 +261,9 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
             df.loc[symbol, 'medianProfitMargin'] = fin_stats['median_profit_margin']
-            
+            df.loc[symbol, 'revenueTTM'] = fin_stats['revenueTTM']
+            df.loc[symbol, 'earningTTM'] = fin_stats['earningTTM']
+
             div_df = div_dict[symbol]
             div_df = hd.preprocess_div(div_df)
             div_stats = hd.calc_div_stats(div_df)
@@ -287,12 +291,15 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
         except Exception as e:
             print(f'error {e}', symbol)
             continue
+
+    df['peRatio'] = df['mktCap'] / df['earningTTM']
+    df['psRatio'] = df['mktCap'] / df['revenueTTM']
     
     # patented dividend score
     df['DScore'] = hd.calc_div_score(df)
 
     features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
-               'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin',
+               'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin', 'earningTTM', 'revenueTTM', 'peRatio', 'psRatio',
                'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
     
     if sl == 'jkse':
