@@ -368,6 +368,8 @@ def calc_fin_stats(fin_df):
     rolling_income = fin_df[['date', 'netIncome']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     profit_margin = rolling_income['netIncome'] / rolling_revenue['revenue'] * 100
     stats['median_profit_margin'] = np.nanmedian(profit_margin)
+    stats['earningTTM'] = rolling_income.loc[0, 'netIncome']
+    stats['revenueTTM'] = rolling_revenue.loc[0, 'revenue']
 
     return stats
 
