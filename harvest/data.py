@@ -367,9 +367,15 @@ def calc_fin_stats(fin_df):
     rolling_revenue = fin_df[['date', 'revenue']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     rolling_income = fin_df[['date', 'netIncome']].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     profit_margin = rolling_income['netIncome'] / rolling_revenue['revenue'] * 100
+
     stats['median_profit_margin'] = np.nanmedian(profit_margin)
     stats['earningTTM'] = rolling_income.loc[0, 'netIncome']
     stats['revenueTTM'] = rolling_revenue.loc[0, 'revenue']
+
+    currency = fin_df.loc[0, 'reportedCurrency']
+    if currency == 'USD':
+        stats['earningTTM'] *= 16_618
+        stats['revenueTTM'] *= 16_618
 
     return stats
 
