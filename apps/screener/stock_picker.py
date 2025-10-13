@@ -313,7 +313,15 @@ with full_table_section:
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label)
         option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient, colormap=color_map)
-        st_echarts(option, height='900px', width='1550px')
+        
+        click_event_js = """function(params){console.log('Clicked item:',params.name);return params.name;}"""
+        
+        clicked_item_name = st_echarts(
+            option,
+            events={"click": click_event_js},
+            height='900px', 
+            width='1550px'
+        )
     
     elif view == 'Scatter Plot':
 
@@ -343,6 +351,8 @@ if view == 'Table' and len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
+elif view == 'Treemap' and clicked_item_name:
+    stock_name = clicked_item_name.split()[0]
 elif 'stock' in st.query_params:
     stock_name = st.query_params['stock']
 else:
