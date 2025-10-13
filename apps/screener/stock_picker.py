@@ -253,6 +253,27 @@ with full_table_section:
                 help='Last Dividend Paid in Last/Current Fiscal Year',
                 format='%.02f',
             ),
+            'earningTTM': st.column_config.NumberColumn(
+                'Earning TTM',
+                help='Earning in the last twelve months',
+                format='localized'
+            ),
+            'revenueTTM': st.column_config.NumberColumn(
+                'Revenue TTM',
+                help='Revenue in the last twelve months',
+                format='localized'
+            ),
+            'peRatio': st.column_config.NumberColumn(
+                'PE Ratio',
+                help='Price to Earnings Ratio',
+                format='%.2f'
+            ),
+            'psRatio': st.column_config.NumberColumn(
+                'PS Ratio',
+                help='Price to Sales/Revenue Ratio',
+                format='%.2f'
+            )
+
         }
 
         event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
