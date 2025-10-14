@@ -312,7 +312,7 @@ with full_table_section:
             color_threshold = [-3, -1, 0, 1, 3]
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label)
-        option = hp.plot_treemap(tree_data, size_var=size_var, show_gradient=show_gradient, colormap=color_map)
+        option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map)
         
         click_event_js = """function(params){console.log('Clicked item:',params.name);return params.name;}"""
         
