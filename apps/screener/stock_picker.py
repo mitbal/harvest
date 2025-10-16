@@ -155,6 +155,7 @@ if sl == 'JKSE':
 full_table_section = st.container(border=True)
 with full_table_section:
 
+    final_df['DScore'] = final_df['DScore'] * (10/final_df['peRatio']**3) * final_df['medianProfitMargin']
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
