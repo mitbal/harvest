@@ -356,8 +356,6 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
 
 
 def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade'):
-    
-    title = f'{color_var} of Biggest stock for each sector based on {size_var}'
 
     cmap_options = {
         'red_green': ['#A30000', '#9f6e73', '#aaa', '#79ab78', '#08701b'],
@@ -478,8 +476,24 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
     else:
         series = base_series
 
+
+    title = f'{{boldText|{color_var}}} of Biggest stock for each sector based on {{boldText|{size_var}}}'
     option = {
-        "title": {"text": title, "left": "center"},
+        'title': {
+        'text': title,
+        'left': 'center',
+        'textStyle': {
+            'color': '#333',
+            'fontSize': 20,
+            'rich': {
+                'boldText': {
+                    'fontWeight': 'bold',
+                    'fontSize': 24,
+                    'color': 'green'
+                }
+            }
+        }
+    },
         'grid': {
             'left': '10%',
             'right': '10%',
