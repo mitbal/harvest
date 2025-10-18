@@ -360,7 +360,7 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
     cmap_options = {
         'red_green': ['#A30000', '#9f6e73', '#aaa', '#79ab78', '#08701b'],
         'green_shade' : ["#79ab78", "#08701b"],
-        'red_shade': ['#9f6e73', '#A30000']
+        'red_shade': ['#000000', '#9f6e73', '#A30000']
     }
 
     color = cmap_options[colormap]
