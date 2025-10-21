@@ -448,7 +448,7 @@ with st.expander(f'Dividend History: {stock_name}', expanded=True):
 
 with st.expander(f'Financial Information: {stock_name}', expanded=True):
     fin_cols = st.columns([0.3, 0.4, 0.3])
-    period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True)
+    period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True, index=1)
     
     if period == 'quarter':
         metric = fin_cols[1].radio('Select Metrics', ['revenue', 'netIncome'], horizontal=True)
@@ -458,7 +458,7 @@ with st.expander(f'Financial Information: {stock_name}', expanded=True):
             st.altair_chart(fin_chart, use_container_width=False)
 
     else:
-        fin_view = fin_cols[1].radio('Select View', ['Separate', 'Combined'], horizontal=True)
+        fin_view = fin_cols[1].radio('Select View', ['Separate', 'Combined'], horizontal=True, index=1)
 
         if fin_view == 'Separate':
             annual_cols = st.columns([40,40,20])
