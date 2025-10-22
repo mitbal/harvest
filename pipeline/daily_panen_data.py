@@ -259,7 +259,9 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             fin_df = fin_dict[symbol]
             fin_stats = hd.calc_fin_stats(fin_df)
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
+            df.loc[symbol, 'revenueGrowthTTM'] = fin_stats['revenue_growth_TTM']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
+            df.loc[symbol, 'netIncomeGrowthTTM'] = fin_stats['netIncome_growth_TTM']
             df.loc[symbol, 'medianProfitMargin'] = fin_stats['median_profit_margin']
             df.loc[symbol, 'revenueTTM'] = fin_stats['revenueTTM']
             df.loc[symbol, 'earningTTM'] = fin_stats['earningTTM']
@@ -299,7 +301,8 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['DScore'] = hd.calc_div_score(df)
 
     features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
-               'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin', 'earningTTM', 'revenueTTM', 'peRatio', 'psRatio',
+               'revenueGrowth', 'revenueGrowthTTM', 'netIncomeGrowth', 'netIncomeGrowthTTM', 'medianProfitMargin', 
+               'earningTTM', 'revenueTTM', 'peRatio', 'psRatio',
                'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
     
     if sl == 'jkse':
