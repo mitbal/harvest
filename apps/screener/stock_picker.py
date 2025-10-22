@@ -156,6 +156,8 @@ full_table_section = st.container(border=True)
 with full_table_section:
 
     final_df['DScore'] = final_df['DScore'] * (10/final_df['peRatio']**3) * final_df['medianProfitMargin']
+    final_df['marginTTM'] = final_df['earningTTM'] / final_df['revenueTTM'] * 100
+
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
@@ -283,7 +285,7 @@ with full_table_section:
         
         treemap_cols = st.columns([1,1,3])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
-        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio'], label='Select Color Variable', index=1)
+        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio'], label='Select Color Variable', index=1)
         sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
         
         df_tree = filtered_df[['sector', 'industry']].copy()
@@ -292,7 +294,8 @@ with full_table_section:
         df_tree.loc[:, 'Revenue'] = filtered_df['revenueTTM']
         df_tree.loc[:, 'Net Income'] = filtered_df['earningTTM']
         df_tree.loc[:, 'Dividend Yield'] = filtered_df['yield']
-        df_tree.loc[:, 'Profit Margin'] = filtered_df['medianProfitMargin']
+        df_tree.loc[:, 'Median Profit Margin'] = filtered_df['medianProfitMargin']
+        df_tree.loc[:, 'TTM Profit Margin'] = filtered_df['marginTTM']
         df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
         df_tree.loc[:, 'Daily Return'] = filtered_df['changes'] / filtered_df['price'] * 100
         df_tree.loc[:, 'PE Ratio'] = filtered_df['peRatio']
