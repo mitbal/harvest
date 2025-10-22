@@ -355,6 +355,7 @@ def calc_growth_stats(fin_df, metric='revenue'):
         stats[f'median_{p}y_{metric}_growth'] = np.median(growth) *100
         stats[f'trim_mean_{p}y_{metric}_growth'] = (scipy.stats.trim_mean(growth, 0.1)) *100
 
+    stats[f'{metric}_growth_TTM'] = growth.iloc[0]
     return stats
 
 
