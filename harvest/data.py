@@ -504,7 +504,7 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                 if add_label is not None:
                     if add_label == 'color_var':
                         name = stock+'\n'+f'{float(df.loc[stock, color_var]):.2f}'
-                        if color_var != 'PE Ratio':
+                        if 'Ratio' not in color_var:
                             name += '%'
                     else:
                         name = stock+'\n'+f'{float(df.loc[stock, size_var]):.2f} B'
