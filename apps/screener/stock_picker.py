@@ -285,7 +285,7 @@ with full_table_section:
         
         treemap_cols = st.columns([1,1,3])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
-        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio'], label='Select Color Variable', index=1)
+        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=1)
         sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
         
         df_tree = filtered_df[['sector', 'industry']].copy()
@@ -299,6 +299,7 @@ with full_table_section:
         df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
         df_tree.loc[:, 'Daily Return'] = filtered_df['changes'] / filtered_df['price'] * 100
         df_tree.loc[:, 'PE Ratio'] = filtered_df['peRatio']
+        df_tree.loc[:, 'PS Ratio'] = filtered_df['psRatio']
         df_tree = df_tree.dropna()
 
         if sector_var != 'ALL':
@@ -320,6 +321,9 @@ with full_table_section:
         elif color_var == 'PE Ratio':
             color_map = 'red_shade'
             color_threshold = [-100, 0, 5, 15]
+        elif color_var == 'PS Ratio':
+            color_map = 'red_shade'
+            color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label)
         option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map)
