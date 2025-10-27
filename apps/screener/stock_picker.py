@@ -103,7 +103,7 @@ def get_specific_stock_detail(stock_name):
             sdf = hd.get_dividend_history_single_stock(stock_name, source='fmp')
         progress_bar.progress(80, text='Downloading historical dividend data... Progresss 80%')
 
-        sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
+        # sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
         progress_bar.progress(100, text='Progress 100% complete')
 
         end_time = time.time()
@@ -112,7 +112,7 @@ def get_specific_stock_detail(stock_name):
         time.sleep(0.2)
         progress_bar.empty()
 
-        return fin, cp_df, price_df, sdf, sector_df, industry_df, n_share
+        return fin, cp_df, price_df, sdf, n_share
 
     except:
         logger.error(f'Error in downloading data for {stock_name}')
@@ -384,7 +384,7 @@ if select_stock:
 else:
     st.stop()
 
-fin, cp_df, price_df, sdf, sector_df, industry_df, n_share = get_specific_stock_detail(stock_name)
+fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name)
 
 
 with st.expander('Company Profile', expanded=False):    
@@ -516,12 +516,12 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         sector_name = filtered_df.loc[stock_name, 'sector']
         industry_name = filtered_df.loc[stock_name, 'industry']
 
-        try:
-            sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
-            industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
-        except Exception:
-            sector_pe = industry_pe = -1
-            logger.error(f'sector or industry not found for {stock_name} in sector {sector_name} and industry {industry_name}')
+        # try:
+        #     sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
+        #     industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
+        # except Exception:
+        #     sector_pe = industry_pe = -1
+        #     logger.error(f'sector or industry not found for {stock_name} in sector {sector_name} and industry {industry_name}')
     else:
         sector_pe = industry_pe = -1
 
@@ -555,9 +555,9 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         | 95% Confidence Interval range PE | {ci[0]:.2f} - {ci[1]:.2f} |
         | 95% Confidence Interval range Price | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         '''
-        if industry_pe != -1 and sector_pe != -1:
-            markdown_table += f"| Industry: {industry_name} PE | {industry_pe:.2f} | \n \
-        | Sector: {sector_name} PE | {sector_pe:.2f} |"
+        # if industry_pe != -1 and sector_pe != -1:
+        #     markdown_table += f"| Industry: {industry_name} PE | {industry_pe:.2f} | \n \
+        # | Sector: {sector_name} PE | {sector_pe:.2f} |"
         
         st.markdown(markdown_table)
 
