@@ -159,7 +159,7 @@ def plot_candlestick(price_df, width=1000, height=300):
     return candlestick & view
 
 
-def plot_pe_distribution(df, pe):
+def plot_pe_distribution(df, pe, axis_label=None):
 
     kde = alt.Chart(df).transform_density('pe', as_=['PE', 'DENSITY'])
     pes_dist = kde.mark_area(
@@ -174,7 +174,7 @@ def plot_pe_distribution(df, pe):
             y2=0
         ),
     ).encode(
-        x='PE:Q',
+        x=alt.X('PE:Q', title=axis_label),
         y=alt.Y('DENSITY:Q', title='', axis=alt.Axis(tickSize=0, domain=False, labelAngle=0, labelFontSize=0)),
         tooltip=(
             alt.Tooltip('PE:Q', format='.2f'),
@@ -189,11 +189,11 @@ def plot_pe_distribution(df, pe):
     return pes_dist+x_zero
 
 
-def plot_pe_timeseries(pe_df):
+def plot_pe_timeseries(pe_df, axis_label=None):
 
     chart = alt.Chart(pe_df).mark_line().encode(
         x = 'date:T',
-        y = alt.Y('pe').scale(zero=False),
+        y = alt.Y('pe', title=axis_label).scale(zero=False),
         tooltip=(
             alt.Tooltip('date:T'),
             alt.Tooltip('pe:Q', format='.2f')
