@@ -528,22 +528,23 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     start_date = datetime.now() - timedelta(days=365*year)
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
+    fin_currency = fin.loc[0, 'reportedCurrency']
     if val_metric == 'Price-to-Earnings':
         ratio = 'P/E'
-        pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
-        # pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe')
+        # pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
+        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe', currency=fin_currency)
     else:
         ratio = 'P/S'
-        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps')
+        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', currency=fin_currency)
         
     # pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     current_price = price_df['close'].values[0]
     median_pe = pe_df['pe'].median()
-    pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm)
+    pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
     val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
 
-    pe_ts_chart = hp.plot_pe_timeseries(pe_df)
+    pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
     val_cols[1].altair_chart(pe_ts_chart, use_container_width=True)
 
     with val_cols[2]:
