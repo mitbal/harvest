@@ -529,8 +529,11 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
     if val_metric == 'Price-to-Earnings':
+        ratio = 'P/E'
         pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
+        # pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe')
     else:
+        ratio = 'P/S'
         pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps')
         
     # pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
@@ -548,12 +551,12 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         markdown_table = f'''
         | Metric | Value |
         | ------ | ----- |
-        | Current PE | {pe_ttm:.2f} |
+        | Current {ratio} | {pe_ttm:.2f} |
         | Current Price | {int(current_price):,} |
-        | Median last {year} year PE | {median_pe:.2f} |
+        | Median last {year} year {ratio} | {median_pe:.2f} |
         | Fair Price | {int((median_pe/pe_ttm)*current_price):,} |
-        | 95% Confidence Interval range PE | {ci[0]:.2f} - {ci[1]:.2f} |
-        | 95% Confidence Interval range Price | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
+        | 95% Confidence Interval range {ratio} | {ci[0]:.2f} - {ci[1]:.2f} |
+        | 95% Confidence Interval range {ratio} | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         '''
         # if industry_pe != -1 and sector_pe != -1:
         #     markdown_table += f"| Industry: {industry_name} PE | {industry_pe:.2f} | \n \
