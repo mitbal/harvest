@@ -271,19 +271,24 @@ def calc_div_score(df):
     return score
 
 
-def calc_ratio_history(price_df, fin_df, n_shares=None, ratio='pe'):
+def calc_ratio_history(price_df, fin_df, n_shares=None, ratio='pe', currency='IDR'):
 
     pdf = price_df[['date', 'close']].copy()
     pdf['date'] = pd.to_datetime(pdf['date'])
     pdf = pdf.sort_values('date')
 
     if ratio == 'pe':
-        fin_metric = 'eps'
+        fin_metric = 'netIncome'
     elif ratio == 'ps':
         fin_metric = 'revenue'
 
+    if currency == 'USD':
+        exchange_rate = 16_618
+    else:
+        exchange_rate = 1
+
     k = f'{fin_metric}_per_share'
-    fin_df[k] = fin_df[fin_metric] / n_shares
+    fin_df[k] = fin_df[fin_metric] * exchange_rate / n_shares
     ratio_df = fin_df[['date', k]].sort_values(ascending=True, by='date').rolling(window=4, on='date').sum()
     ratio_df['date'] = pd.to_datetime(ratio_df['date'])
     ratio_df = ratio_df.sort_values('date')
