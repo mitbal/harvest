@@ -515,13 +515,6 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     if stock_name in filtered_df.index:
         sector_name = filtered_df.loc[stock_name, 'sector']
         industry_name = filtered_df.loc[stock_name, 'industry']
-
-        # try:
-        #     sector_pe = float(sector_df[sector_df['sector'] == sector_name]['pe'].to_list()[0])
-        #     industry_pe = float(industry_df[industry_df['industry'] == industry_name]['pe'].to_list()[0])
-        # except Exception:
-        #     sector_pe = industry_pe = -1
-        #     logger.error(f'sector or industry not found for {stock_name} in sector {sector_name} and industry {industry_name}')
     else:
         sector_pe = industry_pe = -1
 
@@ -531,13 +524,11 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     fin_currency = fin.loc[0, 'reportedCurrency']
     if val_metric == 'Price-to-Earnings':
         ratio = 'P/E'
-        # pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
         pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe', currency=fin_currency)
     else:
         ratio = 'P/S'
         pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', currency=fin_currency)
         
-    # pe_df = hd.calc_pe_history(last_year_df, fin, n_shares=n_share, currency=currency)
     pe_ttm = pe_df['pe'].values[-1]
     current_price = price_df['close'].values[0]
     median_pe = pe_df['pe'].median()
