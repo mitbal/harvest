@@ -177,7 +177,7 @@ def plot_pe_distribution(df, pe, axis_label=None):
         x=alt.X('PE:Q', title=axis_label),
         y=alt.Y('DENSITY:Q', title='', axis=alt.Axis(tickSize=0, domain=False, labelAngle=0, labelFontSize=0)),
         tooltip=(
-            alt.Tooltip('PE:Q', format='.2f'),
+            alt.Tooltip('PE:Q', format='.2f', title=axis_label),
         )
     )
     x_zero = kde.mark_rule().encode(
@@ -195,8 +195,8 @@ def plot_pe_timeseries(pe_df, axis_label=None):
         x = 'date:T',
         y = alt.Y('pe', title=axis_label).scale(zero=False),
         tooltip=(
-            alt.Tooltip('date:T'),
-            alt.Tooltip('pe:Q', format='.2f')
+            alt.Tooltip('date:T', title='Date'),
+            alt.Tooltip('pe:Q', format='.2f', title=axis_label)
         )
     )
     return chart
