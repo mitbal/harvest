@@ -512,23 +512,31 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
 
     val_cols = st.columns(3, gap='large')
 
-    if stock_name in filtered_df.index:
-        sector_name = filtered_df.loc[stock_name, 'sector']
-        industry_name = filtered_df.loc[stock_name, 'industry']
-    else:
-        sector_pe = industry_pe = -1
-
     start_date = datetime.now() - timedelta(days=365*year)
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
     fin_currency = fin.loc[0, 'reportedCurrency']
     if val_metric == 'Price-to-Earnings':
         ratio = 'P/E'
+        pratio = 'peRatio'
         pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe', currency=fin_currency)
     else:
         ratio = 'P/S'
+        pratio = 'psRatio'
         pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', currency=fin_currency)
         
+    if stock_name in filtered_df.index:
+        sector_name = filtered_df.loc[stock_name, 'sector']
+        industry_name = filtered_df.loc[stock_name, 'industry']
+
+        sector_df = filtered_df[filtered_df['sector'] == sector_name]
+        sector_pe = (sector_df['mktCap'] * sector_df[pratio]).sum() / sector_df['mktCap'].sum()
+
+        industry_df = filtered_df[filtered_df['industry'] == industry_name]
+        industry_pe = (industry_df['mktCap'] * industry_df[pratio]).sum() / industry_df['mktCap'].sum()
+    else:
+        sector_pe = industry_pe = -1
+
     pe_ttm = pe_df['pe'].values[-1]
     current_price = price_df['close'].values[0]
     median_pe = pe_df['pe'].median()
@@ -550,9 +558,9 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         | 95% Confidence Interval range {ratio} | {ci[0]:.2f} - {ci[1]:.2f} |
         | 95% Confidence Interval range {ratio} | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         '''
-        # if industry_pe != -1 and sector_pe != -1:
-        #     markdown_table += f"| Industry: {industry_name} PE | {industry_pe:.2f} | \n \
-        # | Sector: {sector_name} PE | {sector_pe:.2f} |"
+        if industry_pe != -1 and sector_pe != -1:
+            markdown_table += f"| Industry: {industry_name} {ratio} | {industry_pe:.2f} | \n \
+        | Sector: {sector_name} {ratio} | {sector_pe:.2f} |"
         
         st.markdown(markdown_table)
 
