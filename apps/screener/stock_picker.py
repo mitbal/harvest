@@ -546,13 +546,15 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
     val_cols[1].altair_chart(pe_ts_chart, use_container_width=True)
 
+    highlight_color = 'green' if pe_ttm <= median_pe else 'red'
+
     with val_cols[2]:
         ci = pe_df['pe'].quantile([.05, .95]).values
         markdown_table = f'''
         | Metric | Value |
         | ------ | ----- |
-        | Current {ratio} | {pe_ttm:.2f} |
-        | Current Price | {int(current_price):,} |
+        | Current {ratio} | **:{highlight_color}[{pe_ttm:.2f}]** |
+        | Current Price | **:{highlight_color}[{int(current_price):,}]** |
         | Median last {year} year {ratio} | {median_pe:.2f} |
         | Fair Price | {int((median_pe/pe_ttm)*current_price):,} |
         | 95% Confidence Interval range {ratio} | {ci[0]:.2f} - {ci[1]:.2f} |
