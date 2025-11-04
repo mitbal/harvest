@@ -558,7 +558,7 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         | Median last {year} year {ratio} | {median_pe:.2f} |
         | Fair Price | {int((median_pe/pe_ttm)*current_price):,} |
         | 95% Confidence Interval range {ratio} | {ci[0]:.2f} - {ci[1]:.2f} |
-        | 95% Confidence Interval range {ratio} | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
+        | 95% Confidence Interval range Price | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         '''
         if industry_pe != -1 and sector_pe != -1:
             markdown_table += f"| Industry: {industry_name} {ratio} | {industry_pe:.2f} | \n \
