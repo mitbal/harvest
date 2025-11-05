@@ -547,6 +547,8 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     val_cols[1].altair_chart(pe_ts_chart, use_container_width=True)
 
     highlight_color = 'green' if pe_ttm <= median_pe else 'red'
+    sector_color = 'green' if pe_ttm <= sector_pe else 'red'
+    industry_color = 'green' if pe_ttm <= industry_pe else 'red'
 
     with val_cols[2]:
         ci = pe_df['pe'].quantile([.05, .95]).values
@@ -561,8 +563,8 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         | 95% Confidence Interval range Price | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         '''
         if industry_pe != -1 and sector_pe != -1:
-            markdown_table += f"| Industry: {industry_name} {ratio} | {industry_pe:.2f} | \n \
-        | Sector: {sector_name} {ratio} | {sector_pe:.2f} |"
+            markdown_table += f"| Industry: {industry_name} {ratio} | **:{industry_color}[{industry_pe:.2f}]** | \n \
+        | Sector: {sector_name} {ratio} | **:{sector_color}[{sector_pe:.2f}]** |"
         
         st.markdown(markdown_table)
 
