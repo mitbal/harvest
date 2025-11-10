@@ -152,11 +152,20 @@ if sl == 'JKSE':
     if is_syariah:
         final_df = final_df[final_df['is_syariah'] == True]
 
+default_view = 'Table'
+if 'view' in st.query_params:
+    if st.query_params['view'] == 'treemap':
+        default_view = 'Treemap'
+
 full_table_section = st.container(border=True)
 with full_table_section:
 
     final_df['DScore'] = final_df['DScore'] * (10/final_df['peRatio']**3) * final_df['medianProfitMargin']
     final_df['marginTTM'] = final_df['earningTTM'] / final_df['revenueTTM'] * 100
+    # final_df['revenueGrowthTTM'] = final_df['revenueGrowthTTM'] * 100
+    # final_df['netIncomeGrowthTTM'] = final_df['netIncomeGrowthTTM'] * 100
+    # final_df['PEG TTM'] = final_df['peRatio'] / final_df['netIncomeGrowthTTM']
+    # final_df['PEG Median'] = final_df['peRatio'] / final_df['netIncomeGrowth']
 
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
                             & (final_df['numDividendYear'] > minimum_year)
@@ -165,7 +174,7 @@ with full_table_section:
     view = st.segmented_control(label='View Option', 
                          options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
                          selection_mode='single',
-                         default='Table')
+                         default=default_view)
 
     if view == 'Table':
 
