@@ -525,14 +525,18 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
     fin_currency = fin.loc[0, 'reportedCurrency']
+    if sl == 'jkse':
+        target_currency = 'IDR'
+    else:
+        target_currency = 'USD'
     if val_metric == 'Price-to-Earnings':
         ratio = 'P/E'
         pratio = 'peRatio'
-        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe', currency=fin_currency)
+        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe', reported_currency=fin_currency, target_currency=target_currency)
     else:
         ratio = 'P/S'
         pratio = 'psRatio'
-        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', currency=fin_currency)
+        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', reported_currency=fin_currency, target_currency=target_currency)
         
     if stock_name in filtered_df.index:
         sector_name = filtered_df.loc[stock_name, 'sector']
