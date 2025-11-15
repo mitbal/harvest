@@ -146,6 +146,8 @@ minimum_year = st.sidebar.number_input('Minimum Number of Year Dividend Paid', v
 logger = get_logger('screener')
 
 final_df = get_div_score_table(key)
+if sl != 'JKSE':
+    final_df = final_df.drop('GOOGL')
 
 if sl == 'JKSE':
     is_syariah = st.sidebar.toggle('Syariah Only?')
