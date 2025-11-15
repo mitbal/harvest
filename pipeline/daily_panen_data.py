@@ -257,7 +257,10 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
 
         try:
             fin_df = fin_dict[symbol]
-            fin_stats = hd.calc_fin_stats(fin_df)
+            if sl == 'jkse':
+                fin_stats = hd.calc_fin_stats(fin_df, target_currency='IDR')
+            elif sl == 'sp500':
+                fin_stats = hd.calc_fin_stats(fin_df, target_currency='USD')
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
             df.loc[symbol, 'revenueGrowthTTM'] = fin_stats['revenue_growth_TTM']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
