@@ -364,7 +364,7 @@ def calc_growth_stats(fin_df, metric='revenue'):
     return stats
 
 
-def calc_fin_stats(fin_df):
+def calc_fin_stats(fin_df, target_currency='IDR'):
 
     stats = {}
     stats = stats | calc_growth_stats(fin_df, metric='revenue')
@@ -378,8 +378,8 @@ def calc_fin_stats(fin_df):
     stats['earningTTM'] = rolling_income.loc[0, 'netIncome']
     stats['revenueTTM'] = rolling_revenue.loc[0, 'revenue']
 
-    currency = fin_df.loc[0, 'reportedCurrency']
-    if currency == 'USD':
+    reported_currency = fin_df.loc[0, 'reportedCurrency']
+    if target_currency == 'IDR' and reported_currency == 'USD':
         stats['earningTTM'] *= 16_618
         stats['revenueTTM'] *= 16_618
 
