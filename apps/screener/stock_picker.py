@@ -527,7 +527,7 @@ with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
     last_year_df = price_df[price_df['date']>= str(start_date)]
 
     fin_currency = fin.loc[0, 'reportedCurrency']
-    if sl == 'jkse':
+    if sl == 'JKSE':
         target_currency = 'IDR'
     else:
         target_currency = 'USD'
