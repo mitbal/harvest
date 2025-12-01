@@ -54,7 +54,8 @@ system_prompt = get_system_prompt()
 #     'Gemini 2.5 Pro': 'google/gemini-2.5-pro-exp-03-25:free'
 # }
 
-model_id_default    = 'google/gemini-2.0-flash-exp:free'
+# model_id_default    = 'google/gemini-2.0-flash-exp:free'
+model_id_default = 'google/gemma-3n-e2b-it:free'
 model_id_web_search = 'openai/gpt-5-mini:online'
 
 # Helper function to call OpenRouter API

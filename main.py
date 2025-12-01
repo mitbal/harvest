@@ -9,13 +9,14 @@ page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assista
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
 # page_trading = st.Page('apps/voc/copenhagen.py', title='Copenhagen Model', icon='🎮')
+# page_viz = st.Page('apps/viz/viz.py', title='Vis')
 
 pages = st.navigation(
     {
         'Home': [page_home],
         'Apps': [page_screener,
                  page_calendar,
-                 page_assistant,
+                #  page_assistant,
                  page_article,
                  page_simulator,
                  page_porto,
