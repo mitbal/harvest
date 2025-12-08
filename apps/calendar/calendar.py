@@ -3,6 +3,7 @@ import json
 import time
 import logging
 import calendar
+from datetime import datetime
 
 import redis
 import lesley
@@ -22,7 +23,11 @@ try:
 except Exception as e:
     print('Set Page config has been called before')
 
-st.title('Dividend Calendar 2025')
+current_year = datetime.today().year
+last_year = current_year - 1
+
+st.title(f'Dividend Calendar {current_year}')
+st.write(f'*based on {last_year} data*')
 
 sl = st.sidebar.segmented_control(
     label='Stock List', 
@@ -190,3 +195,6 @@ else:
         column_config=column_config,
         data=month_df
     )
+
+# TODO: Some statistics feature and analysis at the bottom of the page
+
