@@ -69,13 +69,18 @@ def store_to_supabase_storage(filename: str, content: dict) -> None:
 
 
 @flow
-def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
+def run_daily(
+    exch: str = 'jkse',
+    mcap_filter: int = 100_000_000_000,
+    dividend_years=None
+):
     """
     Runs the daily data pipeline for a given exchange.
 
     Args:
         exch:  Exchange ('jkse' or 'sp500').
         mcap_filter: Market capitalization filter.
+        dividend_years: Iterable of years to generate dividend calendar for; defaults to 2020-2025.
     """
     if exch not in ('jkse', 'sp500'):
         raise ValueError('exch must be either jkse or sp500')
@@ -107,8 +112,20 @@ def run_daily(exch: str = 'jkse', mcap_filter: int = 100_000_000_000):
     div_stats = compute_div_score(cp_df, financials, dividends, sl=exch)
     store_df_to_redis(f'div_score_{exch}', div_stats.reset_index())
 
-    div_cal = prep_div_cal(cp_df, dividends, filter=mcap_filter)
-    store_df_to_redis(f'div_cal_{exch}', div_cal)
+    target_years = dividend_years if dividend_years is not None else range(2020, 2026)
+    if isinstance(target_years, range):
+        target_years = list(target_years)
+
+    years_available = []
+    for year in target_years:
+        div_cal_year = prep_div_cal(cp_df, dividends, filter=mcap_filter, year=year)
+        if div_cal_year.empty:
+            continue
+        store_df_to_redis(f'div_cal_{exch}_{year}', div_cal_year)
+        years_available.append(year)
+
+    if years_available:
+        store_df_to_redis(f'div_cal_years_{exch}', pd.DataFrame({'year': sorted(years_available)}))
 
     # store_to_supabase_storage(f'data/{exch}/prices.pkl', prices)
     store_to_supabase_storage(f'data/{exch}/dividends.pkl', dividends)
@@ -230,7 +247,7 @@ def prep_div_cal(cp, div_dict, filter, year=2024):
     cp = cp[cp['mktCap'] >= filter].copy()
     cp.reset_index(drop=False, inplace=True)
 
-    div_df = hd.prep_div_cal(div_dict, cp, year)
+    div_df = hd.prep_div_cal(div_dict, cp, year=year)
     return div_df
 
 
@@ -336,5 +353,5 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
 
 if __name__ == '__main__':
     
-    run_daily(exch='jkse', mcap_filter=100_000_000_000)
+    run_daily(exch='jkse', mcap_filter=100_000_000_000, dividend_years=range(2020, 2026))
     # run_daily(exch='sp500', mcap_filter=10_000_000_000)
