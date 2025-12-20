@@ -4,13 +4,13 @@ import json
 import logging
 from datetime import datetime
 
-import redis
 import calendar
+import redis
 import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
-from st_supabase_connection import SupabaseConnection, execute_query
+from st_supabase_connection import SupabaseConnection
 
 import harvest.plot as hp
 import harvest.data as hd
@@ -46,10 +46,7 @@ def get_db_connection() -> SupabaseConnection:
 
 
 def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
-    user_in_db = execute_query(
-        conn.table("users").select("portfolio").eq("email", user_email),
-        ttl=0,
-    )
+    user_in_db = conn.table("users").select("portfolio").eq("email", user_email).execute()
     if len(user_in_db.data) > 0:
         logger.info(f'portfolio found for {user_email}')
         return user_in_db.data[0]['portfolio']
@@ -60,13 +57,10 @@ def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
 
 def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email: str) -> None:
 
-    execute_query(
-            conn.table("users").upsert(
-                {"email": user_email, "portfolio": portfolio, 'modified_at': datetime.now().isoformat()},
-                on_conflict="email",
-            ),
-            ttl=0,
-        )
+    conn.table("users").upsert(
+        {"email": user_email, "portfolio": portfolio, 'modified_at': datetime.now().isoformat()},
+        on_conflict="email",
+    ).execute()
     logger.info(f'portfolio updated for {user_email}')
 
 
