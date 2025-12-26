@@ -78,7 +78,7 @@ with st.sidebar:
         if st.button('Log in with Google', icon=':material/login:'):
             st.login('google')
     else:
-        st.markdown(f"Welcome! {st.user.name}")
+        st.text(f"Welcome! {st.user.name}")
         if st.button('Log Out', icon=':material/logout:'):
             st.logout()
 
