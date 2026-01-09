@@ -224,32 +224,55 @@ else:
     top_row = stats_df.loc[stats_df['yield'].idxmax()]
     st.caption(f"Highest yield: {top_row['symbol']} on {top_row['date'].strftime('%d %b')} at {top_row['yield']:.2f}% (dividend {top_row['adjDividend']:.2f}).")
 
-    monthly_summary = (
-        stats_df
-        .assign(month=stats_df['date'].dt.month)
-        .groupby('month')['yield']
-        .agg(['mean', 'count'])
-        .reset_index()
-        .rename(columns={'mean': 'avg_yield', 'count': 'events'})
-    )
-    month_order = list(calendar.month_abbr[1:])
-    monthly_summary['month_name'] = monthly_summary['month'].apply(lambda m: calendar.month_abbr[m])
-    monthly_summary['month_name'] = pd.Categorical(monthly_summary['month_name'], categories=month_order, ordered=True)
-    monthly_summary = monthly_summary.sort_values('month_name')
-
     charts = st.columns(2)
-    combo_base = alt.Chart(monthly_summary)
-    events_bar = combo_base.mark_bar(color='#1f77b4').encode(
-        x=alt.X('month_name:N', sort=month_order, title='Month'),
-        y=alt.Y('events:Q', title='Dividend count'),
-        tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('events:Q', title='Count')]
-    )
-    yield_line = combo_base.mark_line(color='#ff7f0e', point=True).encode(
-        x=alt.X('month_name:N', sort=month_order),
-        y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
-        tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
-    )
-    charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), use_container_width=True)
+
+    if view_control == 'Full Year':
+        monthly_summary = (
+            stats_df
+            .assign(month=stats_df['date'].dt.month)
+            .groupby('month')['yield']
+            .agg(['mean', 'count'])
+            .reset_index()
+            .rename(columns={'mean': 'avg_yield', 'count': 'events'})
+        )
+        month_order = list(calendar.month_abbr[1:])
+        monthly_summary['month_name'] = monthly_summary['month'].apply(lambda m: calendar.month_abbr[m])
+        monthly_summary['month_name'] = pd.Categorical(monthly_summary['month_name'], categories=month_order, ordered=True)
+        monthly_summary = monthly_summary.sort_values('month_name')
+
+        combo_base = alt.Chart(monthly_summary)
+        events_bar = combo_base.mark_bar(color='#1f77b4').encode(
+            x=alt.X('month_name:N', sort=month_order, title='Month'),
+            y=alt.Y('events:Q', title='Dividend count'),
+            tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('events:Q', title='Count')]
+        )
+        yield_line = combo_base.mark_line(color='#ff7f0e', point=True).encode(
+            x=alt.X('month_name:N', sort=month_order),
+            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
+        )
+        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), use_container_width=True)
+    else:
+        day_summary = (
+            stats_df
+            .assign(day=stats_df['date'].dt.day)
+            .groupby('day')['yield']
+            .agg(['mean', 'count'])
+            .reset_index()
+            .rename(columns={'mean': 'avg_yield', 'count': 'events'})
+        )
+        combo_base = alt.Chart(day_summary)
+        events_bar = combo_base.mark_bar(color='#1f77b4').encode(
+            x=alt.X('day:O', title='Ex-Date day'),
+            y=alt.Y('events:Q', title='Dividend count'),
+            tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('events:Q', title='Count')]
+        )
+        yield_line = combo_base.mark_line(color='#ff7f0e', point=True).encode(
+            x='day:O',
+            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
+        )
+        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), use_container_width=True)
 
     kde = alt.Chart(stats_df[['yield']]).transform_density(
         'yield',
