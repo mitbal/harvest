@@ -509,3 +509,43 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
     }
 
     return option
+
+
+def plot_radar_chart(categories, data, title='Rating'):
+    option = {
+        'title': {
+            'text': ''
+        },
+        'radar': {
+            'indicator': [{'name': c, 'max': 100} for c in categories],
+            'radius': '70%',
+            'center': ['50%', '55%'],
+            'axisName': {
+                'color': '#333',
+                'fontSize': 14,
+                'fontWeight': 'bold'
+            }
+        },
+        'series': [
+            {
+                'name': title,
+                'type': 'radar',
+                'data': [
+                    {
+                        'value': data,
+                        'name': title,
+                        'areaStyle': {
+                            'color': 'rgba(0, 200, 0, 0.3)'
+                        },
+                         'lineStyle': {
+                            'color': 'rgba(0, 150, 0, 1)'
+                        },
+                        'itemStyle': {
+                            'color': 'rgba(0, 150, 0, 1)'
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    return option

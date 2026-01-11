@@ -198,7 +198,12 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         score = ratings['overall']
         color = "green" if score >= 66 else "orange" if score >= 33 else "red"
         st.markdown(f"# :{color}[{score:.0f}/100]")
-        st.write("Based on average of 5 sub-ratings")
+        # st.write("Based on average of 5 sub-ratings")
+        
+        categories = ['Valuation', 'Dividend', 'Growth', 'Profitability', 'Sector']
+        data = [ratings['valuation'], ratings['dividend'], ratings['growth'], ratings['profitability'], ratings['sector']]
+        radar_option = hp.plot_radar_chart(categories, data)
+        st_echarts(radar_option, height='280px')
         
     with r1c2.container(border=True):
         render_rating_card('Valuation Rating', ratings['valuation'], {
