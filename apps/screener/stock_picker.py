@@ -93,7 +93,7 @@ def get_specific_stock_detail(stock_name):
         progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
 
         # start_date = (datetime.today() - timedelta(days=365*10)).isoformat()
-        start_date = '2015-01-01'
+        start_date = '2010-01-01'
         price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
         progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
         
