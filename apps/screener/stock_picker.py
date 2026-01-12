@@ -175,7 +175,7 @@ def calculate_stock_ratings(stock_name, filtered_df):
         }
     }
 
-def render_rating_card(title, score, metrics_dict):
+def render_rating_card(title, score, metrics_dict, chart=None):
     color = "green" if score >= 66 else "orange" if score >= 33 else "red"
     st.markdown(f"### {title}")
     st.markdown(f"## :{color}[{score:.0f}/100]")
@@ -185,6 +185,9 @@ def render_rating_card(title, score, metrics_dict):
             st.write(f"**{label}**: {value:.2f}")
         else:
             st.write(f"**{label}**: {value}")
+            
+    if chart:
+        st.altair_chart(chart, use_container_width=True)
 
 def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share):
     ratings = calculate_stock_ratings(stock_name, filtered_df)
@@ -206,10 +209,11 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         st_echarts(radar_option, height='280px')
         
     with r1c2.container(border=True):
+        dist_chart = hp.plot_card_distribution(filtered_df, 'peRatio', metrics['pe'])
         render_rating_card('Valuation Rating', ratings['valuation'], {
             'Current PE': metrics['pe'],
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['valuation'])
-        })
+        }, chart=dist_chart)
         
     with r1c3.container(border=True):
         render_rating_card('Dividend Rating', ratings['dividend'], {

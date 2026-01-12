@@ -183,7 +183,8 @@ def plot_pe_distribution(df, pe, axis_label=None):
     x_zero = kde.mark_rule().encode(
         x=alt.datum(pe),
         color=alt.value('red'),
-        size=alt.value(1),
+        size=alt.value(2),
+        tooltip=alt.Tooltip(format='.2f', title='Current val')
     )
    
     return pes_dist+x_zero
@@ -549,3 +550,42 @@ def plot_radar_chart(categories, data, title='Rating'):
         ]
     }
     return option
+
+
+def plot_card_distribution(df, column, current_val, color='green'):
+
+    # Handle outliers for better visualization: remove top and bottom 5%
+    # This ensures the distribution isn't squashed by extreme values
+    q95 = df[column].quantile(0.95)
+    q05 = df[column].quantile(0.05)
+    plot_df = df[(df[column] <= q95) & (df[column] >= q05)]
+    
+    kde = alt.Chart(plot_df).transform_density(
+        column,
+        as_=[column, 'density'],
+    ).mark_area(
+        line={'color': f'dark{color}'},
+        color=alt.Gradient(
+            gradient='linear',
+            stops=[alt.GradientStop(color='white', offset=0),
+                   alt.GradientStop(color=f'dark{color}', offset=1)],
+            x1=1,
+            x2=1,
+            y1=1,
+            y2=0
+        )
+    ).encode(
+        x=alt.X(f'{column}:Q', title=None, axis=None),
+        y=alt.Y('density:Q', axis=None),
+        tooltip=[alt.Tooltip(column, format='.2f')]
+    )
+    
+    # We create a dataframe for the rule. 
+    # If the current value is outside the plot range, we clip it to the edge so the user sees it's extreme
+    display_val = max(min(current_val, q95), q05)
+    
+    rule = alt.Chart(pd.DataFrame({column: [display_val]})).mark_rule(color='red', strokeWidth=2).encode(
+        x=column
+    )
+    
+    return (kde + rule).properties(height=50)
