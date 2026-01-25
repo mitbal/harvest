@@ -196,7 +196,8 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     # Row 1
     r1c1, r1c2, r1c3 = st.columns(3)
     
-    with r1c1.container(border=True):
+    card_height = 450
+    with r1c1.container(border=True, height=card_height):
         st.markdown(f"### Overall Rating")
         score = ratings['overall']
         color = "green" if score >= 66 else "orange" if score >= 33 else "red"
@@ -208,14 +209,14 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         radar_option = hp.plot_radar_chart(categories, data)
         st_echarts(radar_option, height='280px')
         
-    with r1c2.container(border=True):
+    with r1c2.container(border=True, height=card_height):
         dist_chart = hp.plot_card_distribution(filtered_df, 'peRatio', metrics['pe'])
         render_rating_card('Valuation Rating', ratings['valuation'], {
             'Current PE': metrics['pe'],
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['valuation'])
         }, chart=dist_chart)
         
-    with r1c3.container(border=True):
+    with r1c3.container(border=True, height=card_height):
         render_rating_card('Dividend Rating', ratings['dividend'], {
             'Yield': f"{metrics['yield']}%",
             'Years Paid': metrics['div_years'],
@@ -225,19 +226,19 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     # Row 2
     r2c1, r2c2, r2c3 = st.columns(3)
     
-    with r2c1.container(border=True):
+    with r2c1.container(border=True, height=card_height):
         render_rating_card('Sector Rating', ratings['sector'], {
             'Sector': metrics['sector'],
             'In Sector Rank': 'Better than {:.0f}% of peers'.format(ratings['sector'])
         })
         
-    with r2c2.container(border=True):
+    with r2c2.container(border=True, height=card_height):
         render_rating_card('Growth Rating', ratings['growth'], {
             'Rev Growth': f"{metrics['rev_growth']}%",
             'Net Inc Growth': f"{metrics['net_growth']}%"
         })
         
-    with r2c3.container(border=True):
+    with r2c3.container(border=True, height=card_height):
         render_rating_card('Profitability Rating', ratings['profitability'], {
             'Net Margin': f"{metrics['margin']}%",
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
