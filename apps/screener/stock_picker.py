@@ -219,8 +219,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     with r1c3.container(border=True, height=card_height):
         dist_chart = hp.plot_card_distribution(filtered_df, 'yield', metrics['yield'])
         render_rating_card('Dividend Rating', ratings['dividend'], {
-            'Yield': f"{metrics['yield']}%",
-            'Years Paid': metrics['div_years'],
+            'Yield': f"{metrics['yield']:.2f}% | **Years Paid**: {metrics['div_years']:.0f}",
              'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['dividend'])
         }, chart=dist_chart)
         
