@@ -175,10 +175,24 @@ def calculate_stock_ratings(stock_name, filtered_df):
         }
     }
 
-def render_rating_card(title, score, metrics_dict, chart=None):
-    color = "green" if score >= 66 else "orange" if score >= 33 else "red"
+def get_rating_color(score):
+    if score >= 80:
+        return '#1b5e20' # Dark Green
+    elif score >= 60:
+        return '#2e7d32' # Medium Green
+    elif score >= 40:
+        return '#e37400' # Dark Yellow/Amber
+    elif score >= 20: 
+        return '#e65100' # Dark Orange
+    else:
+        return '#c62828' # Dark Red
+
+def render_rating_card(title, score, metrics_dict, chart=None, color=None):
+    if color is None:
+        color = get_rating_color(score)
+        
     st.markdown(f"### {title}")
-    st.markdown(f"## :{color}[{score:.0f}/100]")
+    st.markdown(f"## <span style='color:{color}'>{score:.0f}/100</span>", unsafe_allow_html=True)
     
     for label, value in metrics_dict.items():
         if isinstance(value, float):
@@ -200,8 +214,8 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     with r1c1.container(border=True, height=card_height):
         st.markdown(f"### Overall Rating: {stock_name}")
         score = ratings['overall']
-        color = "green" if score >= 66 else "orange" if score >= 33 else "red"
-        st.markdown(f"# :{color}[{score:.0f}/100]")
+        color = get_rating_color(score)
+        st.markdown(f"# <span style='color:{color}'>{score:.0f}/100</span>", unsafe_allow_html=True)
         # st.write("Based on average of 5 sub-ratings")
         
         categories = ['Valuation', 'Dividend', 'Growth', 'Profitability', 'Sector']
@@ -210,47 +224,52 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         st_echarts(radar_option, height='280px')
         
     with r1c2.container(border=True, height=card_height):
-        dist_chart = hp.plot_card_distribution(filtered_df, 'peRatio', metrics['pe'])
+        color = get_rating_color(ratings['valuation'])
+        dist_chart = hp.plot_card_distribution(filtered_df, 'peRatio', metrics['pe'], color=color)
         render_rating_card('Valuation Rating', ratings['valuation'], {
             'Current PE': metrics['pe'],
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['valuation'])
-        }, chart=dist_chart)
+        }, chart=dist_chart, color=color)
         
     with r1c3.container(border=True, height=card_height):
-        dist_chart = hp.plot_card_distribution(filtered_df, 'yield', metrics['yield'])
+        color = get_rating_color(ratings['dividend'])
+        dist_chart = hp.plot_card_distribution(filtered_df, 'yield', metrics['yield'], color=color)
         render_rating_card('Dividend Rating', ratings['dividend'], {
             'Yield': f"{metrics['yield']:.2f}% | **Years Paid**: {metrics['div_years']:.0f}",
              'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['dividend'])
-        }, chart=dist_chart)
+        }, chart=dist_chart, color=color)
         
     # Row 2
     r2c1, r2c2, r2c3 = st.columns(3)
     
     with r2c1.container(border=True, height=card_height):
+        color = get_rating_color(ratings['sector'])
         sector_df = filtered_df[filtered_df['sector'] == metrics['sector']]
         if len(sector_df) > 5:
-            dist_chart = hp.plot_card_distribution(sector_df, 'peRatio', metrics['pe'])
+            dist_chart = hp.plot_card_distribution(sector_df, 'peRatio', metrics['pe'], color=color)
         else:
             dist_chart = None
             
         render_rating_card('Sector Rating', ratings['sector'], {
             'Sector': metrics['sector'],
             'In Sector Rank': 'Better than {:.0f}% of peers'.format(ratings['sector'])
-        }, chart=dist_chart)
+        }, chart=dist_chart, color=color)
         
     with r2c2.container(border=True, height=card_height):
-        dist_chart = hp.plot_card_distribution(filtered_df, 'revenueGrowth', metrics['rev_growth'])
+        color = get_rating_color(ratings['growth'])
+        dist_chart = hp.plot_card_distribution(filtered_df, 'revenueGrowth', metrics['rev_growth'], color=color)
         render_rating_card('Growth Rating', ratings['growth'], {
             'Rev Growth': f"{metrics['rev_growth']:.2f}%",
             'Net Inc Growth': f"{metrics['net_growth']:.2f}%"
-        }, chart=dist_chart)
+        }, chart=dist_chart, color=color)
         
     with r2c3.container(border=True, height=card_height):
-        dist_chart = hp.plot_card_distribution(filtered_df, 'medianProfitMargin', metrics['margin'])
+        color = get_rating_color(ratings['profitability'])
+        dist_chart = hp.plot_card_distribution(filtered_df, 'medianProfitMargin', metrics['margin'], color=color)
         render_rating_card('Profitability Rating', ratings['profitability'], {
             'Net Margin': f"{metrics['margin']:.2f}%",
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
-        }, chart=dist_chart)
+        }, chart=dist_chart, color=color)
 
 def render_company_profile(cp_df, stock_name):
     st.write(cp_df.loc[stock_name, 'description'])

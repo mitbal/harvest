@@ -560,20 +560,28 @@ def plot_card_distribution(df, column, current_val, color='green'):
     q05 = df[column].quantile(0.05)
     plot_df = df[(df[column] <= q95) & (df[column] >= q05)]
     
+    stops = [alt.GradientStop(color='white', offset=0)]
+    if color.startswith('#'):
+        line_color = color
+        stops.append(alt.GradientStop(color=color, offset=1))
+    else:
+        line_color = f'dark{color}'
+        stops.append(alt.GradientStop(color=f'dark{color}', offset=1))
+
     kde = alt.Chart(plot_df).transform_density(
         column,
         as_=[column, 'density'],
     ).mark_area(
-        line={'color': f'dark{color}'},
+        line={'color': line_color},
         color=alt.Gradient(
             gradient='linear',
-            stops=[alt.GradientStop(color='white', offset=0),
-                   alt.GradientStop(color=f'dark{color}', offset=1)],
+            stops=stops,
             x1=1,
             x2=1,
             y1=1,
             y2=0
         )
+
     ).encode(
         x=alt.X(f'{column}:Q', title=None, axis=None),
         y=alt.Y('density:Q', axis=None),
