@@ -241,14 +241,14 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     with r2c2.container(border=True, height=card_height):
         dist_chart = hp.plot_card_distribution(filtered_df, 'revenueGrowth', metrics['rev_growth'])
         render_rating_card('Growth Rating', ratings['growth'], {
-            'Rev Growth': f"{metrics['rev_growth']}%",
-            'Net Inc Growth': f"{metrics['net_growth']}%"
+            'Rev Growth': f"{metrics['rev_growth']:.2f}%",
+            'Net Inc Growth': f"{metrics['net_growth']:.2f}%"
         }, chart=dist_chart)
         
     with r2c3.container(border=True, height=card_height):
         dist_chart = hp.plot_card_distribution(filtered_df, 'medianProfitMargin', metrics['margin'])
         render_rating_card('Profitability Rating', ratings['profitability'], {
-            'Net Margin': f"{metrics['margin']}%",
+            'Net Margin': f"{metrics['margin']:.2f}%",
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
         }, chart=dist_chart)
 
