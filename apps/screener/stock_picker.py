@@ -198,7 +198,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     
     card_height = 450
     with r1c1.container(border=True, height=card_height):
-        st.markdown(f"### Overall Rating")
+        st.markdown(f"### Overall Rating: {stock_name}")
         score = ratings['overall']
         color = "green" if score >= 66 else "orange" if score >= 33 else "red"
         st.markdown(f"# :{color}[{score:.0f}/100]")
