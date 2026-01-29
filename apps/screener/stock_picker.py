@@ -217,32 +217,41 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         }, chart=dist_chart)
         
     with r1c3.container(border=True, height=card_height):
+        dist_chart = hp.plot_card_distribution(filtered_df, 'yield', metrics['yield'])
         render_rating_card('Dividend Rating', ratings['dividend'], {
             'Yield': f"{metrics['yield']}%",
             'Years Paid': metrics['div_years'],
              'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['dividend'])
-        })
+        }, chart=dist_chart)
         
     # Row 2
     r2c1, r2c2, r2c3 = st.columns(3)
     
     with r2c1.container(border=True, height=card_height):
+        sector_df = filtered_df[filtered_df['sector'] == metrics['sector']]
+        if len(sector_df) > 5:
+            dist_chart = hp.plot_card_distribution(sector_df, 'peRatio', metrics['pe'])
+        else:
+            dist_chart = None
+            
         render_rating_card('Sector Rating', ratings['sector'], {
             'Sector': metrics['sector'],
             'In Sector Rank': 'Better than {:.0f}% of peers'.format(ratings['sector'])
-        })
+        }, chart=dist_chart)
         
     with r2c2.container(border=True, height=card_height):
+        dist_chart = hp.plot_card_distribution(filtered_df, 'revenueGrowth', metrics['rev_growth'])
         render_rating_card('Growth Rating', ratings['growth'], {
             'Rev Growth': f"{metrics['rev_growth']}%",
             'Net Inc Growth': f"{metrics['net_growth']}%"
-        })
+        }, chart=dist_chart)
         
     with r2c3.container(border=True, height=card_height):
+        dist_chart = hp.plot_card_distribution(filtered_df, 'medianProfitMargin', metrics['margin'])
         render_rating_card('Profitability Rating', ratings['profitability'], {
             'Net Margin': f"{metrics['margin']}%",
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
-        })
+        }, chart=dist_chart)
 
 def render_company_profile(cp_df, stock_name):
     st.write(cp_df.loc[stock_name, 'description'])
