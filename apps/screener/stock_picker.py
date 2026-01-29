@@ -526,7 +526,7 @@ if 'view' in st.query_params:
 full_table_section = st.container(border=True)
 with full_table_section:
 
-    final_df['DScore'] = final_df['DScore'] * (10/final_df['peRatio']**3) * final_df['medianProfitMargin']
+    # final_df['DScore'] = final_df['DScore'] * (10/final_df['peRatio']**3) * final_df['medianProfitMargin']
     final_df['marginTTM'] = final_df['earningTTM'] / final_df['revenueTTM'] * 100
     # final_df['revenueGrowthTTM'] = final_df['revenueGrowthTTM'] * 100
     # final_df['netIncomeGrowthTTM'] = final_df['netIncomeGrowthTTM'] * 100
