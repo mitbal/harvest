@@ -126,8 +126,18 @@ def calculate_stock_ratings(stock_name, filtered_df):
     stock_data = filtered_df.loc[stock_name]
     
     # 1. Valuation Rating (inverted PE, lower is better)
-    pe_rank = filtered_df['peRatio'].rank(pct=True, ascending=False)
-    val_score = pe_rank[stock_name] * 100
+    # Filter for positive PE only for ranking
+    positive_pe_mask = filtered_df['peRatio'] > 0
+    
+    # Create a series initialized with 0 for all (punish negative PE)
+    val_score_series = pd.Series(0.0, index=filtered_df.index)
+    
+    if positive_pe_mask.any():
+        # Rank only positive PEs. ascending=False means High PE gets Low Rank/Pct, Low PE gets High Rank/Pct.
+        positive_ranks = filtered_df.loc[positive_pe_mask, 'peRatio'].rank(pct=True, ascending=False)
+        val_score_series.loc[positive_pe_mask] = positive_ranks * 100
+
+    val_score = val_score_series[stock_name]
     
     # 2. Dividend Rating (Consistency & Yield)
     # Average of dividend years percentile and yield percentile
@@ -149,8 +159,15 @@ def calculate_stock_ratings(stock_name, filtered_df):
     sector = stock_data['sector']
     sector_df = filtered_df[filtered_df['sector'] == sector]
     if len(sector_df) > 1:
-        sector_pe_rank = sector_df['peRatio'].rank(pct=True, ascending=False)
-        sector_score = sector_pe_rank[stock_name] * 100
+        # Same logic: punish negative PE
+        sector_pos_mask = sector_df['peRatio'] > 0
+        sector_scores = pd.Series(0.0, index=sector_df.index)
+        
+        if sector_pos_mask.any():
+            sector_ranks = sector_df.loc[sector_pos_mask, 'peRatio'].rank(pct=True, ascending=False)
+            sector_scores.loc[sector_pos_mask] = sector_ranks * 100
+            
+        sector_score = sector_scores[stock_name]
     else:
         sector_score = 50 # Default middle if no comparison
         
