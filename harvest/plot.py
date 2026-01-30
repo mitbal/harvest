@@ -564,7 +564,7 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val, color='green'):
+def plot_card_distribution(df, column, current_val, color='green', height=180):
 
     # Handle outliers for better visualization: remove top and bottom 5%
     # This ensures the distribution isn't squashed by extreme values
@@ -608,4 +608,33 @@ def plot_card_distribution(df, column, current_val, color='green'):
         x=column
     )
     
-    return (kde + rule).properties(height=180)
+    return (kde + rule).properties(height=height)
+
+
+def plot_card_histogram(df, column, current_val, color='green', height=180):
+    
+    if color.startswith('#'):
+        bar_color = color
+    else:
+        bar_color = f'dark{color}'
+
+    # Basic histogram with highlight
+    base = alt.Chart(df).transform_bin(
+        as_=['bin_min', 'bin_max'], field=column, bin=alt.Bin(maxbins=20, step=1)
+    ).mark_bar(
+        color=bar_color,
+        stroke=bar_color,
+        cursor='default'
+    ).encode(
+        x=alt.X('bin_min:Q', bin='binned', title=None, axis=None),
+        x2=alt.X2('bin_max:Q'),
+        y=alt.Y('count()', title=None, axis=None),
+        opacity=alt.condition(
+            f"datum.bin_min <= {current_val} && {current_val} < datum.bin_max",
+            alt.value(1.0),
+            alt.value(0.3)
+        ),
+        tooltip=[alt.Tooltip('bin_min:Q', title=column, format='.0f'), 'count()']
+    )
+
+    return base.properties(height=height)
