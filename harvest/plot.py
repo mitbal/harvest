@@ -596,4 +596,4 @@ def plot_card_distribution(df, column, current_val, color='green'):
         x=column
     )
     
-    return (kde + rule).properties(height=200)
+    return (kde + rule).properties(height=180)
