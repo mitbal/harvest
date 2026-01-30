@@ -122,8 +122,13 @@ def get_specific_stock_detail(stock_name):
 
 
 @st.cache_data
-def calculate_stock_ratings(stock_name, filtered_df):
-    stock_data = filtered_df.loc[stock_name]
+def calculate_stock_ratings(stock_name, filtered_df, final_df=None):
+    if stock_name in filtered_df.index:
+        stock_data = filtered_df.loc[stock_name]
+    elif final_df is not None and stock_name in final_df.index:
+        stock_data = final_df.loc[stock_name]
+    else:
+        return None
     
     # 1. Valuation Rating (inverted PE, lower is better)
     # Filter for positive PE only for ranking
@@ -137,22 +142,50 @@ def calculate_stock_ratings(stock_name, filtered_df):
         positive_ranks = filtered_df.loc[positive_pe_mask, 'peRatio'].rank(pct=True, ascending=False)
         val_score_series.loc[positive_pe_mask] = positive_ranks * 100
 
-    val_score = val_score_series[stock_name]
+    if stock_name in val_score_series.index:
+        val_score = val_score_series[stock_name]
+    else:
+        # Fallback: Calculate rank manually against filtered_df
+        if stock_data['peRatio'] > 0:
+             passing = filtered_df[filtered_df['peRatio'] > 0]
+             # Lower PE is better
+             if not passing.empty:
+                 better_than = passing[passing['peRatio'] > stock_data['peRatio']].shape[0]
+                 val_score = better_than / len(passing) * 100
+             else:
+                 val_score = 0
+        else:
+             val_score = 0
     
     # 2. Dividend Rating (Consistency & Yield)
     # Average of dividend years percentile and yield percentile
     div_year_rank = filtered_df['numDividendYear'].rank(pct=True)
     yield_rank = filtered_df['yield'].rank(pct=True)
-    div_score = (div_year_rank[stock_name] + yield_rank[stock_name]) / 2 * 100
+    
+    if stock_name in div_year_rank.index:
+        div_score = (div_year_rank[stock_name] + yield_rank[stock_name]) / 2 * 100
+    else:
+        dy_rank = (filtered_df['numDividendYear'] < stock_data['numDividendYear']).mean()
+        y_rank = (filtered_df['yield'] < stock_data['yield']).mean()
+        div_score = (dy_rank + y_rank) / 2 * 100
     
     # 3. Growth Rating (Revenue & Net Income)
     rev_growth_rank = filtered_df['revenueGrowth'].rank(pct=True)
     inc_growth_rank = filtered_df['netIncomeGrowth'].rank(pct=True)
-    growth_score = (rev_growth_rank[stock_name] + inc_growth_rank[stock_name]) / 2 * 100
+    
+    if stock_name in rev_growth_rank.index:
+        growth_score = (rev_growth_rank[stock_name] + inc_growth_rank[stock_name]) / 2 * 100
+    else:
+        rg_rank = (filtered_df['revenueGrowth'] < stock_data['revenueGrowth']).mean()
+        ig_rank = (filtered_df['netIncomeGrowth'] < stock_data['netIncomeGrowth']).mean()
+        growth_score = (rg_rank + ig_rank) / 2 * 100
     
     # 4. Profitability Rating (Margin)
     margin_rank = filtered_df['medianProfitMargin'].rank(pct=True)
-    profit_score = margin_rank[stock_name] * 100
+    if stock_name in margin_rank.index:
+        profit_score = margin_rank[stock_name] * 100
+    else:
+        profit_score = (filtered_df['medianProfitMargin'] < stock_data['medianProfitMargin']).mean() * 100
     
     # 5. Sector & Industry Rating
     # Compare PE vs Sector PE (lower is better relative to sector)
@@ -167,7 +200,15 @@ def calculate_stock_ratings(stock_name, filtered_df):
             sector_ranks = sector_df.loc[sector_pos_mask, 'peRatio'].rank(pct=True, ascending=False)
             sector_scores.loc[sector_pos_mask] = sector_ranks * 100
             
-        sector_score = sector_scores[stock_name]
+        if stock_name in sector_scores.index:
+            sector_score = sector_scores[stock_name]
+        else:
+             pass_sector = sector_df[sector_df['peRatio'] > 0]
+             if not pass_sector.empty and stock_data['peRatio'] > 0:
+                better = pass_sector[pass_sector['peRatio'] > stock_data['peRatio']].shape[0]
+                sector_score = better / len(pass_sector) * 100
+             else:
+                sector_score = 0
     else:
         sector_score = 50 # Default middle if no comparison
         
@@ -220,8 +261,13 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None):
     if chart:
         st.altair_chart(chart, use_container_width=True)
 
-def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share):
-    ratings = calculate_stock_ratings(stock_name, filtered_df)
+def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df):
+    ratings = calculate_stock_ratings(stock_name, filtered_df, final_df)
+    
+    if ratings is None:
+        st.warning(f"Dashboard View is not available for {stock_name} because it is missing some pre-computed metrics required for the dashboard. Please use correct spelling or switch to Classic View.")
+        return
+
     metrics = ratings['metrics']
     
     # Row 1
@@ -786,4 +832,4 @@ mode = "Dashboard" if stock_view_mode else "Classic"
 if mode == "Classic":
     render_classic_view(stock_name, final_df, fin, cp_df, price_df, sdf, n_share, sl)
 else:
-    render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share)
+    render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df)
