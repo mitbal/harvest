@@ -512,7 +512,19 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
     return option
 
 
-def plot_radar_chart(categories, data, title='Rating'):
+def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)'):
+    
+    # if color is hex, convert to rgba
+    if color.startswith('#'):
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+        line_color = f'rgba({r}, {g}, {b}, 1)'
+        area_color = f'rgba({r}, {g}, {b}, 0.3)'
+    else:
+        line_color = color
+        area_color = color.replace('1)', '0.3)').replace('1.0)', '0.3)')
+
     option = {
         'title': {
             'text': ''
@@ -536,13 +548,13 @@ def plot_radar_chart(categories, data, title='Rating'):
                         'value': data,
                         'name': title,
                         'areaStyle': {
-                            'color': 'rgba(0, 200, 0, 0.3)'
+                            'color': area_color
                         },
                          'lineStyle': {
-                            'color': 'rgba(0, 150, 0, 1)'
+                            'color': line_color
                         },
                         'itemStyle': {
-                            'color': 'rgba(0, 150, 0, 1)'
+                            'color': line_color
                         }
                     }
                 ]

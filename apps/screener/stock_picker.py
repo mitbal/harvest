@@ -220,7 +220,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         
         categories = ['Valuation', 'Dividend', 'Growth', 'Profitability', 'Sector']
         data = [ratings['valuation'], ratings['dividend'], ratings['growth'], ratings['profitability'], ratings['sector']]
-        radar_option = hp.plot_radar_chart(categories, data)
+        radar_option = hp.plot_radar_chart(categories, data, color=color)
         st_echarts(radar_option, height='250px')
         
     with r1c2.container(border=True, height=card_height):
