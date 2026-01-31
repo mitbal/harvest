@@ -830,7 +830,11 @@ fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name)
 
 
 # stock_view_mode = st.radio("View Mode", ["Classic", "Dashboard"], horizontal=True)
-stock_view_mode = st.toggle("Dashboard View", value=False)
+default_dashboard = False
+if 'overview' in st.query_params and st.query_params['overview'].lower() == 'true':
+    default_dashboard = True
+
+stock_view_mode = st.toggle("Dashboard View", value=default_dashboard)
 mode = "Dashboard" if stock_view_mode else "Classic"
 
 if mode == "Classic":
