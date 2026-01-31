@@ -599,7 +599,7 @@ with full_table_section:
     # final_df['PEG Median'] = final_df['peRatio'] / final_df['netIncomeGrowth']
 
     filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
-                            & (final_df['numDividendYear'] > minimum_year)
+                            & (final_df['numDividendYear'] >= minimum_year)
                             & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
 
     view = st.segmented_control(label='View Option', 
