@@ -322,7 +322,9 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         
     with r2c2.container(border=True, height=card_height):
         color = get_rating_color(ratings['growth'])
-        dist_chart = hp.plot_card_distribution(filtered_df, 'revenueGrowth', metrics['rev_growth'], color=color)
+        rev_chart = hp.plot_card_distribution(filtered_df, 'revenueGrowth', metrics['rev_growth'], color=color, height=80)
+        inc_chart = hp.plot_card_distribution(filtered_df, 'netIncomeGrowth', metrics['net_growth'], color=color, height=80)
+        dist_chart = (rev_chart & inc_chart)
         render_rating_card('Growth Rating', ratings['growth'], {
             'Rev Growth': f"{metrics['rev_growth']:.2f}%",
             'Net Inc Growth': f"{metrics['net_growth']:.2f}%"
