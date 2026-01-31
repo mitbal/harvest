@@ -245,7 +245,7 @@ def get_rating_color(score):
     else:
         return '#c62828' # Dark Red
 
-def render_rating_card(title, score, metrics_dict, chart=None, color=None):
+def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=None):
     if color is None:
         color = get_rating_color(score)
         
@@ -259,7 +259,7 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None):
             st.write(f"**{label}**: {value}")
             
     if chart:
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, use_container_width=True, key=key)
 
 def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df):
     ratings = calculate_stock_ratings(stock_name, filtered_df, final_df)
@@ -292,7 +292,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         render_rating_card('Valuation Rating', ratings['valuation'], {
             'Current PE': metrics['pe'],
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['valuation'])
-        }, chart=dist_chart, color=color)
+        }, chart=dist_chart, color=color, key=f"chart_val_{stock_name}")
         
     with r1c3.container(border=True, height=card_height):
         color = get_rating_color(ratings['dividend'])
@@ -302,7 +302,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         render_rating_card('Dividend Rating', ratings['dividend'], {
             'Yield': f"{metrics['yield']:.2f}% | **Years Paid**: {metrics['div_years']:.0f}",
              'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['dividend'])
-        }, chart=dist_chart, color=color)
+        }, chart=dist_chart, color=color, key=f"chart_div_{stock_name}")
         
     # Row 2
     r2c1, r2c2, r2c3 = st.columns(3)
@@ -318,7 +318,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         render_rating_card('Sector Rating', ratings['sector'], {
             'Sector': metrics['sector'],
             'In Sector Rank': 'Better than {:.0f}% of peers'.format(ratings['sector'])
-        }, chart=dist_chart, color=color)
+        }, chart=dist_chart, color=color, key=f"chart_sect_{stock_name}")
         
     with r2c2.container(border=True, height=card_height):
         color = get_rating_color(ratings['growth'])
@@ -326,7 +326,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         render_rating_card('Growth Rating', ratings['growth'], {
             'Rev Growth': f"{metrics['rev_growth']:.2f}%",
             'Net Inc Growth': f"{metrics['net_growth']:.2f}%"
-        }, chart=dist_chart, color=color)
+        }, chart=dist_chart, color=color, key=f"chart_growth_{stock_name}")
         
     with r2c3.container(border=True, height=card_height):
         color = get_rating_color(ratings['profitability'])
@@ -334,7 +334,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         render_rating_card('Profitability Rating', ratings['profitability'], {
             'Net Margin': f"{metrics['margin']:.2f}%",
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
-        }, chart=dist_chart, color=color)
+        }, chart=dist_chart, color=color, key=f"chart_profit_{stock_name}")
 
 def render_company_profile(cp_df, stock_name):
     st.write(cp_df.loc[stock_name, 'description'])
