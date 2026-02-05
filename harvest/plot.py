@@ -356,7 +356,7 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
     return full_chart
 
 
-def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade'):
+def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade', group_secs=True):
 
     cmap_options = {
         'red_green': ['#A30000', '#9f6e73', '#aaa', '#79ab78', '#08701b'],
@@ -365,39 +365,8 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
     }
 
     color = cmap_options[colormap]
-
-    base_series = [
-    {
-        "name": "ALL",
-        "type": "treemap",
-        "visibleMin": 200,
-        "width": "95%",
-        "height": "90%",
-        "label": {
-            "show": True,
-            "formatter": "{b}",
-            "position": "inside",
-            "verticalAlign": "middle",
-            "align": "center",
-            "fontSize": 11,
-            "overflow": "truncate"
-        },
-        "labelLayout": JsCode(
-                "function(params){if(params.rect.width<5||params.rect.height<5)return{fontSize:0};return{fontSize:Math.min(Math.sqrt(params.rect.width*params.rect.height)/7,25)};}"
-            ).js_code,
-        "upperLabel": {
-            "show": True,
-            "formatter": "{b}",
-            "color": "#111",
-            "fontSize": 14,
-            "fontWeight": "bold"
-        },
-        "itemStyle": {
-            "borderColor": "#fff",
-            "borderWidth": 1,
-            "gapWidth": 1
-        },
-        "levels": [
+    
+    levels = [
             # Level 0 → Root ALL
             {
                 "itemStyle": {
@@ -458,7 +427,75 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 },
                 "upperLabel": {"show": False}
             }
-        ],
+        ]
+    
+    if not group_secs:
+         levels = [
+            # Level 0 → Root ALL
+            {
+                "itemStyle": {
+                    "borderWidth": 1,
+                    "gapWidth": 1,
+                    "borderColor": "#eee"
+                },
+                "upperLabel": {
+                    "show": True,
+                    "color": "#111",
+                    "fontWeight": "bold",
+                    "fontSize": 14
+                },
+                "label": {"show": False}
+            },
+            # Level 1 → Individual Stocks (Leaves)
+            {
+                "itemStyle": {
+                    "borderWidth": 1,
+                    "gapWidth": 1,
+                    "borderColor": "#ccc",
+                },
+                "label": {
+                    "show": True,
+                    "color": "#fff",
+                    "fontSize": 10,
+                    'fontWeight': 'bold',
+                    "overflow": "truncate"
+                },
+                "upperLabel": {"show": False}
+            }
+         ]
+
+    base_series = [
+    {
+        "name": "ALL",
+        "type": "treemap",
+        "visibleMin": 200,
+        "width": "95%",
+        "height": "90%",
+        "label": {
+            "show": True,
+            "formatter": "{b}",
+            "position": "inside",
+            "verticalAlign": "middle",
+            "align": "center",
+            "fontSize": 11,
+            "overflow": "truncate"
+        },
+        "labelLayout": JsCode(
+                "function(params){if(params.rect.width<5||params.rect.height<5)return{fontSize:0};return{fontSize:Math.min(Math.sqrt(params.rect.width*params.rect.height)/7,25)};}"
+            ).js_code,
+        "upperLabel": {
+            "show": True,
+            "formatter": "{b}",
+            "color": "#111",
+            "fontSize": 14,
+            "fontWeight": "bold"
+        },
+        "itemStyle": {
+            "borderColor": "#fff",
+            "borderWidth": 1,
+            "gapWidth": 1
+        },
+        "levels": levels,
         "colorMappingBy": "index",
         "data": tree_data
     }
@@ -604,8 +641,10 @@ def plot_card_distribution(df, column, current_val, color='green', height=180):
     # If the current value is outside the plot range, we clip it to the edge so the user sees it's extreme
     display_val = max(min(current_val, q95), q05)
     
-    rule = alt.Chart(pd.DataFrame({column: [display_val]})).mark_rule(color='red', strokeWidth=2).encode(
+    rule = alt.Chart(pd.DataFrame({column: [display_val]})).mark_rule(color=color, strokeWidth=3).encode(
         x=column
+    ).encode(
+        tooltip=[alt.Tooltip(column, format='.2f')]
     )
     
     return (kde + rule).properties(height=height)

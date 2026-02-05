@@ -725,10 +725,11 @@ with full_table_section:
 
     elif view == 'Treemap':
         
-        treemap_cols = st.columns([1,1,3])
+        treemap_cols = st.columns([2,2,3,2])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
         color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=1)
         sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
+        group_secs = treemap_cols[3].toggle('Group by Sector', value=True)
         
         df_tree = filtered_df[['sector', 'industry']].copy()
 
@@ -767,8 +768,8 @@ with full_table_section:
             color_map = 'red_shade'
             color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
 
-        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label)
-        option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map)
+        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label, group_secs=group_secs)
+        option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map, group_secs=group_secs)
         
         click_event_js = """function(params){console.log('Clicked item:',params.name);return params.name;}"""
         

@@ -465,7 +465,7 @@ def prep_div_cal(div_dict, cp, year=2025):
     return div_df
 
 
-def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 2], add_label=None):
+def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 2], add_label=None, group_secs=True):
 
     if color_var is not None:
         if color_threshold is None:
@@ -480,17 +480,48 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                                     bins=bins,
                                     labels=labels).astype(float)
 
-        sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
-        industry_df = df.groupby('industry')[[size_var, 'color_grad']].sum()
+        if group_secs:
+            sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
+            industry_df = df.groupby('industry')[[size_var, 'color_grad']].sum()
     
     else:
-        sector_df = df.groupby('sector')[size_var].sum().to_frame()
-        industry_df = df.groupby('industry')[size_var].sum().to_frame()
+        if group_secs:
+            sector_df = df.groupby('sector')[size_var].sum().to_frame()
+            industry_df = df.groupby('industry')[size_var].sum().to_frame()
+
+    tree_data = []
+
+    if not group_secs:
+        stock_nodes = []
+        for stock in df.index:
+            value = [df.loc[stock, size_var]]
+            if color_var is not None:
+                value += [float(df.loc[stock, color_var]), int(df.loc[stock, 'color_grad'])]
+
+            name = stock
+            if add_label is not None:
+                if add_label == 'color_var':
+                    name = stock+'\n'+f'{float(df.loc[stock, color_var]):.2f}'
+                    if 'Ratio' not in color_var:
+                        name += '%'
+                else:
+                        name = stock+'\n'+f'{float(df.loc[stock, size_var]):.2f} B'
+            
+            stock_nodes.append({
+                'value': value,
+                'name': name,
+                'path': stock
+            })
+        
+        return [{
+            'name': 'ALL',
+            'children': stock_nodes,
+            'path': 'ALL'
+        }]
 
     map_sec_ind = df.groupby('sector')['industry'].apply(list).to_frame()
     map_ind_stock = df.reset_index().groupby('industry')['stock'].apply(list).to_frame()
 
-    tree_data = []
     sectors = sector_df.index.to_list()
     for sector in sectors:
         children = []
@@ -731,7 +762,7 @@ def calc_price_changes(
                     'weekly_price_change_pct': None,
                     'previous_price_7d': None
                 })
-            
+                
             # Monthly changes (30 days back)
             previous_price_30d = get_lookback_price(stock_df, idx, 30)
             if previous_price_30d is not None:
@@ -746,7 +777,7 @@ def calc_price_changes(
                     'monthly_price_change_pct': None,
                     'previous_price_30d': None
                 })
-            
+                
             # Yearly changes (365 days back)
             previous_price_365d = get_lookback_price(stock_df, idx, 365)
             if previous_price_365d is not None:
@@ -762,16 +793,16 @@ def calc_price_changes(
                     'previous_price_365d': None
                 })
             
-            # Add to daily changes data (only include rows with daily changes, except for first day)
+            # Add to dictionary using string date as key
             date_str = current_date.strftime('%Y-%m-%d')
             if date_str not in daily_changes_data:
                 daily_changes_data[date_str] = []
             
             daily_changes_data[date_str].append(change_data)
-    
-    # Convert to DataFrames for each date
+            
+    # Convert lists to DataFrames
     result = {}
-    for date, changes_list in daily_changes_data.items():
-        result[date] = pd.DataFrame(changes_list)
-    
+    for date_str, data_list in daily_changes_data.items():
+        result[date_str] = pd.DataFrame(data_list)
+        
     return result
