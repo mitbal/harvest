@@ -554,10 +554,17 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
         render_compounding_simulation(stock_name, price_df, sdf)
 
 
+
+default_sl = 'JKSE'
+if 'market' in st.query_params:
+    market_param = st.query_params['market']
+    if market_param in ['S&P500', 'SP500', 'US']:
+        default_sl = 'S&P500'
+
 sl = st.sidebar.segmented_control(label='Stock List', 
                          options=['JKSE', 'S&P500'],
                          selection_mode='single',
-                         default='JKSE')
+                         default=default_sl)
 
 if sl is None:
     st.stop()
