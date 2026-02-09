@@ -601,7 +601,7 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val, color='green', height=180):
+def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False):
 
     # Handle outliers for better visualization: remove top and bottom 5%
     # This ensures the distribution isn't squashed by extreme values
@@ -616,6 +616,11 @@ def plot_card_distribution(df, column, current_val, color='green', height=180):
     else:
         line_color = f'dark{color}'
         stops.append(alt.GradientStop(color=f'dark{color}', offset=1))
+
+    if show_axis:
+        x_axis = alt.X(f'{column}:Q')
+    else:
+        x_axis = alt.X(f'{column}:Q', title=None, axis=None)
 
     kde = alt.Chart(plot_df).transform_density(
         column,
@@ -632,22 +637,25 @@ def plot_card_distribution(df, column, current_val, color='green', height=180):
         )
 
     ).encode(
-        x=alt.X(f'{column}:Q', title=None, axis=None),
+        x=x_axis,
         y=alt.Y('density:Q', axis=None),
         tooltip=[alt.Tooltip(column, format='.2f')]
     )
     
-    # We create a dataframe for the rule. 
-    # If the current value is outside the plot range, we clip it to the edge so the user sees it's extreme
-    display_val = max(min(current_val, q95), q05)
-    
-    rule = alt.Chart(pd.DataFrame({column: [display_val]})).mark_rule(color=color, strokeWidth=3).encode(
-        x=column
-    ).encode(
-        tooltip=[alt.Tooltip(column, format='.2f')]
-    )
-    
-    return (kde + rule).properties(height=height)
+    if current_val is not None:
+        # We create a dataframe for the rule. 
+        # If the current value is outside the plot range, we clip it to the edge so the user sees it's extreme
+        display_val = max(min(current_val, q95), q05)
+        
+        rule = alt.Chart(pd.DataFrame({column: [display_val]})).mark_rule(color=color, strokeWidth=3).encode(
+            x=column
+        ).encode(
+            tooltip=[alt.Tooltip(column, format='.2f')]
+        )
+        
+        return (kde + rule).properties(height=height)
+    else:
+        return kde.properties(height=height)
 
 
 def plot_card_histogram(df, column, current_val, color='green', height=180):

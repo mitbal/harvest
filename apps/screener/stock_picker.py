@@ -801,14 +801,34 @@ with full_table_section:
 
     elif view == 'Distribution':
 
-        dist = alt.Chart(filtered_df).mark_bar(
-            opacity=0.3,
-            binSpacing=0
-        ).encode(
-            x=alt.X('yield').bin(maxbins=100),
-            y=alt.Y('count()').stack(None),
-        )
-        st.altair_chart(dist)
+        dist_options = {
+            'PE Ratio': 'peRatio',
+            'PS Ratio': 'psRatio',
+            'Dividend Yield': 'yield',
+            'Market Cap': 'mktCap',
+            'Revenue Growth': 'revenueGrowth',
+            'Net Income Growth': 'netIncomeGrowth',
+            'Profit Margin': 'medianProfitMargin',
+            'Num Dividend Year': 'numDividendYear'
+        }
+        
+        col1, col2 = st.columns([1, 3])
+        selected_dist = col1.selectbox('Select Metric', options=list(dist_options.keys()))
+        col_name = dist_options[selected_dist]
+        
+        color_map = {
+            'PE Ratio': 'green',
+            'PS Ratio': 'green',
+            'Dividend Yield': 'green',
+            'Revenue Growth': 'green',
+            'Net Income Growth': 'green',
+            'Profit Margin': 'green',
+            'Num Dividend Year': 'green',
+            'Market Cap': 'green'
+        }
+        
+        dist_chart = hp.plot_card_distribution(filtered_df, col_name, current_val=None, color=color_map.get(selected_dist, 'green'), height=400, show_axis=True)
+        st.altair_chart(dist_chart, use_container_width=True)
 
 
 if view == 'Table' and len(event.selection['rows']) > 0:
