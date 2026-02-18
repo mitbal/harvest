@@ -849,9 +849,18 @@ with full_table_section:
             'Num Dividend Year': 'numDividendYear'
         }
         
-        col1, col2 = st.columns([1, 3])
+        col1, col2, col3 = st.columns([1, 2, 1])
         selected_dist = col1.selectbox('Select Metric', options=list(dist_options.keys()))
         col_name = dist_options[selected_dist]
+
+        # Add comparison stocks multiselect
+        comparison_stocks = col2.multiselect('Compare with specific stocks', options=filtered_df.index.tolist())
+        
+        comparison_vals = {}
+        if comparison_stocks:
+            for s in comparison_stocks:
+                val = filtered_df.loc[s, col_name]
+                comparison_vals[s] = val
         
         color_map = {
             'PE Ratio': 'green',
@@ -864,7 +873,15 @@ with full_table_section:
             'Market Cap': 'green'
         }
         
-        dist_chart = hp.plot_card_distribution(filtered_df, col_name, current_val=None, color=color_map.get(selected_dist, 'green'), height=400, show_axis=True)
+        dist_chart = hp.plot_card_distribution(
+            filtered_df, 
+            col_name, 
+            current_val=None, 
+            color=color_map.get(selected_dist, 'green'), 
+            height=400, 
+            show_axis=True,
+            comparison_vals=comparison_vals if comparison_vals else None
+        )
         st.altair_chart(dist_chart, use_container_width=True)
 
 

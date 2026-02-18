@@ -601,7 +601,7 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False):
+def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None):
 
     # Handle outliers for better visualization: remove top and bottom 5%
     # This ensures the distribution isn't squashed by extreme values
@@ -642,6 +642,8 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         tooltip=[alt.Tooltip(column, format='.2f')]
     )
     
+    layers = [kde]
+
     if current_val is not None:
         # We create a dataframe for the rule. 
         # If the current value is outside the plot range, we clip it to the edge so the user sees it's extreme
@@ -652,10 +654,40 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         ).encode(
             tooltip=[alt.Tooltip(column, format='.2f')]
         )
+        layers.append(rule)
+
+    if comparison_vals is not None:
+        # comparison_vals is a dict of {label: value}
+        comp_data = []
+        for label, val in comparison_vals.items():
+            display_val = max(min(val, q95), q05)
+            comp_data.append({column: display_val, 'label': label})
         
-        return (kde + rule).properties(height=height)
-    else:
-        return kde.properties(height=height)
+        comp_df = pd.DataFrame(comp_data)
+        
+        # Add rules for comparison
+        comp_rules = alt.Chart(comp_df).mark_rule(color='blue', strokeWidth=2, strokeDash=[5, 5]).encode(
+            x=column,
+            tooltip=[alt.Tooltip('label'), alt.Tooltip(column, format='.2f')]
+        )
+        
+        # Add text labels for comparison
+        comp_text = alt.Chart(comp_df).mark_text(
+            align='left',
+            baseline='top',
+            dx=5,
+            dy=5,
+            angle=0,
+            color='blue'
+        ).encode(
+            x=column,
+            text='label',
+            y=alt.value(10)
+        )
+        layers.append(comp_rules)
+        layers.append(comp_text)
+
+    return alt.layer(*layers).properties(height=height)
 
 
 def plot_card_histogram(df, column, current_val, color='green', height=180):
