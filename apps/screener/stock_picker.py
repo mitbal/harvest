@@ -787,17 +787,54 @@ with full_table_section:
             width='1550px'
         )
     
+
     elif view == 'Scatter Plot':
 
-        sp = alt.Chart(filtered_df.reset_index()).mark_circle().encode(
-            y='yield',
-            x='revenueGrowth',
+        sp_options = {
+            'PE Ratio': 'peRatio',
+            'PS Ratio': 'psRatio',
+            'Dividend Yield': 'yield',
+            'Market Cap': 'mktCap',
+            'Revenue Growth': 'revenueGrowth',
+            'Net Income Growth': 'netIncomeGrowth',
+            'Profit Margin': 'medianProfitMargin',
+            'Num Dividend Year': 'numDividendYear'
+        }
+
+        sp_cols = st.columns(3)
+        x_metric = sp_cols[0].selectbox('X Axis', options=list(sp_options.keys()), index=0)
+        y_metric = sp_cols[1].selectbox('Y Axis', options=list(sp_options.keys()), index=2)
+        size_metric = sp_cols[2].selectbox('Size', options=list(sp_options.keys()), index=3)
+
+        x_col = sp_options[x_metric]
+        y_col = sp_options[y_metric]
+        size_col = sp_options[size_metric]
+
+        # Handle outliers for better visualization: remove top and bottom 5%
+        # This ensures the distribution isn't squashed by extreme values
+        q95_x = filtered_df[x_col].quantile(0.95)
+        q05_x = filtered_df[x_col].quantile(0.05)
+        q95_y = filtered_df[y_col].quantile(0.95)
+        q05_y = filtered_df[y_col].quantile(0.05)
+
+        plot_df = filtered_df[
+            (filtered_df[x_col] <= q95_x) & (filtered_df[x_col] >= q05_x) &
+            (filtered_df[y_col] <= q95_y) & (filtered_df[y_col] >= q05_y)
+        ]
+
+        sp = alt.Chart(plot_df.reset_index()).mark_circle().encode(
+            x=alt.X(x_col, title=x_metric),
+            y=alt.Y(y_col, title=y_metric),
+            size=alt.Size(size_col, title=size_metric),
             color='sector',
             tooltip=[
-                'stock', 'yield', 'revenueGrowth'
+                'stock', 
+                alt.Tooltip(x_col, title=x_metric, format='.2f'), 
+                alt.Tooltip(y_col, title=y_metric, format='.2f'),
+                alt.Tooltip(size_col, title=size_metric, format='.2f')
             ]
         ).interactive()
-        st.altair_chart(sp)
+        st.altair_chart(sp, use_container_width=True)
 
     elif view == 'Distribution':
 
