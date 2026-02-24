@@ -601,7 +601,7 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None):
+def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None, x_range=None):
 
     # Handle outliers for better visualization: remove top and bottom 5%
     # This ensures the distribution isn't squashed by extreme values
@@ -617,10 +617,15 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         line_color = f'dark{color}'
         stops.append(alt.GradientStop(color=f'dark{color}', offset=1))
 
-    if show_axis:
-        x_axis = alt.X(f'{column}:Q')
+    if x_range:
+        x_scale = alt.Scale(domain=list(x_range), clamp=True)
     else:
-        x_axis = alt.X(f'{column}:Q', title=None, axis=None)
+        x_scale = alt.Undefined
+
+    if show_axis:
+        x_axis = alt.X(f'{column}:Q', scale=x_scale)
+    else:
+        x_axis = alt.X(f'{column}:Q', title=None, axis=None, scale=x_scale)
 
     kde = alt.Chart(plot_df).transform_density(
         column,

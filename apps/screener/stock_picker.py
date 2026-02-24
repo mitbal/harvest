@@ -873,6 +873,19 @@ with full_table_section:
             'Market Cap': 'green'
         }
         
+        # Add range number inputs in col3
+        min_data = float(filtered_df[col_name].min())
+        max_data = float(filtered_df[col_name].max())
+        q05 = float(filtered_df[col_name].quantile(0.05))
+        q95 = float(filtered_df[col_name].quantile(0.95))
+        
+        with col3:
+            st.write("Zoom Range")
+            z_col1, z_col2 = st.columns(2)
+            z_min = z_col1.number_input("Min", value=q05, min_value=min_data, max_value=max_data, key=f"z_min_{col_name}")
+            z_max = z_col2.number_input("Max", value=q95, min_value=min_data, max_value=max_data, key=f"z_max_{col_name}")
+            x_range = (z_min, z_max)
+
         dist_chart = hp.plot_card_distribution(
             filtered_df, 
             col_name, 
@@ -880,7 +893,8 @@ with full_table_section:
             color=color_map.get(selected_dist, 'green'), 
             height=400, 
             show_axis=True,
-            comparison_vals=comparison_vals if comparison_vals else None
+            comparison_vals=comparison_vals if comparison_vals else None,
+            x_range=x_range
         )
         st.altair_chart(dist_chart, use_container_width=True)
 
