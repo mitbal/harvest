@@ -662,52 +662,61 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         layers.append(rule)
 
     if comparison_vals is not None:
+        # Distinct color palette for comparison stocks
+        _PALETTE = [
+            '#e41a1c', '#377eb8', '#ff7f00', '#984ea3',
+            '#a65628', '#f781bf', '#4daf4a', '#999999',
+        ]
+
         # comparison_vals is a dict of {label: value}
         comp_data = []
         # Sort by value to handle proximity in sequence
         sorted_comp = sorted(comparison_vals.items(), key=lambda x: x[1])
-        
+
         last_val = -float('inf')
         current_level = 0
         # Determine a proximity threshold based on the displayed range
         # If values are within 8% of the range, we stagger them
         threshold = (q95 - q05) * 0.08 if q95 > q05 else 1.0
-        
-        for label, val in sorted_comp:
+
+        for i, (label, val) in enumerate(sorted_comp):
             display_val = max(min(val, q95), q05)
-            
+
             if display_val - last_val < threshold:
                 current_level = (current_level + 1) % 4  # Cycle through 4 vertical levels
             else:
                 current_level = 0
-                
+
             y_pos = 10 + (current_level * 20)  # 20px spacing between levels
-            comp_data.append({column: display_val, 'label': label, 'y_pos': y_pos})
+            stock_color = _PALETTE[i % len(_PALETTE)]
+            comp_data.append({column: display_val, 'label': label, 'y_pos': y_pos, 'color': stock_color})
             last_val = display_val
-        
+
         comp_df = pd.DataFrame(comp_data)
-        
-        # Add rules for comparison
-        comp_rules = alt.Chart(comp_df).mark_rule(color='blue', strokeWidth=2, strokeDash=[5, 5]).encode(
-            x=column,
-            tooltip=[alt.Tooltip('label'), alt.Tooltip(column, format='.2f')]
-        )
-        
-        # Add text labels for comparison with staggered y-position
-        comp_text = alt.Chart(comp_df).mark_text(
-            align='left',
-            baseline='top',
-            dx=5,
-            dy=5,
-            angle=0,
-            color='blue'
-        ).encode(
-            x=column,
-            text='label',
-            y=alt.Y('y_pos:Q', axis=None).scale(domain=[0, height], range=[0, height])
-        )
-        layers.append(comp_rules)
-        layers.append(comp_text)
+
+        # Add one rule layer per stock so each can carry its own solid color
+        for row in comp_df.itertuples(index=False):
+            row_df = pd.DataFrame([{column: getattr(row, column), 'label': row.label, 'y_pos': row.y_pos}])
+            rule = alt.Chart(row_df).mark_rule(
+                color=row.color, strokeWidth=2
+            ).encode(
+                x=alt.X(f'{column}:Q'),
+                tooltip=[alt.Tooltip('label:N'), alt.Tooltip(f'{column}:Q', format='.2f')]
+            )
+            text = alt.Chart(row_df).mark_text(
+                align='left',
+                baseline='top',
+                dx=5,
+                dy=5,
+                angle=0,
+                color=row.color
+            ).encode(
+                x=alt.X(f'{column}:Q'),
+                text='label:N',
+                y=alt.Y('y_pos:Q', axis=None).scale(domain=[0, height], range=[0, height])
+            )
+            layers.append(rule)
+            layers.append(text)
 
     return alt.layer(*layers).resolve_scale(y='independent').properties(height=height)
 
