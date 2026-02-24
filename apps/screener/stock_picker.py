@@ -885,6 +885,8 @@ with full_table_section:
             z_min = z_col1.number_input("Min", value=q05, min_value=min_data, max_value=max_data, key=f"z_min_{col_name}")
             z_max = z_col2.number_input("Max", value=q95, min_value=min_data, max_value=max_data, key=f"z_max_{col_name}")
             x_range = (z_min, z_max)
+            fill_opacity = st.slider("Fill Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key=f"fill_opacity_{col_name}",
+                                     help="Set to 0 to disable the area fill (useful when many stock labels overlap the curve)")
 
         dist_chart = hp.plot_card_distribution(
             filtered_df, 
@@ -894,7 +896,8 @@ with full_table_section:
             height=400, 
             show_axis=True,
             comparison_vals=comparison_vals if comparison_vals else None,
-            x_range=x_range
+            x_range=x_range,
+            fill_opacity=fill_opacity
         )
         st.altair_chart(dist_chart, use_container_width=True)
 

@@ -601,7 +601,7 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None, x_range=None):
+def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None, x_range=None, fill_opacity=0.3):
 
     # Handle outliers for better visualization: remove top and bottom 5%
     # This ensures the distribution isn't squashed by extreme values
@@ -609,13 +609,12 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
     q05 = df[column].quantile(0.05)
     plot_df = df[(df[column] <= q95) & (df[column] >= q05)]
     
-    stops = [alt.GradientStop(color='white', offset=0)]
     if color.startswith('#'):
         line_color = color
-        stops.append(alt.GradientStop(color=color, offset=1))
+        fill_color_hex = color
     else:
         line_color = f'dark{color}'
-        stops.append(alt.GradientStop(color=f'dark{color}', offset=1))
+        fill_color_hex = f'dark{color}'
 
     if x_range:
         x_scale = alt.Scale(domain=list(x_range), clamp=True)
@@ -627,25 +626,42 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
     else:
         x_axis = alt.X(f'{column}:Q', title=None, axis=None, scale=x_scale)
 
-    kde = alt.Chart(plot_df).transform_density(
-        column,
-        as_=[column, 'density'],
-    ).mark_area(
-        line={'color': line_color},
-        color=alt.Gradient(
-            gradient='linear',
-            stops=stops,
-            x1=1,
-            x2=1,
-            y1=1,
-            y2=0
+    if fill_opacity <= 0:
+        # No fill: just show the outline line
+        kde = alt.Chart(plot_df).transform_density(
+            column,
+            as_=[column, 'density'],
+        ).mark_line(
+            color=line_color
+        ).encode(
+            x=x_axis,
+            y=alt.Y('density:Q', axis=None),
+            tooltip=[alt.Tooltip(column, format='.2f')]
         )
-
-    ).encode(
-        x=x_axis,
-        y=alt.Y('density:Q', axis=None),
-        tooltip=[alt.Tooltip(column, format='.2f')]
-    )
+    else:
+        stops = [
+            alt.GradientStop(color='white', offset=0),
+            alt.GradientStop(color=fill_color_hex, offset=1)
+        ]
+        kde = alt.Chart(plot_df).transform_density(
+            column,
+            as_=[column, 'density'],
+        ).mark_area(
+            line={'color': line_color},
+            opacity=fill_opacity,
+            color=alt.Gradient(
+                gradient='linear',
+                stops=stops,
+                x1=1,
+                x2=1,
+                y1=1,
+                y2=0
+            )
+        ).encode(
+            x=x_axis,
+            y=alt.Y('density:Q', axis=None),
+            tooltip=[alt.Tooltip(column, format='.2f')]
+        )
     
     layers = [kde]
 
@@ -709,6 +725,8 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
                 dx=5,
                 dy=5,
                 angle=0,
+                fontSize=13,
+                fontWeight='bold',
                 color=row.color
             ).encode(
                 x=alt.X(f'{column}:Q'),
