@@ -711,8 +711,10 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         comp_df = pd.DataFrame(comp_data)
 
         # Add one rule layer per stock so each can carry its own solid color
-        for row in comp_df.itertuples(index=False):
-            row_df = pd.DataFrame([{column: getattr(row, column), 'label': row.label, 'y_pos': row.y_pos}])
+        # Note: use iterrows() instead of itertuples() because column names that are
+        # Python reserved keywords (e.g. 'yield') get silently renamed by itertuples().
+        for _, row in comp_df.iterrows():
+            row_df = pd.DataFrame([{column: row[column], 'label': row['label'], 'y_pos': row['y_pos']}])
             rule = alt.Chart(row_df).mark_rule(
                 color=row.color, strokeWidth=2
             ).encode(
