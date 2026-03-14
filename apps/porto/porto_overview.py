@@ -248,7 +248,7 @@ with st.container(border=True):
         else:
             text_delta = f'{delta:.2f}% below benchmark'
         st.metric('Total Dividend Yield on Cost', 
-                  value=f'{total_yield_on_cost:.2f} %',
+                  value=f'{total_yield_on_cost:.3f} %',
                   delta=text_delta)
     
     overall_cols[1].metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
@@ -300,10 +300,10 @@ with st.container(border=True):
         }
 
         main_event = st.dataframe(
-            df_display,
+            df_display.set_index('Symbol'),
             on_select='rerun',
             selection_mode='single-row',
-            hide_index=True,
+            # hide_index=True,
             column_config=cfig
         )
 
