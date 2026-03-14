@@ -181,7 +181,7 @@ with st.expander('Data Input', expanded=data_input_expand_flag):
 
 api_key = os.environ['FMP_API_KEY']
 
-@st.cache_data
+@st.cache_data(ttl=60*60)
 def get_company_profile_data(porto):
 
     redis_url = os.environ['REDIS_URL']
@@ -200,7 +200,7 @@ def get_company_profile_data(porto):
     return df
 
 
-@st.cache_data
+@st.cache_data(ttl=60*60)
 def get_dividend_data(porto):
     stock_list = [x+'.JK' for x in porto['Symbol']]
     divs = {}
