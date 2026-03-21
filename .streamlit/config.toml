@@ -1,6 +1,6 @@
 [theme]
-base="light"
-primaryColor="#008631"
+base = "light"
+primaryColor = '#064E3B'
 secondaryBackgroundColor="#87CEFA"
 
 [server]
