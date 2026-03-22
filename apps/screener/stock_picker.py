@@ -555,16 +555,18 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
 
 
-default_sl = 'JKSE'
+default_sl = 0
 if 'market' in st.query_params:
     market_param = st.query_params['market']
     if market_param in ['S&P500', 'SP500', 'US']:
-        default_sl = 'S&P500'
+        default_sl = 1
 
-sl = st.sidebar.segmented_control(label='Stock List', 
-                         options=['JKSE', 'S&P500'],
-                         selection_mode='single',
-                         default=default_sl)
+# sl = st.sidebar.segmented_control(label='Stock List', 
+#                          options=['JKSE', 'S&P500'],
+#                          selection_mode='single',
+#                          default=default_sl)
+
+sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], horizontal=True, key='sl', index=default_sl)
 
 if sl is None:
     st.stop()
