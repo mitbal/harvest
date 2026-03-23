@@ -95,7 +95,8 @@ def run_daily(
 
     stock_list = idxs['symbol'].to_list()
     cp_df = hd.get_company_profile(stock_list)
-    stock_dividend_list = cp_df[(cp_df['lastDiv'] != 0) & (cp_df['isActivelyTrading'])].index.to_list()
+    # stock_dividend_list = cp_df[(cp_df['lastDiv'] != 0) & (cp_df['isActivelyTrading'])].index.to_list()
+    stock_dividend_list = cp_df[(cp_df['isActivelyTrading'])].index.to_list()
 
     if exch == 'jkse':
         dividends = download_dividends(stock_dividend_list)
@@ -255,7 +256,8 @@ def prep_div_cal(cp, div_dict, filter, year=2024):
 def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: str = 'jkse') -> pd.DataFrame:
     """Computes the dividend score for each stock."""
 
-    df = cp_df[(cp_df['lastDiv'] != 0)].copy()
+    # df = cp_df[(cp_df['lastDiv'] != 0)].copy()
+    df = cp_df.copy()
     df['yield'] = 0
     df['lastDiv'] = 0
     df['revenueGrowth'] = np.nan
