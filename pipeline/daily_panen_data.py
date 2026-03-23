@@ -269,6 +269,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['numDividendYear'] = np.nan
     df['positiveYear'] = np.nan
     df['numOfYear'] = np.nan
+    df['maximumCutPct'] = 0
     df['mktCap'] = df['mktCap'].astype(int)
 
     stock_list = df.index.tolist()
@@ -289,16 +290,16 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             df.loc[symbol, 'earningTTM'] = fin_stats['earningTTM']
 
             div_df = div_dict[symbol]
-            div_df = hd.preprocess_div(div_df)
-            div_stats = hd.calc_div_stats(div_df)
 
             if sl == 'jkse':
-                div_df = div_dict[symbol]
                 agg_year = div_df[div_df['dividend_type'] != 'special'].groupby('fiscal_year')['adjDividend'].sum().to_frame()
                 final_year = div_df[div_df['dividend_type'] == 'final']['fiscal_year'].to_list()[0]
                 last_div = agg_year.loc[final_year, 'adjDividend']
             elif sl == 'sp500':
                 last_div = cp_df.loc[symbol, 'lastDiv']
+
+            div_df = hd.preprocess_div(div_df)
+            div_stats = hd.calc_div_stats(div_df)
             
             div_incs = np.array([div_stats['historical_mean_flat'],
                                 div_stats['div_inc_5y_mean_flat']])
@@ -308,6 +309,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             df.loc[symbol, 'yield'] = last_div / df.loc[symbol, 'price'] * 100
             df.loc[symbol, 'avgFlatAnnualDivIncrease'] = np.min(div_incs)
             df.loc[symbol, 'avgPctAnnualDivIncrease'] = div_stats['historical_mean_pct']
+            df.loc[symbol, 'maximumCutPct'] = div_stats['maximum_cut_pct']
             df.loc[symbol, 'numDividendYear'] = div_stats['num_dividend_year']
             df.loc[symbol, 'positiveYear'] = div_stats['num_positive_year']
             df.loc[symbol, 'numOfYear'] = datetime.today().year - datetime.strptime(df.loc[symbol, 'ipoDate'], '%Y-%m-%d').year
@@ -325,7 +327,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
                'revenueGrowth', 'revenueGrowthTTM', 'netIncomeGrowth', 'netIncomeGrowthTTM', 'medianProfitMargin', 
                'earningTTM', 'revenueTTM', 'peRatio', 'psRatio',
-               'avgFlatAnnualDivIncrease', 'numDividendYear', 'DScore']
+               'avgFlatAnnualDivIncrease', 'numDividendYear', 'positiveYear', 'maximumCutPct', 'numOfYear', 'DScore']
     
     if sl == 'jkse':
         features = ['is_syariah'] + features
