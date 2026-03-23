@@ -1,7 +1,11 @@
 [theme]
 base = "light"
 primaryColor = '#064E3B'
-secondaryBackgroundColor="#87CEFA"
+backgroundColor = "#EFF1EF"
+secondaryBackgroundColor = "#67bed9"
+
+[theme.sidebar]
+backgroundColor = "#14532D"
 
 [server]
 enableStaticServing = true
