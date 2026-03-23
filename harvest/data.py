@@ -227,7 +227,7 @@ def preprocess_div(div_df):
     div_year_df = div_year_df.groupby('year')['adjDividend'].sum().to_frame().reset_index()
     
     start_year = div_year_df.loc[0, 'year']
-    end_year = div_year_df.loc[len(div_year_df)-1, 'year']
+    end_year = max(div_year_df.loc[len(div_year_df)-1, 'year'], datetime.datetime.today().year-1)
 
     years = list(range(start_year, end_year + 1))
     df_temp = pd.DataFrame({'year': years, 'value': [0]*len(years)})
