@@ -295,7 +295,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
                 agg_year = div_df[div_df['dividend_type'] != 'special'].groupby('fiscal_year')['adjDividend'].sum().to_frame()
                 final_year = div_df[div_df['dividend_type'] == 'final']['fiscal_year'].to_list()[0]
 
-                if final_year >= datetime.today().year-1:
+                if final_year >= datetime.today().year-2:
                     last_div = agg_year.loc[final_year, 'adjDividend']
                 else:
                     last_div = 0
