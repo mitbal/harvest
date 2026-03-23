@@ -25,13 +25,16 @@ except Exception as e:
     print('Set Page config has been called before')
 
 current_year = datetime.today().year
+current_month = datetime.today().month
 
-sl = st.sidebar.segmented_control(
-    label='Stock List',
-    options=['JKSE', 'S&P500'],
-    selection_mode='single',
-    default='JKSE'
-)
+# sl = st.sidebar.segmented_control(
+#     label='Stock List',
+#     options=['JKSE', 'S&P500'],
+#     selection_mode='single',
+#     default='JKSE'
+# )
+sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
+
 
 if sl is None:
     print('Please select one of the options above')
@@ -145,7 +148,17 @@ available_years = sorted(years_df['year'].astype(int).unique().tolist())
 if len(available_years) == 0:
     available_years = [current_year]
 default_year = current_year if current_year in available_years else max(available_years)
-selected_year = st.sidebar.selectbox('Year', available_years, index=available_years.index(default_year))
+
+time_param_cols = st.columns(2)
+selected_year = time_param_cols[0].selectbox('Year', available_years, index=available_years.index(default_year))
+
+# view_control = st.sidebar.segmented_control('Select View', ['Full Year', 'Single Month'], default='Full Year')
+view_control = st.sidebar.radio('Calendar View', ['Full Year', 'Single Month'], index=0, horizontal=True)
+month_index = None
+if view_control == 'Single Month':
+    months = list(calendar.month_name)
+    select_month = time_param_cols[1].selectbox('Month', months[1:], index=current_month-1)
+    month_index = months.index(select_month)
 
 div_cal_key = f'div_cal_{exch}_{selected_year}'
 df = get_data_from_redis(div_cal_key)
@@ -166,13 +179,6 @@ if sl == 'JKSE':
         df = df[df['is_syariah'] == True]
 else:
     show_next_year = False
-
-view_control = st.sidebar.segmented_control('Select View', ['Full Year', 'Single Month'], default='Full Year')
-month_index = None
-if view_control == 'Single Month':
-    months = list(calendar.month_name)
-    select_month = st.sidebar.selectbox('Select Month', months[1:])
-    month_index = months.index(select_month)
 
 if view_control == 'Full Year':
     cal = hp.plot_dividend_calendar(df, show_next_year=False, sl=sl)
