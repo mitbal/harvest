@@ -612,9 +612,11 @@ with full_table_section:
     # final_df['PEG TTM'] = final_df['peRatio'] / final_df['netIncomeGrowthTTM']
     # final_df['PEG Median'] = final_df['peRatio'] / final_df['netIncomeGrowth']
 
-    filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
-                            & (final_df['numDividendYear'] >= minimum_year)
-                            & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
+    # filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
+    #                         & (final_df['numDividendYear'] >= minimum_year)
+    #                         & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
+    filtered_df = final_df.fillna(0).sort_values('DScore', ascending=False)
+
 
     view = st.segmented_control(label='View Option', 
                          options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
@@ -779,6 +781,9 @@ with full_table_section:
         elif color_var == 'PS Ratio':
             color_map = 'red_shade'
             color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
+        elif color_var == 'Dividend Yield':
+            # color_map = 'red_green'
+            color_threshold = [0,1,2,3,4, 5, 6, 7,8,9,10]
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label, group_secs=group_secs)
         option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map, group_secs=group_secs)
