@@ -612,16 +612,33 @@ with full_table_section:
     # final_df['PEG TTM'] = final_df['peRatio'] / final_df['netIncomeGrowthTTM']
     # final_df['PEG Median'] = final_df['peRatio'] / final_df['netIncomeGrowth']
 
+    final_df['mc_penalty'] = final_df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x/1_000_000_000_000 - 1))))
+
+    final_df['maximumCutPct'] = final_df['maximumCutPct'].apply(lambda x: min(x, 0)*-1)
+    final_df['maxDivIncrease'] = final_df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
+    final_df['DScore'] = ((final_df['lastDiv'] + final_df['maxDivIncrease']*5*(final_df['positiveYear'] / final_df['numOfYear'])) / final_df['price']) * 100 \
+                        * (final_df['numOfYear']+25) \
+                        * (1 - np.exp(-final_df['numOfYear'] / 5)) \
+                        * (100-final_df['maximumCutPct'] ** .99) \
+                        * final_df['mc_penalty']
+                        # + ((final_df['numOfYear'] - final_df['positiveYear']) / (final_df['numOfYear']+25)) * (final_df['maximumCutPct']) \
+
+    # st.write(final_df.columns.to_list)
+
     # filtered_df = final_df[(final_df['mktCap'] >= minimum_market_cap*1000_000_000)
     #                         & (final_df['numDividendYear'] >= minimum_year)
     #                         & (final_df['lastDiv'] > 0)].sort_values('DScore', ascending=False)
     filtered_df = final_df.fillna(0).sort_values('DScore', ascending=False)
+    # filtered_df = filtered_df[(filtered_df['lastDiv'] > 0)]
 
 
-    view = st.segmented_control(label='View Option', 
+    top_cols = st.columns(2)
+    view = top_cols[0].segmented_control(label='View Option', 
                          options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
                          selection_mode='single',
                          default=default_view)
+    
+    # formula = top_cols[1].selectbox('Select Dividend Formula', ['Maximize Future Growth Potential', 'The Most Stable and Consistent'])
 
     if view == 'Table':
 
