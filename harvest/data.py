@@ -244,8 +244,8 @@ def calc_div_stats(div_df):
     div_df['inc_flat'] = div_df['adjDividend'] - div_df['adjDividend'].shift(1)
     div_df['inc_pct'] = div_df['inc_flat'] / div_df['adjDividend'].shift(1) * 100
 
-    stats['maximum_cut_pct'] = np.clip(div_df['inc_pct'].to_numpy(), a_min=-100, a_max=0).max()
-    stats['max_10y_cut_pct'] = np.clip(div_df['inc_pct'][-10:].to_numpy(), a_min=-100, a_max=0).max()
+    stats['maximum_cut_pct'] = div_df['inc_pct'].min()
+    stats['max_10y_cut_pct'] = div_df['inc_pct'][-10:-1].min()
 
     stats['historical_mean_flat'] = div_df['inc_flat'].mean()
     stats['div_inc_2y_mean_flat'] = div_df['inc_flat'][-2:].mean()
