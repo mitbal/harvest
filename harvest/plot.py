@@ -212,7 +212,7 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
 
     # fill in the blank for the year when they do not pay dividend
     start_year = yearly.loc[0, 'year']
-    end_year = yearly.loc[len(yearly)-1, 'year']
+    end_year = max(yearly.loc[len(yearly)-1, 'year'], datetime.today().year-1)
 
     years = list(range(start_year, end_year + 1))
     df_temp = pd.DataFrame({'year': years, 'value': [0]*len(years)})
