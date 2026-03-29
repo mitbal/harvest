@@ -591,6 +591,7 @@ if sl == 'JKSE':
         final_df = final_df[final_df['is_syariah'] == True]
 
 default_view = 'Table'
+color_var_index = 1
 if 'view' in st.query_params:
     if st.query_params['view'] == 'treemap':
         default_view = 'Treemap'
