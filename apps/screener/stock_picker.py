@@ -103,7 +103,6 @@ def get_specific_stock_detail(stock_name):
             sdf = hd.get_dividend_history_single_stock(stock_name, source='fmp')
         progress_bar.progress(80, text='Downloading historical dividend data... Progresss 80%')
 
-        # sector_df, industry_df = hd.get_sector_industry_pe((date.today()-timedelta(days=2)).isoformat(), api_key)
         progress_bar.progress(100, text='Progress 100% complete')
 
         end_time = time.time()
@@ -561,10 +560,6 @@ if 'market' in st.query_params:
     if market_param in ['S&P500', 'SP500', 'US']:
         default_sl = 1
 
-# sl = st.sidebar.segmented_control(label='Stock List', 
-#                          options=['JKSE', 'S&P500'],
-#                          selection_mode='single',
-#                          default=default_sl)
 
 sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], horizontal=True, key='sl', index=default_sl)
 
@@ -580,8 +575,6 @@ else:
     mcap_value = 100
     currency = 'USD'
 
-# minimum_market_cap = st.sidebar.number_input(f'Minimum Market Capitalization (in Billion {currency})', value=mcap_value, min_value=100, max_value=1000_1000)
-# minimum_year = st.sidebar.number_input('Minimum Number of Year Dividend Paid', value=1, min_value=0, max_value=25)
 
 minimum_market_cap = 0
 minimum_year = 0
@@ -608,8 +601,6 @@ with full_table_section:
     final_df['marginTTM'] = final_df['earningTTM'] / final_df['revenueTTM'] * 100
     final_df['revenueGrowthTTM'] = final_df['revenueGrowthTTM'] * 100
     final_df['netIncomeGrowthTTM'] = final_df['netIncomeGrowthTTM'] * 100
-    # final_df['PEG TTM'] = final_df['peRatio'] / final_df['netIncomeGrowthTTM']
-    # final_df['PEG Median'] = final_df['peRatio'] / final_df['netIncomeGrowth']
 
     final_df['mc_penalty'] = final_df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x/3_000_000_000_000 - 1))))
 
@@ -788,7 +779,6 @@ with full_table_section:
             color_map = 'red_shade'
             color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
         elif color_var == 'Dividend Yield':
-            # color_map = 'red_green'
             color_threshold = [0,1,2,3,4, 5, 6, 7,8,9,10]
 
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label, group_secs=group_secs)
@@ -944,7 +934,6 @@ else:
 fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name)
 
 
-# stock_view_mode = st.radio("View Mode", ["Classic", "Dashboard"], horizontal=True)
 default_dashboard = False
 if 'overview' in st.query_params and st.query_params['overview'].lower() == 'true':
     default_dashboard = True
