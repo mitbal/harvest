@@ -594,6 +594,8 @@ default_view = 'Table'
 if 'view' in st.query_params:
     if st.query_params['view'] == 'treemap':
         default_view = 'Treemap'
+        if st.query_params['color_var'] == 'return':
+            color_var_index = 5
 
 full_table_section = st.container(border=True)
 with full_table_section:
@@ -738,7 +740,7 @@ with full_table_section:
         
         treemap_cols = st.columns([2,2,3,2])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
-        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=1)
+        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=color_var_index)
         sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
         group_secs = treemap_cols[3].toggle('Group by Sector', value=True)
         
