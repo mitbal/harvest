@@ -608,12 +608,17 @@ with full_table_section:
     final_df['mc_penalty'] = final_df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x/3_000_000_000_000 - 1))))
 
     final_df['maximumCutPct'] = final_df['maximumCutPct'].apply(lambda x: min(x, 0)*-1)
+    final_df['max10CutPct'] = final_df['max10CutPct'].apply(lambda x: min(x, 0)*-1)
     final_df['maxDivIncrease'] = final_df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
+    final_df['maxRevGrowthDecrease'] = final_df.apply(lambda x: min(x['revenueGrowthTTM'], 0), axis=1)
+    final_df['maxIncGrowthDecrease'] = final_df.apply(lambda x: min(x['netIncomeGrowthTTM'], 0), axis=1)
     final_df['DScore'] = ((final_df['lastDiv'] + final_df['maxDivIncrease']*5*(final_df['positiveYear'] / final_df['numOfYear'])) / final_df['price']) * 100 \
                         * (final_df['numDividendYear']/ (final_df['numDividendYear']+25)) \
                         * (1 - np.exp(-final_df['numDividendYear'] / 5)) \
-                        * (100-final_df['maximumCutPct'])/100 \
-                        * final_df['mc_penalty']
+                        * (100-final_df['max10CutPct'])/100 \
+                        * final_df['mc_penalty'] \
+                        * ((1+final_df['maxRevGrowthDecrease']/100)) \
+                        * ((1+final_df['maxIncGrowthDecrease']/100)) \
 
     filtered_df = final_df.fillna(0).sort_values('DScore', ascending=False)
 
