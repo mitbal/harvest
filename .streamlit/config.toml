@@ -2,7 +2,8 @@
 base = "light"
 primaryColor = '#064E3B'
 backgroundColor = "#EFF1EF"
-secondaryBackgroundColor = "#67bed9"
+secondaryBackgroundColor = "#d7e0dd"
+dataframeHeaderBackgroundColor = '#d7e0dd'
 
 [theme.sidebar]
 backgroundColor = "#14532D"
