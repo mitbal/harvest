@@ -146,7 +146,7 @@ with st.expander('Stock Aggregation', expanded=True):
             x='Stock',
             y='Total Dividend'
         ).interactive()
-        st.altair_chart(bar_plot, use_container_width=True)
+        st.altair_chart(bar_plot, width='stretch')
 
 
 with st.expander('Year on Year Comparison', expanded=True):
@@ -161,7 +161,7 @@ with st.expander('Year on Year Comparison', expanded=True):
             y='Total Dividend'
         ).interactive()
 
-        st.altair_chart(plot_year, use_container_width=True)
+        st.altair_chart(plot_year, width='stretch')
 
     with col2:
 
@@ -174,7 +174,7 @@ with st.expander('Year on Year Comparison', expanded=True):
             y='Total Dividend:Q'
         ).interactive()
 
-        st.altair_chart(plot_month, use_container_width=True)
+        st.altair_chart(plot_month, width='stretch')
 
     param_cols = st.columns(3)
     first_year_param = df['year'].unique().tolist()
@@ -256,13 +256,13 @@ with st.expander('Sector and Industry Analysis', expanded=True):
             theta='Total Dividend:Q',
             color='sector',
         ).interactive()
-        st.altair_chart(plot_sectors, use_container_width=True)
+        st.altair_chart(plot_sectors, width='stretch')
 
         plot_industries = alt.Chart(agg_industry).mark_arc().encode(
             theta='Total Dividend:Q',
             color='industry',
         ).interactive()
-        st.altair_chart(plot_industries, use_container_width=True)
+        st.altair_chart(plot_industries, width='stretch')
 
 
 with st.expander('Single Stock View', expanded=True):

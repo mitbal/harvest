@@ -257,7 +257,7 @@ else:
             y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
             tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
         )
-        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), use_container_width=True)
+        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch')
     else:
         day_summary = (
             stats_df
@@ -278,7 +278,7 @@ else:
             y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
             tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
         )
-        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), use_container_width=True)
+        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch')
 
     kde = alt.Chart(stats_df[['yield']]).transform_density(
         'yield',
@@ -299,7 +299,7 @@ else:
         x='mean_yield:Q',
         tooltip=[alt.Tooltip('mean_yield:Q', format='.2f', title='Average yield')]
     )
-    charts[1].altair_chart((kde + mean_rule).properties(height=260), use_container_width=True)
+    charts[1].altair_chart((kde + mean_rule).properties(height=260), width='stretch')
 
     freq_df = (
         df.groupby('symbol')['date']
@@ -328,7 +328,7 @@ else:
     st.dataframe(
         freq_summary,
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
         column_config={
             'frequency': st.column_config.TextColumn('Frequency'),
             'count': st.column_config.NumberColumn('Companies', format='%d'),

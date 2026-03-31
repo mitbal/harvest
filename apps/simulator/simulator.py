@@ -395,7 +395,7 @@ with st.container(border=True):
 
     cols[1].altair_chart((investment_chart + return_chart)\
                     .resolve_scale(y='independent', color='independent'),
-                    use_container_width=True)
+                    width='stretch')
 
 
 ################################################################################
@@ -470,4 +470,4 @@ with st.container(border=True):
     )
 
     cols[1].altair_chart((investment_chart + return_chart).resolve_scale(y='independent'),
-                         use_container_width=True)
+                         width='stretch')

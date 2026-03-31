@@ -258,7 +258,7 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=N
             st.write(f"**{label}**: {value}")
             
     if chart:
-        st.altair_chart(chart, use_container_width=True, key=key)
+        st.altair_chart(chart, width='stretch', key=key)
 
 def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df):
     ratings = calculate_stock_ratings(stock_name, filtered_df, final_df)
@@ -359,7 +359,7 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df):
             inc_val = 0
 
         yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_val, inc_val=inc_val)
-        dividend_history_cols[1].altair_chart(yearly_dividend_chart, use_container_width=True)
+        dividend_history_cols[1].altair_chart(yearly_dividend_chart, width='stretch')
 
         with dividend_history_cols[2]:
             if stock_name in filtered_df.index:
@@ -397,17 +397,17 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
         metric = fin_cols[1].radio('Select Metrics', ['revenue', 'netIncome'], horizontal=True, key=f"metric_{stock_name}")
         fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
         with st.container(height=500):
-            st.altair_chart(fin_chart, use_container_width=False)
+            st.altair_chart(fin_chart, width='content')
     else:
         fin_view = fin_cols[1].radio('Select View', ['Separate', 'Combined'], horizontal=True, index=1, key=f"view_{stock_name}")
         if fin_view == 'Separate':
             annual_cols = st.columns([40,40,20])
             annual_cols[0].write('Annual Revenue Chart')
             revenue_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
-            annual_cols[0].altair_chart(revenue_chart, use_container_width=True)
+            annual_cols[0].altair_chart(revenue_chart, width='stretch')
             annual_cols[1].write('Annual Net Income Chart')
             income_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
-            annual_cols[1].altair_chart(income_chart, use_container_width=True)
+            annual_cols[1].altair_chart(income_chart, width='stretch')
             with annual_cols[2]:
                 if stock_name in filtered_df.index:
                     st.write('**Financial Metrics Summary**')
@@ -418,7 +418,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
             annual_cols = st.columns([80, 20])
             annual_cols[0].write('Annual Financial Chart')
             fin_chart = hp.plot_fin_chart(fin)
-            annual_cols[0].altair_chart(fin_chart, use_container_width=True)
+            annual_cols[0].altair_chart(fin_chart, width='stretch')
             with annual_cols[1]:
                 if stock_name in filtered_df.index:
                     st.write('**Financial Metrics Summary**')
@@ -428,7 +428,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
 
 def render_price_movement(price_df):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
-    st.altair_chart(candlestick_chart, use_container_width=True)
+    st.altair_chart(candlestick_chart, width='content')
 
 def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df):
     cols = st.columns(3, gap='large')
@@ -463,9 +463,9 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     median_pe = pe_df['pe'].median()
     
     pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
-    val_cols[0].altair_chart(pe_dist_chart, use_container_width=True)
+    val_cols[0].altair_chart(pe_dist_chart, width='stretch')
     pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
-    val_cols[1].altair_chart(pe_ts_chart, use_container_width=True)
+    val_cols[1].altair_chart(pe_ts_chart, width='stretch')
 
     highlight_color = 'green' if pe_ttm <= median_pe else 'red'
     sector_color = 'green' if pe_ttm <= sector_pe else 'red'
@@ -849,7 +849,7 @@ with full_table_section:
                 alt.Tooltip(size_col, title=size_metric, format='.2f')
             ]
         ).interactive()
-        st.altair_chart(sp, use_container_width=True)
+        st.altair_chart(sp, width='stretch')
 
     elif view == 'Distribution':
 
@@ -914,7 +914,7 @@ with full_table_section:
             x_range=x_range,
             fill_opacity=fill_opacity
         )
-        st.altair_chart(dist_chart, use_container_width=True)
+        st.altair_chart(dist_chart, width='stretch')
 
 
 if view == 'Table' and len(event.selection['rows']) > 0:
