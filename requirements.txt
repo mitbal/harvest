@@ -1,7 +1,7 @@
 redis==5.2.1
 numpy==1.26.4
 pandas==2.2.2
-altair==5.4.1
+altair==5.5.0
 lesley==0.3.0
 openai==1.63.2
 authlib==1.5.1
