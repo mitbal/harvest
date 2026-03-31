@@ -595,8 +595,9 @@ color_var_index = 1
 if 'view' in st.query_params:
     if st.query_params['view'] == 'treemap':
         default_view = 'Treemap'
-        if st.query_params['color_var'] == 'return':
-            color_var_index = 5
+        if 'color_var' in st.query_params:
+            if st.query_params['color_var'] == 'return':
+                color_var_index = 5
 
 full_table_section = st.container(border=True)
 with full_table_section:
