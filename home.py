@@ -3,8 +3,6 @@ import logging
 import streamlit as st
 from streamlit_lottie import st_lottie
 
-from harvest.utils import setup_logging
-
 #### Setup and configuration
 
 st.set_page_config(
@@ -20,15 +18,6 @@ if 'porto_file' not in st.session_state:
 if 'history_file' not in st.session_state:
     st.session_state['history_file'] = 'EMPTY'
 
-
-@st.cache_resource
-def get_logger(name, level=logging.INFO):
-
-    logger = setup_logging(name, level)
-    return logger
-
-logger = get_logger('porto')
-logger.info('opening the homepage')
 
 #### End of setup and configuration
 
