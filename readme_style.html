@@ -1,0 +1,72 @@
+<style>
+/* README section styling */
+.readme-wrapper h3 {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1a3c2e;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 3px solid #2E7D32;
+    display: inline-block;
+}
+
+.readme-wrapper h4 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #2E7D32;
+    margin-top: 28px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.readme-wrapper p {
+    font-size: 1.1rem;
+    color: #374151;
+    line-height: 1.8;
+    margin-bottom: 14px;
+}
+
+.readme-wrapper a {
+    color: #2E7D32;
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(46, 125, 50, 0.3);
+    transition: border-color 0.2s ease;
+}
+
+.readme-wrapper a:hover {
+    border-bottom-color: #2E7D32;
+}
+
+.readme-wrapper {
+    padding: 8px 4px;
+}
+
+/* Style the support/donation section */
+.readme-wrapper p:has(img[src*="trakteer"]),
+.readme-wrapper p:has(img[src*="buymeacoffee"]) {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-top: 12px;
+}
+
+.readme-wrapper img {
+    border-radius: 6px;
+    vertical-align: middle;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.readme-wrapper img:hover {
+    transform: translateY(-2px);
+    opacity: 0.9;
+}
+
+/* GitHub badge */
+.readme-wrapper img[src*="shields.io"] {
+    vertical-align: middle;
+}
+</style>

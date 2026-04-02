@@ -1,7 +1,37 @@
+import re
 import logging
 
 import streamlit as st
 from streamlit_lottie import st_lottie
+
+
+def md_to_html(text):
+    """Lightweight markdown-to-HTML converter using stdlib only."""
+    lines = text.split('\n')
+    html_lines = []
+    for line in lines:
+        # Headings
+        if line.startswith('#### '):
+            content = re.sub(r'\*\*(.+?)\*\*', r'\1', line[5:])
+            line = f'<h4>{content}</h4>'
+        elif line.startswith('### '):
+            content = re.sub(r'\*\*(.+?)\*\*', r'\1', line[4:])
+            line = f'<h3>{content}</h3>'
+        else:
+            # Images: ![alt](url) — must come before links
+            line = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<img src="\2" alt="\1">', line)
+            # Links with badges: [![alt](img_url)](link_url)
+            line = re.sub(r'\[!\[([^\]]*)\]\(([^)]+)\)\]\(([^)]+)\)',
+                          r'<a href="\3" target="_blank"><img src="\2" alt="\1"></a>', line)
+            # Inline links: [text](url)
+            line = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', line)
+            # Bold: **text**
+            line = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', line)
+            # Wrap non-empty, non-heading lines in <p>
+            if line.strip():
+                line = f'<p>{line}</p>'
+        html_lines.append(line)
+    return '\n'.join(html_lines)
 
 #### Setup and configuration
 
@@ -28,11 +58,16 @@ with cols[0]:
     st_lottie(animation_source='https://lottie.host/632869fc-4f0f-4707-84ff-00c73c591eed/QEtuVsuLs5.json',
               height=380)
 
+with open('readme_style.html', 'r') as f:
+    readme_style = f.read()
+
 with open('README.md', 'r') as f:
-    desc = f.read()
+    desc_md = f.read()
+desc_html = md_to_html(desc_md)
 
 with cols[1]:
-    st.markdown(desc, unsafe_allow_html=True)
+    st.markdown(readme_style, unsafe_allow_html=True)
+    st.markdown(f'<div class="readme-wrapper">{desc_html}</div>', unsafe_allow_html=True)
 
 ##### Features breakdown
 
@@ -46,31 +81,7 @@ with open('feature.html', 'r') as f:
     feature = f.read()
 st.html(feature)
 
-footer="""<style>
-a:link , a:visited{
-color: blue;
-background-color: transparent;
-# text-decoration: underline;
-}
+with open('footer.html', 'r') as f:
+    footer = f.read()
+st.markdown(footer, unsafe_allow_html=True)
 
-a:hover,  a:active {
-color: red;
-background-color: transparent;
-# text-decoration: underline;
-}
-
-.footer {
-position: fixed;
-left: 0;
-bottom: 0;
-width: 100%;
-background-color: #EFF1EF;
-color: black;
-text-align: center;
-}
-</style>
-<div class="footer">
-<p>Developed with ♥️ and lots of ☕ by <a style='display: block; text-align: center;' href="https://github.com/mitbal" target="_blank">mitochondrion</a></p>
-</div>
-"""
-st.markdown(footer,unsafe_allow_html=True)
