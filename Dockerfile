@@ -20,6 +20,8 @@ COPY README.md ./README.md
 COPY Makefile ./Makefile
 COPY style.html ./style.html
 COPY feature.html ./feature.html
+COPY readme_style.html ./readme_style.html
+COPY footer.html ./footer.html
 COPY .streamlit/config.toml ./.streamlit/config.toml
 
 EXPOSE 8501
