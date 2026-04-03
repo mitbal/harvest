@@ -6,6 +6,11 @@ import streamlit as st
 from harvest.utils import setup_logging
 
 
+st.set_page_config(
+    layout='wide'
+)
+
+
 # Suppress noisy asyncio/tornado logs from Railway/Docker disconnections
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 logging.getLogger('tornado.access').setLevel(logging.CRITICAL)
@@ -89,5 +94,5 @@ with st.sidebar:
     st.markdown('[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/mitbal)')
     st.html(f'Join the Community!<br/>'+'<a href="https://reddit.com/r/panendividen" target="_blank"><img id="wse-buttons-preview" src="https://images.icon-icons.com/2530/PNG/512/reddit_button_icon_151844.png" height="30" style="border:0px;height:40px;" alt="Reddit r/panendividen"></a> ')
     st.divider()
-pages.run()
 
+pages.run()

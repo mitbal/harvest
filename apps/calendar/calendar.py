@@ -8,31 +8,17 @@ from datetime import datetime
 import redis
 import lesley
 import pandas as pd
-import streamlit as st
 import altair as alt
+import streamlit as st
 
 import harvest.plot as hp
 from harvest.utils import setup_logging
 
 
-try:
-    st.set_page_config(
-        layout='wide',
-        page_icon='📅',
-        page_title='Dividend Calendar',
-    )
-except Exception as e:
-    print('Set Page config has been called before')
-
 current_year = datetime.today().year
 current_month = datetime.today().month
 
-# sl = st.sidebar.segmented_control(
-#     label='Stock List',
-#     options=['JKSE', 'S&P500'],
-#     selection_mode='single',
-#     default='JKSE'
-# )
+
 sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
 
 
@@ -53,11 +39,9 @@ url = os.environ['REDIS_URL']
 #### Function definition
 
 
-@st.cache_resource
 def get_logger(name, level=logging.INFO):
 
     logger = setup_logging(name, level)
-    logger.info('a new user is opening the calendar page')
     return logger
 
 logger = get_logger('calendar')
@@ -152,7 +136,6 @@ default_year = current_year if current_year in available_years else max(availabl
 time_param_cols = st.columns(2)
 selected_year = time_param_cols[0].selectbox('Year', available_years, index=available_years.index(default_year))
 
-# view_control = st.sidebar.segmented_control('Select View', ['Full Year', 'Single Month'], default='Full Year')
 view_control = st.sidebar.radio('Calendar View', ['Full Year', 'Single Month'], index=0, horizontal=True)
 month_index = None
 if view_control == 'Single Month':
