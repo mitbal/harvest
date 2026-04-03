@@ -112,7 +112,9 @@ def plot_candlestick(price_df, width=1000, height=300):
         alt.value("#ae1325")
     )
 
-    x_init = pd.to_datetime(['2025-03-01', '2024-03-01']).astype(int) / 1E6
+    today = datetime.today()
+    one_year_ago = today.replace(year=today.year - 1)
+    x_init = pd.to_datetime([today.strftime('%Y-%m-%d'), one_year_ago.strftime('%Y-%m-%d')]).astype(int) / 1E6
     interval = alt.selection_interval(encodings=['x'], value={'x':list(x_init)})
 
     base = alt.Chart(price_df).encode(
