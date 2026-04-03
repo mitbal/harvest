@@ -340,7 +340,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
 def render_company_profile(cp_df, stock_name):
     st.write(cp_df.loc[stock_name, 'description'])
     
-def render_dividend_history(sdf, final_df, stock_name, filtered_df):
+def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_share=None, currency='IDR'):
     if sdf is not None:
         dividend_history_cols = st.columns([3, 10, 4])
         dividend_history_cols[0].dataframe(
@@ -357,6 +357,33 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df):
         except:
             last_val = 0
             inc_val = 0
+            
+        annual_eps_df = None
+        if fin is not None and not fin.empty and 'calendarYear' in fin.columns and 'netIncome' in fin.columns and n_share is not None:
+            f = fin.copy()
+            reported_currency = f.loc[0, 'reportedCurrency'] if 'reportedCurrency' in f.columns else currency
+            exchange_rate = hd.get_usd_idr_rate() if currency == 'IDR' and reported_currency == 'USD' else 1
+            f['year'] = f['calendarYear'].astype(int)
+            f = f.groupby('year')['netIncome'].sum().reset_index()
+            # Calculate EPS
+            f['eps'] = f['netIncome'] * exchange_rate / n_share
+            annual_eps_df = f[['year', 'eps']]
+
+        avg_payout_str = "N/A"
+        if annual_eps_df is not None:
+            sdf_yr = sdf.copy()
+            sdf_yr['year'] = sdf_yr['date'].apply(lambda x: int(x.split('-')[0]))
+            yearly_div = sdf_yr.groupby('year')['adjDividend'].sum().reset_index()
+            payout_df = pd.merge(yearly_div, annual_eps_df, on='year', how='inner')
+            
+            payout_ratios = []
+            for _, row in payout_df.iterrows():
+                if pd.notna(row['eps']) and row['eps'] > 0:
+                    pr = (row['adjDividend'] / row['eps']) * 100
+                    payout_ratios.append(pr)
+            if payout_ratios:
+                avg_pr = sum(payout_ratios) / len(payout_ratios)
+                avg_payout_str = f"**:green[{avg_pr:.2f}%]**" if avg_pr <= 100 else f"**:red[{avg_pr:.2f}%]**"
 
         yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_val, inc_val=inc_val)
         dividend_history_cols[1].altair_chart(yearly_dividend_chart, width='stretch')
@@ -387,7 +414,8 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df):
                 dividend_markdown = f'''
                 Estimated next year dividend payment: **:green[{next_div:0.2f}]**\n
                 Yield on current price: **:green[{next_yield:0.2f}%]**\n
-                Payout Ratio: {payout_str}
+                Payout Ratio (Current): {payout_str}\n
+                Payout Ratio (Average): {avg_payout_str}
 
                 Number of years paying dividend: **{div_years:,}**
 
@@ -559,7 +587,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     currency = cp_df.loc[stock_name, 'currency']
 
     with st.expander(f'Dividend History: {stock_name}', expanded=True):
-        render_dividend_history(sdf, filtered_df, stock_name, filtered_df)
+        render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency)
         
     with st.expander(f'Financial Information: {stock_name}', expanded=True):
         render_financial_info(fin, currency, stock_name, filtered_df)
