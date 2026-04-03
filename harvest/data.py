@@ -217,6 +217,62 @@ def get_company_logo(stock, api_key=None):
     return img
 
 
+_usd_idr_cache = {'rate': None, 'timestamp': None}
+_USD_IDR_FALLBACK = 16_618
+
+
+def get_usd_idr_rate(api_key=None, fallback=None, cache_ttl_seconds=3600):
+    """
+    Fetch the current USD/IDR exchange rate from Financial Modeling Prep.
+    Results are cached in-memory for `cache_ttl_seconds` (default 1 hour) to
+    avoid redundant API calls. Falls back to the last known value (or the
+    built-in constant) if the request fails.
+
+    Args:
+        api_key (str, optional): FMP API key. Reads from FMP_API_KEY env var if None.
+        fallback (float, optional): Explicit fallback rate. Uses last cached value
+                                    or _USD_IDR_FALLBACK constant when None.
+        cache_ttl_seconds (int): How long to reuse a cached result (default 3600).
+
+    Returns:
+        float: USD to IDR exchange rate.
+    """
+    import time as _time
+
+    now = _time.time()
+    cached = _usd_idr_cache
+
+    # Return cached value if still fresh
+    if cached['rate'] is not None and cached['timestamp'] is not None:
+        if now - cached['timestamp'] < cache_ttl_seconds:
+            return cached['rate']
+
+    if api_key is None:
+        try:
+            api_key = os.environ['FMP_API_KEY']
+        except KeyError:
+            print('Warning: FMP_API_KEY not set. Using fallback USD/IDR rate.')
+            return fallback if fallback is not None else (cached['rate'] or _USD_IDR_FALLBACK)
+
+    try:
+        url = f'https://financialmodelingprep.com/api/v3/quote/USDIDR?apikey={api_key}'
+        r = requests.get(url, timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        if data and isinstance(data, list) and 'price' in data[0]:
+            rate = float(data[0]['price'])
+            _usd_idr_cache['rate'] = rate
+            _usd_idr_cache['timestamp'] = now
+            # print(f'Fetched live USD/IDR rate: {rate:.2f}')
+            return rate
+        else:
+            raise ValueError(f'Unexpected FMP forex response: {data}')
+    except Exception as e:
+        last_known = cached['rate'] or _USD_IDR_FALLBACK
+        print(f'Warning: Could not fetch USD/IDR rate ({e}). Using fallback: {last_known}')
+        return fallback if fallback is not None else last_known
+
+
 def preprocess_div(div_df):
     """
     Aggregate dividend payment in yearly basis (in case there is/are one or more interim)
@@ -286,7 +342,7 @@ def calc_ratio_history(price_df, fin_df, n_shares=None, ratio='pe', reported_cur
         fin_metric = 'revenue'
 
     if reported_currency == 'USD' and target_currency == 'IDR':
-        exchange_rate = 16_618
+        exchange_rate = get_usd_idr_rate()
     else:
         exchange_rate = 1
 
@@ -302,11 +358,14 @@ def calc_ratio_history(price_df, fin_df, n_shares=None, ratio='pe', reported_cur
     return pratio_df
 
 
-def calc_pe_history(price_df, fin_df, n_shares=None, currency='IDR', exchange_rate=16_276):
+def calc_pe_history(price_df, fin_df, n_shares=None, currency='IDR', exchange_rate=None):
 
     pdf = price_df[['date', 'close']].copy()
     pdf['date'] = pd.to_datetime(pdf['date'])
     pdf = pdf.sort_values('date')
+
+    if exchange_rate is None:
+        exchange_rate = get_usd_idr_rate() if currency == 'IDR' else 1
 
     if n_shares is not None:
         if currency == 'IDR':
@@ -383,8 +442,9 @@ def calc_fin_stats(fin_df, target_currency='IDR'):
 
     reported_currency = fin_df.loc[0, 'reportedCurrency']
     if target_currency == 'IDR' and reported_currency == 'USD':
-        stats['earningTTM'] *= 16_618
-        stats['revenueTTM'] *= 16_618
+        usd_idr = get_usd_idr_rate()
+        stats['earningTTM'] *= usd_idr
+        stats['revenueTTM'] *= usd_idr
 
     return stats
 

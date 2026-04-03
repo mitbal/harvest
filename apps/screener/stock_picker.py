@@ -390,6 +390,17 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df):
         st.write('No dividend history available')
 
 def render_financial_info(fin, currency, stock_name, filtered_df):
+
+    fin = fin.copy()
+    if not fin.empty and 'reportedCurrency' in fin.columns:
+        reported_currency = fin.loc[0, 'reportedCurrency']
+        if currency == 'IDR' and reported_currency == 'USD':
+            exchange_rate = hd.get_usd_idr_rate()
+            if 'revenue' in fin.columns:
+                fin['revenue'] = fin['revenue'] * exchange_rate
+            if 'netIncome' in fin.columns:
+                fin['netIncome'] = fin['netIncome'] * exchange_rate
+
     fin_cols = st.columns([0.3, 0.4, 0.3])
     period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True, index=1, key=f"period_{stock_name}")
     
