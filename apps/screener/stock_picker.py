@@ -623,6 +623,27 @@ with full_table_section:
 
     filtered_df = final_df.fillna(0).sort_values('DScore', ascending=False)
 
+    mcap_pos = filtered_df.columns.get_loc('mktCap')
+    earning_pos = filtered_df.columns.get_loc('earningTTM')
+    revenue_pos = filtered_df.columns.get_loc('revenueTTM')
+    if sl == 'JKSE':
+        divisor = 1_000_000_000_000
+        mcap_label = 'Market Cap (T IDR)'
+        mcap_format = '%.2f T'
+        earning_label = 'Earning TTM (T IDR)'
+        revenue_label = 'Revenue TTM (T IDR)'
+        fin_format = '%.2f T'
+    else:
+        divisor = 1_000_000_000
+        mcap_label = 'Market Cap (B USD)'
+        mcap_format = '%.2f B'
+        earning_label = 'Earning TTM (B USD)'
+        revenue_label = 'Revenue TTM (B USD)'
+        fin_format = '%.2f B'
+    filtered_df.insert(mcap_pos, 'mktCapDisplay', filtered_df['mktCap'] / divisor)
+    filtered_df.insert(earning_pos + 1, 'earningTTMDisplay', filtered_df['earningTTM'] / divisor)
+    filtered_df.insert(revenue_pos + 2, 'revenueTTMDisplay', filtered_df['revenueTTM'] / divisor)
+
     top_cols = st.columns(2)
     view = top_cols[0].segmented_control(label='View Option', 
                          options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
@@ -662,10 +683,11 @@ with full_table_section:
                 'Industry',
                 help='The industry of the stock',
             ),
-            'mktCap': st.column_config.NumberColumn(
-                'Market Cap',
+            'mktCap': None,
+            'mktCapDisplay': st.column_config.NumberColumn(
+                mcap_label,
                 help='Market Capitalization on the current price',
-                format='localized'
+                format=mcap_format,
             ),
             'ipoDate': st.column_config.DateColumn(
                 'IPO Date',
@@ -718,15 +740,17 @@ with full_table_section:
                 help='Last Dividend Paid in Last/Current Fiscal Year',
                 format='%.02f',
             ),
-            'earningTTM': st.column_config.NumberColumn(
-                'Earning TTM',
+            'earningTTM': None,
+            'earningTTMDisplay': st.column_config.NumberColumn(
+                earning_label,
                 help='Earning in the last twelve months',
-                format='localized'
+                format=fin_format,
             ),
-            'revenueTTM': st.column_config.NumberColumn(
-                'Revenue TTM',
+            'revenueTTM': None,
+            'revenueTTMDisplay': st.column_config.NumberColumn(
+                revenue_label,
                 help='Revenue in the last twelve months',
-                format='localized'
+                format=fin_format,
             ),
             'peRatio': st.column_config.NumberColumn(
                 'PE Ratio',
