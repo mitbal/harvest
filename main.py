@@ -69,6 +69,21 @@ if pages.title not in st.session_state['visited_pages']:
 # --- End UTM Tracking ---
 
 
+st.html("""
+<style>
+    /* Apply primary color to all page titles (st.title → h1) */
+    h1 {
+        color: #064E3B !important;
+    }
+
+    /* Make sidebar page names bigger */
+    [data-testid="stSidebarNav"] a span,
+    [data-testid="stSidebarNavLink"] span {
+        font-size: 1.1rem !important;
+    }
+</style>
+""")
+
 with st.sidebar:
     st.html(f'Support me on<br/>'+'<a href="https://trakteer.id/mitbal" target="_blank"><img id="wse-buttons-preview" src="https://cdn.trakteer.id/images/embed/trbtn-red-1.png?date=18-11-2023" height="40" style="border:0px;height:40px;" alt="Trakteer Saya"></a> ')
     st.markdown('[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/mitbal)')
