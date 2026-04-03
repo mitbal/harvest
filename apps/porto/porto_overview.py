@@ -11,6 +11,7 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 from st_supabase_connection import SupabaseConnection
+from st_vortree import st_vortree
 
 import harvest.plot as hp
 import harvest.data as hd
@@ -259,7 +260,7 @@ with st.container(border=True):
 # Table List
 with st.container(border=True):
 
-    tabs = st.tabs(['Table View', 'Bar Chart View'])
+    tabs = st.tabs(['Table View', 'Bar Chart View', 'Voronoi Treemap'])
     
     with tabs[0]:
         st.write('Current Portfolio')
@@ -318,6 +319,45 @@ with st.container(border=True):
         )
         combined_chart = (div_bar + yield_bar).resolve_scale(y='independent')
         st.altair_chart(combined_chart)
+
+    with tabs[2]:
+        ctrl_cols = st.columns([2, 2, 1, 1, 2])
+        value_metric = ctrl_cols[0].selectbox(
+            'Value metric',
+            options=['total_invested', 'total_dividend'],
+            format_func=lambda x: 'Total Invested' if x == 'total_invested' else 'Total Dividend',
+            key='vortree_metric'
+        )
+        color_scheme = ctrl_cols[1].selectbox(
+            'Color scheme',
+            ['tableau10', 'category10', 'pastel1', 'dark2', 'set2'],
+            key='vortree_color'
+        )
+        show_values = ctrl_cols[2].checkbox('Show values', value=True, key='vortree_show_values')
+        show_pct_only = ctrl_cols[3].checkbox('Show % only', value=False, key='vortree_pct_only')
+        treemap_height = ctrl_cols[4].slider('Height', 300, 900, 500, key='vortree_height')
+
+        ctrl_cols2 = st.columns([2, 2, 4])
+        border_color = ctrl_cols2[0].color_picker('Border color', value='#ffffff', key='vortree_border_color')
+        label_scale = ctrl_cols2[1].number_input('Label scale', min_value=0.1, max_value=3.0, value=1.0, step=0.1, key='vortree_label_scale')
+
+        treemap_df = df_display[['Symbol', value_metric]].copy()
+        treemap_df['sector'] = df['sector'].values
+        st_vortree(
+            treemap_df,
+            name_col='Symbol',
+            value_col=value_metric,
+            group_col='sector',
+            color_scheme=color_scheme,
+            show_values=show_values,
+            show_pct_only=show_pct_only,
+            label_scale=label_scale,
+            border_color=border_color,
+            border_width=2,
+            show_legend=True,
+            height=treemap_height,
+            key='porto_vortree'
+        )
 
 
 if main_event.selection['rows']:

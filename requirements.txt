@@ -13,6 +13,7 @@ narwhals==1.29.0
 yfinance==0.2.40
 streamlit==1.55.0
 matplotlib==3.9.1
+st-vortree>=0.1.7
 scikit_learn==1.5.1
 streamlit_lottie==0.0.5
 streamlit-echarts5==1.0.0
