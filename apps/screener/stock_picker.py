@@ -366,8 +366,17 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df):
                 last_div = filtered_df.loc[stock_name, 'lastDiv']
                 inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
                 curr_price = filtered_df.loc[stock_name, 'price']
+                pe_ratio = filtered_df.loc[stock_name, 'peRatio']
+                
                 next_div = last_div + inc_val
                 next_yield = next_div / curr_price * 100
+
+                if pe_ratio and pe_ratio > 0:
+                    eps = curr_price / pe_ratio
+                    payout_ratio = (last_div / eps) * 100
+                    payout_str = f"**:green[{payout_ratio:.2f}%]**" if payout_ratio <= 100 else f"**:red[{payout_ratio:.2f}%]**"
+                else:
+                    payout_str = "N/A"
 
                 stats = hd.calc_div_stats(hd.preprocess_div(sdf))
                 
@@ -377,7 +386,8 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df):
 
                 dividend_markdown = f'''
                 Estimated next year dividend payment: **:green[{next_div:0.2f}]**\n
-                Yield on current price: **:green[{next_yield:0.2f}%]**
+                Yield on current price: **:green[{next_yield:0.2f}%]**\n
+                Payout Ratio: {payout_str}
 
                 Number of years paying dividend: **{div_years:,}**
 
