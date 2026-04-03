@@ -428,7 +428,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
         else:
             annual_cols = st.columns([80, 20])
             annual_cols[0].write('Annual Financial Chart')
-            fin_chart = hp.plot_fin_chart(fin)
+            fin_chart = hp.plot_fin_chart(fin, currency=currency)
             annual_cols[0].altair_chart(fin_chart, width='stretch')
             with annual_cols[1]:
                 if stock_name in filtered_df.index:

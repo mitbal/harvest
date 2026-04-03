@@ -33,13 +33,25 @@ def format_tooltip_currency(val, currency):
         
         return f"-{formatted}" if is_negative else formatted
 
+def format_tooltip_currency_expr(currency):
+    return  "datum.value >= 1000000000000 ? format(datum.value/1000000000000, ',.2f') + ' T " + currency.upper() + "' : " +\
+            "datum.value <= -1000000000000 ? '-' + format(-datum.value/1000000000000, ',.2f') + ' T " + currency.upper() + "' : " +\
+            "datum.value >= 1000000000 ? format(datum.value/1000000000, ',.2f') + ' B " + currency.upper() + "' : " +\
+            "datum.value <= -1000000000 ? '-' + format(-datum.value/1000000000, ',.2f') + ' B " + currency.upper() + "' : " +\
+            "datum.value >= 1000000 ? format(datum.value/1000000, ',.2f') + ' M " + currency.upper() + "' : " +\
+            "datum.value <= -1000000 ? '-' + format(-datum.value/1000000, ',.2f') + ' M " + currency.upper() + "' : " +\
+            "datum.value >= 0 ? format(datum.value/1000, ',.2f') + ' K " + currency.upper() + "' : " +\
+            "'-' + format(-datum.value/1000, ',.2f') + ' K " + currency.upper() + "'"
 
-def plot_fin_chart(fin_df):
+
+def plot_fin_chart(fin_df, currency='idr'):
 
     fin_df = fin_df.groupby('calendarYear').sum().reset_index()
     fin_df['netProfitMargin'] = fin_df['netIncome'] / fin_df['revenue']
     combined_chart = alt.Chart(fin_df[['calendarYear', 'revenue', 'netIncome']]).transform_fold(
         ['revenue', 'netIncome']
+    ).transform_calculate(
+        value_fmt=format_tooltip_currency_expr(currency)
     ).mark_bar().encode(
         x='calendarYear:N',
         y=alt.Y('value:Q', axis=alt.Axis(
@@ -47,12 +59,12 @@ def plot_fin_chart(fin_df):
         )),
         color='key:N',
         xOffset='key:N',
-        tooltip=['calendarYear', alt.Tooltip('value:Q', format=',.2f')]
+        tooltip=['calendarYear', alt.Tooltip('value_fmt:N', title='value')]
     )
     margin_chart = alt.Chart(fin_df).mark_line(point=True).encode(
-        x='calendarYear',
-        y='netProfitMargin',
-        tooltip=['calendarYear', alt.Tooltip('netProfitMargin', format='.2%')]
+        x='calendarYear:N',
+        y=alt.Y('netProfitMargin:Q', axis=alt.Axis(format='%')),
+        tooltip=['calendarYear', alt.Tooltip('netProfitMargin:Q', format='.2%')]
     )
     return (combined_chart+margin_chart).resolve_scale(y='independent')
 
