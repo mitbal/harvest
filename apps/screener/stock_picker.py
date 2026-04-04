@@ -411,6 +411,12 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
                 pos_years = stats['num_positive_year']
                 consistency = pos_years/div_years*100 if div_years > 0 else 0
 
+                cagr_5y = stats.get('cagr_5y')
+                cagr_10y = stats.get('cagr_10y')
+                
+                cagr_5y_str = f"**:green[{cagr_5y:.2f}%]**" if cagr_5y is not None and cagr_5y >= 0 else (f"**:red[{cagr_5y:.2f}%]**" if cagr_5y is not None else "N/A")
+                cagr_10y_str = f"**:green[{cagr_10y:.2f}%]**" if cagr_10y is not None and cagr_10y >= 0 else (f"**:red[{cagr_10y:.2f}%]**" if cagr_10y is not None else "N/A")
+
                 dividend_markdown = f'''
                 Estimated next year dividend payment: **:green[{next_div:0.2f}]**\n
                 Yield on current price: **:green[{next_yield:0.2f}%]**\n
@@ -422,6 +428,10 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
                 Number of years increasing dividend: **{pos_years:,}**
 
                 Positive consistency rate: **:green[{consistency:.2f}%]**
+
+                5-Year CAGR: {cagr_5y_str}
+
+                10-Year CAGR: {cagr_10y_str}
                 '''
                 st.markdown(dividend_markdown)
     else:
