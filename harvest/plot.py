@@ -217,7 +217,7 @@ def plot_pe_timeseries(pe_df, axis_label=None):
     return chart
 
 
-def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=0, inc_val=0):
+def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=0, inc_val=0, eps_df=None):
 
     # aggregate to yearly basis for stock that paid interim during the year
     dividend_year_df = div_df.copy()
@@ -262,7 +262,7 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
             cornerRadiusTopRight=5
         ).encode(
             alt.X('year:N'),
-            alt.Y('adjDividend'),
+            alt.Y('adjDividend:Q'),
             tooltip=['year', alt.Tooltip('adjDividend', format='.2f')],
             opacity=alt.value(0.4), 
             color=ext_color

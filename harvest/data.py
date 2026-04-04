@@ -317,6 +317,17 @@ def calc_div_stats(div_df):
     stats['num_dividend_year'] = len(div_df[div_df['adjDividend'] > 0])
     stats['pct_positive_year'] = stats['num_positive_year'] / stats['num_dividend_year'] * 100
 
+    vals = div_df['adjDividend'].values
+    if len(vals) >= 6 and vals[-6] > 0:
+        stats['cagr_5y'] = ((vals[-1] / vals[-6]) ** (1/5) - 1) * 100
+    else:
+        stats['cagr_5y'] = None
+        
+    if len(vals) >= 11 and vals[-11] > 0:
+        stats['cagr_10y'] = ((vals[-1] / vals[-11]) ** (1/10) - 1) * 100
+    else:
+        stats['cagr_10y'] = None
+
     return stats
 
 
