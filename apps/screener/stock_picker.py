@@ -619,7 +619,20 @@ if 'market' in st.query_params:
         default_sl = 1
 
 
-sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], horizontal=True, key='sl', index=default_sl)
+# sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], horizontal=True, key='sl', index=default_sl)
+
+stock_select = st.sidebar.radio(
+    'Stock List Selection',
+    ['Indonesian Stock', 'S&P 500 (US and World Stock)'],
+    horizontal=False,
+    key='sl',
+    index=default_sl
+)
+
+if stock_select == 'Indonesian Stock':
+    sl = 'JKSE'
+else:
+    sl = 'S&P500'
 
 if sl is None:
     st.stop()
@@ -948,7 +961,11 @@ with full_table_section:
         
         col1, col2, col3 = st.columns([1, 2, 1])
         selected_dist = col1.selectbox('Select Metric', options=list(dist_options.keys()))
+        exclude_zero = col1.toggle('Exclude 0% Yield Stocks', value=False)
         col_name = dist_options[selected_dist]
+
+        if exclude_zero:
+            filtered_df = filtered_df[filtered_df['yield'] > 0]
 
         # Add comparison stocks multiselect
         comparison_stocks = col2.multiselect('Compare with specific stocks', options=filtered_df.index.tolist())
