@@ -71,7 +71,6 @@ def connect_redis(redis_url):
     return r
 
 
-st.set_page_config(layout='wide')
 st.title('Portfolio Analysis')
 
 with st.sidebar:

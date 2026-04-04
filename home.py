@@ -35,12 +35,6 @@ def md_to_html(text):
 
 #### Setup and configuration
 
-st.set_page_config(
-    page_title='Panen Dividen',
-    page_icon='🪙',
-    layout='wide'
-)
-
 st.title('Panen Dividen')
 
 if 'porto_file' not in st.session_state:

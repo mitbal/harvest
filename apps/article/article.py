@@ -4,11 +4,6 @@ import streamlit as st
 
 from harvest.utils import setup_logging
 
-try:
-    st.set_page_config(layout='wide')
-except Exception as e:
-    print('Set Page config has been called before')
-
 
 @st.cache_resource
 def get_logger(name, level=logging.INFO):
