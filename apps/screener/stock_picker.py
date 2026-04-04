@@ -108,16 +108,117 @@ def get_specific_stock_detail(stock_name):
 
         return fin, cp_df, price_df, sdf, n_share
 
-    except:
-        logger.error(f'Error in downloading data for {stock_name}')
-        st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks', icon="🚨")
+        time.sleep(0.2)
+        progress_bar.empty()
+
+        return fin, cp_df, price_df, sdf, n_share
+
+    except Exception as e:
+        logger.error(f'Error in downloading data for {stock_name}: {e}')
+        st.error(f'Cannot find the stock {stock_name}. Please check the name again and dont forget to add exchange code at the end. For example .JK for Indonesian stock, .SI for Singaporean stock, .T for Japanese Stock, etc.', icon="🚨")
         progress_bar.empty()
         st.stop()
 
 
+def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
+    """
+    Calculate metrics for a stock that is not in the pre-computed table.
+    """
+    stats = {}
+    
+    # 1. Basic Info from Company Profile
+    if stock_name in cp_df.index:
+        cp = cp_df.loc[stock_name]
+        stats['price'] = cp.get('price', 0)
+        stats['changes'] = cp.get('changes', 0)
+        stats['mktCap'] = cp.get('mktCap', 0)
+        stats['sector'] = cp.get('sector', 'Unknown')
+        stats['industry'] = cp.get('industry', 'Unknown')
+        
+        # Calculate years since IPO if available
+        ipo_date = cp.get('ipoDate')
+        if ipo_date:
+            try:
+                ipo_dt = datetime.strptime(ipo_date, '%Y-%m-%d')
+                stats['numOfYear'] = (datetime.now() - ipo_dt).days / 365.25
+            except:
+                stats['numOfYear'] = 10  # Default fallback
+        else:
+            stats['numOfYear'] = 10
+    else:
+        stats['price'] = price_df['close'].iloc[0] if not price_df.empty else 0
+        stats['changes'] = 0
+        stats['mktCap'] = stats['price'] * n_share
+        stats['sector'] = 'Unknown'
+        stats['industry'] = 'Unknown'
+        stats['numOfYear'] = 10
+
+    # 2. Dividend Stats
+    if sdf is not None and not sdf.empty:
+        div_pp = hd.preprocess_div(sdf)
+        div_stats = hd.calc_div_stats(div_pp)
+        
+        stats['yield'] = (sdf['adjDividend'].iloc[0] * 4 / stats['price'] * 100) if stats['price'] > 0 else 0 # Rough estimate of annual yield if quarterly
+        # Use last year total for more accurate yield
+        if not div_pp.empty:
+            last_year_div = div_pp['adjDividend'].iloc[-1]
+            stats['yield'] = (last_year_div / stats['price'] * 100) if stats['price'] > 0 else 0
+            stats['lastDiv'] = last_year_div
+        else:
+            stats['lastDiv'] = 0
+            
+        stats['numDividendYear'] = div_stats.get('num_dividend_year', 0)
+        stats['positiveYear'] = div_stats.get('num_positive_year', 0)
+        stats['avgFlatAnnualDivIncrease'] = div_stats.get('historical_mean_flat', 0)
+    else:
+        stats['yield'] = 0
+        stats['numDividendYear'] = 0
+        stats['positiveYear'] = 0
+        stats['avgFlatAnnualDivIncrease'] = 0
+        stats['lastDiv'] = 0
+
+    # 3. Financial Stats
+    if fin is not None and not fin.empty:
+        # Determine target currency based on company profile or stock suffix
+        if stock_name in cp_df.index and 'currency' in cp_df.columns:
+            target_curr = cp_df.loc[stock_name, 'currency']
+        else:
+            target_curr = 'IDR' if stock_name.endswith('.JK') else 'USD'
+            
+        fin_stats = hd.calc_fin_stats(fin, target_currency=target_curr)
+        
+        stats['revenueGrowth'] = fin_stats.get('median_5y_revenue_growth', 0)
+        stats['netIncomeGrowth'] = fin_stats.get('median_5y_netIncome_growth', 0)
+        stats['medianProfitMargin'] = fin_stats.get('median_profit_margin', 0)
+        stats['earningTTM'] = fin_stats.get('earningTTM', 0)
+        stats['revenueTTM'] = fin_stats.get('revenueTTM', 0)
+        
+        if stats['earningTTM'] > 0:
+            stats['peRatio'] = stats['mktCap'] / stats['earningTTM']
+        else:
+            stats['peRatio'] = -1
+            
+        if stats['revenueTTM'] > 0:
+            stats['psRatio'] = stats['mktCap'] / stats['revenueTTM']
+        else:
+            stats['psRatio'] = -1
+    else:
+        stats['revenueGrowth'] = 0
+        stats['netIncomeGrowth'] = 0
+        stats['medianProfitMargin'] = 0
+        stats['peRatio'] = -1
+        stats['psRatio'] = -1
+        stats['earningTTM'] = 0
+        stats['revenueTTM'] = 0
+
+    return pd.Series(stats, name=stock_name)
+
+
 @st.cache_data
-def calculate_stock_ratings(stock_name, filtered_df, final_df=None):
-    if stock_name in filtered_df.index:
+def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=None):
+    if stock_data is not None:
+        pass # use stock_data
+    elif stock_name in filtered_df.index:
         stock_data = filtered_df.loc[stock_name]
     elif final_df is not None and stock_name in final_df.index:
         stock_data = final_df.loc[stock_name]
@@ -256,10 +357,19 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=N
         st.altair_chart(chart, width='stretch', key=key)
 
 def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df):
-    ratings = calculate_stock_ratings(stock_name, filtered_df, final_df)
+    
+    if stock_name in filtered_df.index:
+        stock_data = filtered_df.loc[stock_name]
+    elif final_df is not None and stock_name in final_df.index:
+        stock_data = final_df.loc[stock_name]
+    else:
+        # Recalculate stats on the fly
+        stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
+
+    ratings = calculate_stock_ratings(stock_name, filtered_df, final_df, stock_data=stock_data)
     
     if ratings is None:
-        st.warning(f"Dashboard View is not available for {stock_name} because it is missing some pre-computed metrics required for the dashboard. Please use correct spelling or switch to Classic View.")
+        st.warning(f"Dashboard View could not be generated for {stock_name}. Please try Classic View.")
         return
 
     metrics = ratings['metrics']
@@ -389,50 +499,54 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
 
         with dividend_history_cols[2]:
             if stock_name in filtered_df.index:
-                last_div = filtered_df.loc[stock_name, 'lastDiv']
-                inc_val = filtered_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-                curr_price = filtered_df.loc[stock_name, 'price']
-                pe_ratio = filtered_df.loc[stock_name, 'peRatio']
+                stock_data = filtered_df.loc[stock_name]
+            else:
+                stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
                 
-                next_div = last_div + inc_val
-                next_yield = next_div / curr_price * 100
+            last_div = stock_data['lastDiv']
+            inc_val = stock_data['avgFlatAnnualDivIncrease']
+            curr_price = stock_data['price']
+            pe_ratio = stock_data['peRatio']
+            
+            next_div = last_div + inc_val
+            next_yield = next_div / curr_price * 100 if curr_price > 0 else 0
 
-                if pe_ratio and pe_ratio > 0:
-                    eps = curr_price / pe_ratio
-                    payout_ratio = (last_div / eps) * 100
-                    payout_str = f"**:green[{payout_ratio:.2f}%]**" if payout_ratio <= 100 else f"**:red[{payout_ratio:.2f}%]**"
-                else:
-                    payout_str = "N/A"
+            if pe_ratio and pe_ratio > 0:
+                eps = curr_price / pe_ratio if pe_ratio > 0 else 0
+                payout_ratio = (last_div / eps) * 100 if eps > 0 else 0
+                payout_str = f"**:green[{payout_ratio:.2f}%]**" if payout_ratio <= 100 else f"**:red[{payout_ratio:.2f}%]**"
+            else:
+                payout_str = "N/A"
 
-                stats = hd.calc_div_stats(hd.preprocess_div(sdf))
-                
-                div_years = stats['num_dividend_year']
-                pos_years = stats['num_positive_year']
-                consistency = pos_years/div_years*100 if div_years > 0 else 0
+            stats = hd.calc_div_stats(hd.preprocess_div(sdf))
+            
+            div_years = stats['num_dividend_year']
+            pos_years = stats['num_positive_year']
+            consistency = pos_years/div_years*100 if div_years > 0 else 0
 
-                cagr_5y = stats.get('cagr_5y')
-                cagr_10y = stats.get('cagr_10y')
-                
-                cagr_5y_str = f"**:green[{cagr_5y:.2f}%]**" if cagr_5y is not None and cagr_5y >= 0 else (f"**:red[{cagr_5y:.2f}%]**" if cagr_5y is not None else "N/A")
-                cagr_10y_str = f"**:green[{cagr_10y:.2f}%]**" if cagr_10y is not None and cagr_10y >= 0 else (f"**:red[{cagr_10y:.2f}%]**" if cagr_10y is not None else "N/A")
+            cagr_5y = stats.get('cagr_5y')
+            cagr_10y = stats.get('cagr_10y')
+            
+            cagr_5y_str = f"**:green[{cagr_5y:.2f}%]**" if cagr_5y is not None and cagr_5y >= 0 else (f"**:red[{cagr_5y:.2f}%]**" if cagr_5y is not None else "N/A")
+            cagr_10y_str = f"**:green[{cagr_10y:.2f}%]**" if cagr_10y is not None and cagr_10y >= 0 else (f"**:red[{cagr_10y:.2f}%]**" if cagr_10y is not None else "N/A")
 
-                dividend_markdown = f'''
-                Estimated next year dividend payment: **:green[{next_div:0.2f}]**\n
-                Yield on current price: **:green[{next_yield:0.2f}%]**\n
-                Payout Ratio (Current): {payout_str}\n
-                Payout Ratio (Average): {avg_payout_str}
+            dividend_markdown = f'''
+            Estimated next year dividend payment: **:green[{next_div:0.2f}]**\n
+            Yield on current price: **:green[{next_yield:0.2f}%]**\n
+            Payout Ratio (Current): {payout_str}\n
+            Payout Ratio (Average): {avg_payout_str}
 
-                Number of years paying dividend: **{div_years:,}**
+            Number of years paying dividend: **{div_years:,}**
 
-                Number of years increasing dividend: **{pos_years:,}**
+            Number of years increasing dividend: **{pos_years:,}**
 
-                Positive consistency rate: **:green[{consistency:.2f}%]**
+            Positive consistency rate: **:green[{consistency:.2f}%]**
 
-                5-Year CAGR: {cagr_5y_str}
+            5-Year CAGR: {cagr_5y_str}
 
-                10-Year CAGR: {cagr_10y_str}
-                '''
-                st.markdown(dividend_markdown)
+            10-Year CAGR: {cagr_10y_str}
+            '''
+            st.markdown(dividend_markdown)
     else:
         st.write('No dividend history available')
 
@@ -468,10 +582,14 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
             annual_cols[1].altair_chart(income_chart, width='stretch')
             with annual_cols[2]:
                 if stock_name in filtered_df.index:
-                    st.write('**Financial Metrics Summary**')
-                    st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
-                    st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
-                    st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
+                    stock_data = filtered_df.loc[stock_name]
+                else:
+                    stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
+                
+                st.write('**Financial Metrics Summary**')
+                st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
+                st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
+                st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
         else:
             annual_cols = st.columns([80, 20])
             annual_cols[0].write('Annual Financial Chart')
@@ -479,10 +597,14 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
             annual_cols[0].altair_chart(fin_chart, width='stretch')
             with annual_cols[1]:
                 if stock_name in filtered_df.index:
-                    st.write('**Financial Metrics Summary**')
-                    st.write(f'Average Revenue Growth: {filtered_df.loc[stock_name, "revenueGrowth"]:.2f}%')
-                    st.write(f'Average Net Income Growth: {filtered_df.loc[stock_name, "netIncomeGrowth"]:.2f}%')
-                    st.write(f'Median Net Profit Margin: {filtered_df.loc[stock_name, "medianProfitMargin"]:.2f}%')
+                    stock_data = filtered_df.loc[stock_name]
+                else:
+                    stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
+
+                st.write('**Financial Metrics Summary**')
+                st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
+                st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
+                st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
 
 def render_price_movement(price_df):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
@@ -507,14 +629,31 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', reported_currency=fin_currency, target_currency=target_currency)
         
     if stock_name in filtered_df.index:
-        sector_name = filtered_df.loc[stock_name, 'sector']
-        industry_name = filtered_df.loc[stock_name, 'industry']
+        stock_data = filtered_df.loc[stock_name]
+        sector_name = stock_data['sector']
+        industry_name = stock_data['industry']
         sector_df = filtered_df[filtered_df['sector'] == sector_name]
         sector_pe = (sector_df['mktCap'] * sector_df[pratio]).sum() / sector_df['mktCap'].sum()
         industry_df = filtered_df[filtered_df['industry'] == industry_name]
         industry_pe = (industry_df['mktCap'] * industry_df[pratio]).sum() / industry_df['mktCap'].sum()
     else:
-        sector_pe = industry_pe = -1
+        # For stocks not in table, we can't easily calculate sector average from filtered_df 
+        # unless it belongs to one of the sectors in filtered_df
+        stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
+        sector_name = stock_data['sector']
+        industry_name = stock_data['industry']
+        
+        sector_df = filtered_df[filtered_df['sector'] == sector_name]
+        if not sector_df.empty:
+            sector_pe = (sector_df['mktCap'] * sector_df[pratio]).sum() / sector_df['mktCap'].sum()
+        else:
+            sector_pe = -1
+            
+        industry_df = filtered_df[filtered_df['industry'] == industry_name]
+        if not industry_df.empty:
+            industry_pe = (industry_df['mktCap'] * industry_df[pratio]).sum() / industry_df['mktCap'].sum()
+        else:
+            industry_pe = -1
 
     pe_ttm = pe_df['pe'].values[-1]
     current_price = price_df['close'].values[0]
