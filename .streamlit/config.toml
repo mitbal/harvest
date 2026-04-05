@@ -10,3 +10,7 @@ backgroundColor = "#14532D"
 
 [server]
 enableStaticServing = true
+enableWebsocketCompression = true
+
+[browser]
+gatherUsageStats = false
