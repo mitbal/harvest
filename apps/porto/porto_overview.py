@@ -329,17 +329,24 @@ with st.container(border=True):
         )
         color_scheme = ctrl_cols[1].selectbox(
             'Color scheme',
-            ['tableau10', 'category10', 'pastel1', 'dark2', 'set2'],
+            ['tableau10', 'category10', 'pastel1'],
             key='vortree_color'
         )
         show_values = ctrl_cols[2].checkbox('Show values', value=True, key='vortree_show_values')
         show_pct_only = ctrl_cols[3].checkbox('Show % only', value=False, key='vortree_pct_only')
         treemap_height = ctrl_cols[4].slider('Height', 300, 900, 500, key='vortree_height')
 
-        ctrl_cols2 = st.columns([2, 2, 4])
-        border_color = ctrl_cols2[0].color_picker('Border color', value='#ffffff', key='vortree_border_color')
+        ctrl_cols2 = st.columns([2, 2, 2, 2])
+        border_color = ctrl_cols2[0].color_picker('Border color', value='#000000', key='vortree_border_color')
         label_scale = ctrl_cols2[1].number_input('Label scale', min_value=0.1, max_value=3.0, value=1.0, step=0.1, key='vortree_label_scale')
+        
+        if 'vortree_refresh_count' not in st.session_state:
+            st.session_state['vortree_refresh_count'] = 0
 
+        if ctrl_cols2[2].button('Refresh Plot', icon=':material/refresh:', use_container_width=True):
+            st.session_state['vortree_refresh_count'] += 1
+            st.rerun()
+        
         treemap_df = df_display[['Symbol', value_metric]].copy()
         treemap_df['sector'] = df['sector'].values
         st_vortree(
@@ -355,7 +362,7 @@ with st.container(border=True):
             border_width=2,
             show_legend=True,
             height=treemap_height,
-            key='porto_vortree'
+            key=f'porto_vortree_{st.session_state["vortree_refresh_count"]}'
         )
 
 
