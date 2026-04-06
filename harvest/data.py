@@ -293,10 +293,29 @@ def preprocess_div(div_df):
     return full_div_df
 
 
-def calc_div_stats(div_df):
+def calc_div_stats(div_df_input):
 
     stats = {}
     
+    current_year = datetime.datetime.today().year
+    
+    # Use only fully completed years for historical stats to avoid incomplete year bias
+    div_df = div_df_input[div_df_input['year'] < current_year].copy()
+    
+    if div_df.empty:
+        div_df = div_df_input.copy()
+
+    if div_df.empty:
+        return {
+            'maximum_cut_pct': 0, 'max_10y_cut_pct': 0, 'historical_mean_flat': 0,
+            'div_inc_2y_mean_flat': 0, 'div_inc_5y_mean_flat': 0, 'exponential_weighted_mean_flat': 0,
+            'historical_mean_pct': 0, 'div_inc_2y_mean_pct': 0, 'div_inc_5y_mean_pct': 0,
+            'exponential_weighted_mean_pct': 0, 'num_positive_year': 0, 'num_dividend_year': 0,
+            'pct_positive_year': 0, 'cagr_5y': None, 'cagr_10y': None
+        }
+
+    div_df.reset_index(drop=True, inplace=True)
+
     div_df['inc_flat'] = div_df['adjDividend'] - div_df['adjDividend'].shift(1)
     div_df['inc_pct'] = div_df['inc_flat'] / div_df['adjDividend'].shift(1) * 100
 

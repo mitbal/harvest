@@ -1,7 +1,7 @@
 import os
 import json
 import pickle
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
 import redis
@@ -12,6 +12,7 @@ from supabase import create_client, Client
 from prefect.artifacts import create_markdown_artifact, create_table_artifact
 
 import harvest.data as hd
+from pipeline.historical_prices import run_historical_pipeline, get_local_path
 
 
 DEFAULT_RETRIES = 3
@@ -32,6 +33,52 @@ def store_df_to_redis(key: str, df: pd.DataFrame) -> None:
         print(f"Error connecting to Redis: {e}")
     except Exception as e:
         print(f"Error storing data to Redis: {e}")
+
+
+def get_latest_returns_from_db() -> pd.DataFrame:
+    """Fetches precalculated returns for all stocks directly from Postgres via view."""
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_KEY")
+    if not supabase_url or not supabase_key:
+        return pd.DataFrame()
+    
+    supabase: Client = create_client(supabase_url, supabase_key)
+    all_data = []
+    limit = 1000
+    offset = 0
+    
+    try:
+        while True:
+            response = supabase.table("mat_view_latest_returns").select("*").range(offset, offset + limit - 1).execute()
+            if not response.data:
+                break
+            all_data.extend(response.data)
+            if len(response.data) < limit:
+                break
+            offset += limit
+
+        df = pd.DataFrame(all_data)
+        if not df.empty and 'symbol' in df.columns:
+            df.set_index('symbol', inplace=True)
+        return df
+    except Exception as e:
+        print(f"Error fetching returns from view: {e}")
+        return pd.DataFrame()
+
+
+def refresh_returns_view():
+    """Triggers the remote postgres procedure to refresh the materialized view."""
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_KEY")
+    if not supabase_url or not supabase_key:
+        return
+    
+    supabase: Client = create_client(supabase_url, supabase_key)
+    try:
+        supabase.rpc("refresh_latest_returns").execute()
+    except Exception as e:
+        # We catch timeout safely, since postgres usually continues the refresh in the background
+        print(f"Note: Got timeout/error while refreshing materialized view: {e}")
 
 
 def store_to_supabase_storage(filename: str, content: dict) -> None:
@@ -105,12 +152,19 @@ def run_daily(
     financials = download_financials(stock_dividend_list)
     # prices = download_prices(stock_dividend_list)
 
+    print(f"Running historical prices subflow for {exch}...")
+    run_historical_pipeline(exch=exch, mode='incremental')
+    
+    print("Refreshing materialized view for price returns...")
+    refresh_returns_view()
+
     if exch == 'jkse':
         cp_df = cp_df.merge(syariah, on='symbol', how='left')
         cp_df['is_syariah'] = ~cp_df['Kode'].isnull()
         cp_df.set_index('symbol', inplace=True)
 
     div_stats = compute_div_score(cp_df, financials, dividends, sl=exch)
+
     store_df_to_redis(f'div_score_{exch}', div_stats.reset_index())
 
     target_years = dividend_years if dividend_years is not None else range(2020, 2026)
@@ -272,6 +326,8 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['maximumCutPct'] = 0
     df['max10CutPct'] = 0
     df['mktCap'] = df['mktCap'].astype(int)
+    df['div_sum_1y'] = 0.0
+    df['div_sum_10y'] = 0.0
 
     stock_list = df.index.tolist()
     for symbol in stock_list:
@@ -303,6 +359,12 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             elif sl == 'sp500':
                 last_div = cp_df.loc[symbol, 'lastDiv']
 
+            if isinstance(div_df, pd.DataFrame) and not div_df.empty and 'date' in div_df.columns and 'adjDividend' in div_df.columns:
+                one_year_ago_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
+                ten_years_ago_date = (datetime.today() - timedelta(days=3650)).strftime('%Y-%m-%d')
+                df.loc[symbol, 'div_sum_1y'] = div_df[div_df['date'] >= one_year_ago_date]['adjDividend'].sum()
+                df.loc[symbol, 'div_sum_10y'] = div_df[div_df['date'] >= ten_years_ago_date]['adjDividend'].sum()
+
             div_df = hd.preprocess_div(div_df)
             div_stats = hd.calc_div_stats(div_df)
             
@@ -330,10 +392,32 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     # patented dividend score
     df['DScore'] = hd.calc_div_score(df)
 
+    # Fetch returns remotely and efficiently out of postgres 
+    latest_returns = get_latest_returns_from_db()
+
+    if not latest_returns.empty:
+        df = df.join(latest_returns[['return_7d', 'return_1m', 'return_1y', 'return_10y']])
+    else:
+        df['return_7d'] = np.nan
+        df['return_1m'] = np.nan
+        df['return_1y'] = np.nan
+        df['return_10y'] = np.nan
+
+    # mathematically reconstruct the past price and calculate pure total return (Price return + Cash yield on start price)
+    df['total_return_1y'] = df['return_1y'] + (df['div_sum_1y'] / (df['price'] / (1 + df['return_1y'])))
+    df['total_return_10y'] = df['return_10y'] + (df['div_sum_10y'] / (df['price'] / (1 + df['return_10y'])))
+    
+    df['total_return_1y'] = df['total_return_1y'].replace([np.inf, -np.inf], np.nan)
+    df['total_return_10y'] = df['total_return_10y'].replace([np.inf, -np.inf], np.nan)
+
     features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
                'revenueGrowth', 'revenueGrowthTTM', 'netIncomeGrowth', 'netIncomeGrowthTTM', 'medianProfitMargin', 
                'earningTTM', 'revenueTTM', 'peRatio', 'psRatio',
-               'avgFlatAnnualDivIncrease', 'numDividendYear', 'positiveYear', 'maximumCutPct', 'max10CutPct', 'numOfYear', 'DScore']
+               'avgFlatAnnualDivIncrease', 'numDividendYear', 'positiveYear', 'maximumCutPct', 'max10CutPct', 'numOfYear', 'DScore',
+               'return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
+
+
+
     
     if sl == 'jkse':
         features = ['is_syariah'] + features
@@ -363,5 +447,5 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
 
 if __name__ == '__main__':
     
-    run_daily(exch='jkse', mcap_filter=100_000_000_000, dividend_years=range(2020, 2026))
-    # run_daily(exch='sp500', mcap_filter=10_000_000_000)
+    # run_daily(exch='jkse', mcap_filter=100_000_000_000, dividend_years=range(2020, 2026))
+    run_daily(exch='sp500', mcap_filter=10_000_000_000)
