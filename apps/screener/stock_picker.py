@@ -192,6 +192,9 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
         stats['medianProfitMargin'] = fin_stats.get('median_profit_margin', 0)
         stats['earningTTM'] = fin_stats.get('earningTTM', 0)
         stats['revenueTTM'] = fin_stats.get('revenueTTM', 0)
+        stats['marginTTM'] = fin_stats.get('marginTTM', 0)
+        stats['revenueGrowthTTM'] = fin_stats.get('revenue_growth_TTM', 0)
+        stats['netIncomeGrowthTTM'] = fin_stats.get('netIncome_growth_TTM', 0)
         
         if stats['earningTTM'] > 0:
             stats['peRatio'] = stats['mktCap'] / stats['earningTTM']
@@ -587,9 +590,24 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                     stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
                 
                 st.write('**Financial Metrics Summary**')
+                fin_stats = hd.calc_fin_stats(fin, target_currency=currency)
+                
+                def render_metric(label, val, avg):
+                    if val > avg:
+                        st.markdown(f'{label}: **:green[{val:.2f}%]**')
+                    elif val < avg * 0.9:
+                        st.markdown(f'{label}: **:red[{val:.2f}%]**')
+                    else:
+                        st.write(f'{label}: **{val:.2f}%**')
+                
+                render_metric('TTM Revenue Growth', fin_stats["revenue_growth_TTM"], stock_data["revenueGrowth"])
+                render_metric('TTM Net Income Growth', fin_stats["netIncome_growth_TTM"], stock_data["netIncomeGrowth"])
+                render_metric('TTM Net Profit Margin', fin_stats["marginTTM"], stock_data["medianProfitMargin"])
+                
                 st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
                 st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
                 st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
+                st.write('---')
         else:
             annual_cols = st.columns([80, 20])
             annual_cols[0].write('Annual Financial Chart')
@@ -602,9 +620,24 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                     stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
 
                 st.write('**Financial Metrics Summary**')
+                fin_stats = hd.calc_fin_stats(fin, target_currency=currency)
+                
+                def render_metric(label, val, avg):
+                    if val > avg:
+                        st.markdown(f'{label}: **:green[{val:.2f}%]**')
+                    elif val < avg * 0.9:
+                        st.markdown(f'{label}: **:red[{val:.2f}%]**')
+                    else:
+                        st.write(f'{label}: **{val:.2f}%**')
+                
+                render_metric('TTM Revenue Growth', fin_stats["revenue_growth_TTM"], stock_data["revenueGrowth"])
+                render_metric('TTM Net Income Growth', fin_stats["netIncome_growth_TTM"], stock_data["netIncomeGrowth"])
+                render_metric('TTM Net Profit Margin', fin_stats["marginTTM"], stock_data["medianProfitMargin"])
+                
                 st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
                 st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
                 st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
+                st.write('---')
 
 def render_price_movement(price_df):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
