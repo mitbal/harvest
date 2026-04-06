@@ -881,3 +881,36 @@ def calc_price_changes(
         result[date_str] = pd.DataFrame(data_list)
         
     return result
+
+def calculate_returns(df):
+    """
+    df should have ['symbol', 'date', 'close']
+    date should be datetime type
+    """
+    results = df.copy()
+    if 'date' in results.columns and not pd.api.types.is_datetime64_any_dtype(results['date']):
+        results['date'] = pd.to_datetime(results['date'])
+    results = results.sort_values(['symbol', 'date'])
+    
+    offsets = {
+        '7d': pd.Timedelta(days=7),
+        '1m': pd.Timedelta(days=30),
+        '1y': pd.Timedelta(days=365),
+        '10y': pd.Timedelta(days=3650)
+    }
+
+    for label, delta in offsets.items():
+        past_df = results[['symbol', 'date', 'close']].copy()
+        past_df['date'] = past_df['date'] + delta
+        
+        merged = pd.merge_asof(
+            results, past_df, 
+            on='date', 
+            by='symbol', 
+            direction='backward',
+            suffixes=('', '_past')
+        )
+        
+        results[f'return_{label}'] = (merged['close'] / merged['close_past']) - 1
+
+    return results

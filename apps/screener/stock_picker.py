@@ -32,7 +32,6 @@ redis_url = os.environ['REDIS_URL']
 def get_logger(name, level=logging.INFO):
 
     logger = setup_logging(name, level)
-    logger.info('a new user is opening the stock picker page')
     return logger
 
 
@@ -846,8 +845,6 @@ full_table_section = st.container(border=True)
 with full_table_section:
 
     final_df['marginTTM'] = final_df['earningTTM'] / final_df['revenueTTM'] * 100
-    final_df['revenueGrowthTTM'] = final_df['revenueGrowthTTM'] * 100
-    final_df['netIncomeGrowthTTM'] = final_df['netIncomeGrowthTTM'] * 100
 
     final_df['mc_penalty'] = final_df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x/3_000_000_000_000 - 1))))
 
@@ -941,9 +938,19 @@ with full_table_section:
                 help='Average revenue growth in the last 5 years',
                 format='%.02f',
             ),
+            'revenueGrowthTTM': st.column_config.NumberColumn(
+                'Revenue Growth (TTM)',
+                help='Revenue growth in the last twelve months',
+                format='%.02f',
+            ),
             'netIncomeGrowth': st.column_config.NumberColumn(
                 'Income Growth',
                 help='Average net income growth in the last 5 years',
+                format='%.02f',
+            ),
+            'netIncomeGrowthTTM': st.column_config.NumberColumn(
+                'Income Growth (TTM)',
+                help='Net income growth in the last twelve months',
                 format='%.02f',
             ),
             'medianProfitMargin': st.column_config.NumberColumn(
