@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
-from st_supabase_connection import SupabaseConnection
 from st_vortree import st_vortree
+from st_supabase_connection import SupabaseConnection
 
 import harvest.plot as hp
 import harvest.data as hd
@@ -332,13 +332,13 @@ with st.container(border=True):
             ['tableau10', 'category10', 'pastel1'],
             key='vortree_color'
         )
-        show_values = ctrl_cols[2].checkbox('Show values', value=True, key='vortree_show_values')
-        show_pct_only = ctrl_cols[3].checkbox('Show % only', value=False, key='vortree_pct_only')
-        treemap_height = ctrl_cols[4].slider('Height', 300, 900, 500, key='vortree_height')
+        show_values = ctrl_cols[2].checkbox('Show values', value=False, key='vortree_show_values')
+        show_pct_only = ctrl_cols[3].checkbox('Show % only', value=True, key='vortree_pct_only')
+        treemap_height = ctrl_cols[4].slider('Size', 300, 900, 500, key='vortree_height')
 
         ctrl_cols2 = st.columns([2, 2, 2, 2])
         border_color = ctrl_cols2[0].color_picker('Border color', value='#000000', key='vortree_border_color')
-        label_scale = ctrl_cols2[1].number_input('Label scale', min_value=0.1, max_value=3.0, value=1.0, step=0.1, key='vortree_label_scale')
+        label_scale = ctrl_cols2[1].number_input('Label scale', min_value=0.1, max_value=3.0, value=1.5, step=0.1, key='vortree_label_scale')
         
         if 'vortree_refresh_count' not in st.session_state:
             st.session_state['vortree_refresh_count'] = 0
