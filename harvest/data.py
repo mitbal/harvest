@@ -433,7 +433,7 @@ def calc_growth_stats(fin_df, metric='revenue'):
         stats[f'median_{p}y_{metric}_growth'] = np.median(growth) *100
         stats[f'trim_mean_{p}y_{metric}_growth'] = (scipy.stats.trim_mean(growth, 0.1)) *100
 
-    stats[f'{metric}_growth_TTM'] = growth.iloc[0]
+    stats[f'{metric}_growth_TTM'] = growth.iloc[0] * 100
     return stats
 
 
@@ -450,6 +450,7 @@ def calc_fin_stats(fin_df, target_currency='IDR'):
     stats['median_profit_margin'] = np.nanmedian(profit_margin)
     stats['earningTTM'] = rolling_income.loc[0, 'netIncome']
     stats['revenueTTM'] = rolling_revenue.loc[0, 'revenue']
+    stats['marginTTM'] = (stats['earningTTM'] / stats['revenueTTM'] * 100) if stats['revenueTTM'] > 0 else 0
 
     reported_currency = fin_df.loc[0, 'reportedCurrency']
     if target_currency == 'IDR' and reported_currency == 'USD':
