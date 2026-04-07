@@ -1022,22 +1022,22 @@ with full_table_section:
                 format='%.2f'
             ),
             'return_7d': st.column_config.NumberColumn(
-                '7D Return',
+                '7D Price Return',
                 help='Price return in the last week',
                 format='%.2f%%',
             ),
             'return_1m': st.column_config.NumberColumn(
-                '1M Return',
+                '1M Price Return',
                 help='Price return in the last month',
                 format='%.2f%%',
             ),
             'return_1y': st.column_config.NumberColumn(
-                '1Y Return',
+                '1Y Price Return',
                 help='Price return in the last 1 year',
                 format='%.2f%%',
             ),
             'return_10y': st.column_config.NumberColumn(
-                '10Y Return',
+                '10Y Price Return',
                 help='Price return in the last 10 years',
                 format='%.2f%%',
             ),
@@ -1060,7 +1060,7 @@ with full_table_section:
         
         treemap_cols = st.columns([2,2,3,2])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
-        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', 'Daily Return', '7D Return', '1M Return', '1Y Return', '10Y Return', 'Total 1Y Return', 'Total 10Y Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=color_var_index)
+        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', '1D Price Return', '7D Price Return', '1M Price Return', '1Y Price Return', '10Y Price Return', 'Total 1Y Return', 'Total 10Y Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=color_var_index)
         sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
         group_secs = treemap_cols[3].toggle('Group by Sector', value=True)
         
@@ -1073,11 +1073,11 @@ with full_table_section:
         df_tree.loc[:, 'Median Profit Margin'] = filtered_df['medianProfitMargin']
         df_tree.loc[:, 'TTM Profit Margin'] = filtered_df['marginTTM']
         df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
-        df_tree.loc[:, 'Daily Return'] = filtered_df['changes'] / filtered_df['price'] * 100
-        df_tree.loc[:, '7D Return'] = filtered_df['return_7d']
-        df_tree.loc[:, '1M Return'] = filtered_df['return_1m']
-        df_tree.loc[:, '1Y Return'] = filtered_df['return_1y']
-        df_tree.loc[:, '10Y Return'] = filtered_df['return_10y']
+        df_tree.loc[:, '1D Price Return'] = filtered_df['changes'] / filtered_df['price'] * 100
+        df_tree.loc[:, '7D Price Return'] = filtered_df['return_7d']
+        df_tree.loc[:, '1M Price Return'] = filtered_df['return_1m']
+        df_tree.loc[:, '1Y Price Return'] = filtered_df['return_1y']
+        df_tree.loc[:, '10Y Price Return'] = filtered_df['return_10y']
         df_tree.loc[:, 'Total 1Y Return'] = filtered_df['total_return_1y']
         df_tree.loc[:, 'Total 10Y Return'] = filtered_df['total_return_10y']
         df_tree.loc[:, 'PE Ratio'] = filtered_df['peRatio']
@@ -1097,7 +1097,7 @@ with full_table_section:
 
         color_map = 'green_shade'
         color_threshold = None
-        if color_var in ['Daily Return', '7D Return', '1M Return', '1Y Return', '10Y Return', 'Total 1Y Return', 'Total 10Y Return']:
+        if color_var in ['1D Price Return', '7D Price Return', '1M Price Return', '1Y Price Return', '10Y Price Return', 'Total 1Y Return', 'Total 10Y Return']:
             color_map = 'red_green'
             color_threshold = [-3, -1, 0, 1, 3]
         elif color_var == 'PE Ratio':
