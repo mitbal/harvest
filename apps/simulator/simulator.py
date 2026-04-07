@@ -104,7 +104,8 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
             activities.append(f'receive dividend payment {div_payment}')
 
             returns += [div]
-        except:
+        except Exception as e:
+            logger.error(f"Error calculating dividend for {stock_name} in year {y}: {e}")
             div_payment = 0
             div = 0
             returns += [0]
@@ -350,8 +351,8 @@ with st.container(border=True):
 
     try:
         return_df, without_drip = simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year)
-    except:
-        logger.error(f'Error running sim3 for {stock_name}')
+    except Exception as e:
+        logger.error(f'Error running sim3 for {stock_name}: {e}')
         st.error(f'Cannot find the stock {stock_name}. Please check the stock name again and dont forget to add .JK for Indonesian stocks')
         st.stop()
 
@@ -422,9 +423,9 @@ with st.container(border=True):
     # run the simulation
     try:
         investments, returns, without_drip, porto_df, transactions = simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list)
-    except:
+    except Exception as e:
         st.error('Cannot find the stocks. Please check again and dont forget to add .JK for Indonesian stocks')
-        logger.error(f'Error on sim4 for stocks {stock_list}')
+        logger.error(f'Error on sim4 for stocks {stock_list}: {e}')
         st.stop()
 
     # show log, display result table, and plot the graph

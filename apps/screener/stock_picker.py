@@ -107,15 +107,11 @@ def get_specific_stock_detail(stock_name):
 
         return fin, cp_df, price_df, sdf, n_share
 
-        time.sleep(0.2)
-        progress_bar.empty()
-
-        return fin, cp_df, price_df, sdf, n_share
-
     except Exception as e:
         logger.error(f'Error in downloading data for {stock_name}: {e}')
         st.error(f'Cannot find the stock {stock_name}. Please check the name again and dont forget to add exchange code at the end. For example .JK for Indonesian stock, .SI for Singaporean stock, .T for Japanese Stock, etc.', icon="🚨")
-        progress_bar.empty()
+        if 'progress_bar' in locals():
+            progress_bar.empty()
         st.stop()
 
 
@@ -140,7 +136,8 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
             try:
                 ipo_dt = datetime.strptime(ipo_date, '%Y-%m-%d')
                 stats['numOfYear'] = (datetime.now() - ipo_dt).days / 365.25
-            except:
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error parsing IPO date '{ipo_date}' for {stock_name}: {e}")
                 stats['numOfYear'] = 10  # Default fallback
         else:
             stats['numOfYear'] = 10
@@ -465,7 +462,12 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
         try:
             last_val = final_df.loc[stock_name, 'lastDiv']
             inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-        except:
+        except KeyError as e:
+            logger.warning(f"Stock {stock_name} not found in final_df for dividend stats: {e}")
+            last_val = 0
+            inc_val = 0
+        except Exception as e:
+            logger.error(f"Unexpected error getting dividend stats for {stock_name}: {e}")
             last_val = 0
             inc_val = 0
             
