@@ -10,7 +10,39 @@ import harvest.data as hd
 from harvest.utils import setup_logging
 
 
-st.title('# Simulator')
+st.set_page_config(page_title='Harvest | Simulator', page_icon='📈', layout='wide')
+
+# Custom CSS for modern look
+st.markdown("""
+<style>
+    .stMetric {
+        background-color: rgba(28, 131, 225, 0.1);
+        padding: 10px;
+        border-radius: 10px;
+    }
+    div[data-testid="stExpander"] {
+        border: 1px solid rgba(250, 250, 250, 0.2);
+        border-radius: 10px;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 24px;
+        font-weight: bold;
+    }
+    .main-title {
+        font-size: 48px;
+        font-weight: 800;
+        margin-bottom: 0px;
+    }
+    .sub-title {
+        font-size: 18px;
+        color: #808495;
+        margin-bottom: 30px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<p class="main-title">📈 Investor Simulator</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Compound interest and historical dividend reinvestment modeling</p>', unsafe_allow_html=True)
 
 ### Start of Function definition
 
@@ -57,7 +89,7 @@ def simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_sto
     return multi_return_df
 
 
-# @st.cache_data
+@st.cache_data
 def simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year):
     
     logger.info(f'sim #3 single stock. {stock_name=}, {initial_value=}, {start_year=}, {end_year=}')
@@ -245,35 +277,56 @@ with st.container(border=True):
 
     return_df = simulate_compounding(initial_value, num_year, avg_yield)
 
+    cols = st.columns([1, 1, 1])
+    final_investment = return_df['investment'].iloc[-1]
+    final_returns = return_df['returns'].iloc[-1]
+    total_returns = return_df['returns'].sum()
+    
+    cols[0].metric('Final Asset Value', f'IDR {final_investment:,.0f}')
+    cols[1].metric('Total Passive Income', f'IDR {total_returns:,.0f}')
+    cols[2].metric('Final Annual Yield', f'{(final_returns/final_investment*100):.2f}%')
+
+    st.divider()
+
     cols = st.columns([0.33, 0.67])
     cols[0].dataframe(
         return_df[['year', 'investment', 'returns']],
         column_config={
             'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Investment', format='localized'), 
-            'returns': st.column_config.NumberColumn('Returns', format='localized'), }, 
-        hide_index=True
+            'investment': st.column_config.NumberColumn('Investment', format='IDR %,d'), 
+            'returns': st.column_config.NumberColumn('Returns (p.a.)', format='IDR %,d'), }, 
+        hide_index=True,
+        use_container_width=True
     )
 
     base_chart = alt.Chart(return_df)
 
-    investment_chart = base_chart.mark_bar().encode(
+    investment_chart = base_chart.mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('investment:Q', title='Investment')
+        y=alt.Y('investment:Q', title='Investment (Asset Value)'),
+        tooltip=[alt.Tooltip('year:O', title='Year'), 
+                 alt.Tooltip('investment:Q', title='Investment', format=',.0f'),
+                 alt.Tooltip('returns:Q', title='Returns', format=',.0f')]
     )
 
-    return_chart = base_chart.mark_line(point=alt.OverlayMarkDef(size=100), size=5).encode(
+    return_chart = base_chart.mark_line(point=alt.OverlayMarkDef(size=60, filled=True), size=3, color='#FA8072').encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('returns:Q', title='Returns'),
-        color=alt.value('#FA8072')
+        y=alt.Y('returns:Q', title='Returns (Passive Income)'),
     )
 
     compound_chart = alt.layer(investment_chart, return_chart)\
         .resolve_scale(y='independent')\
-        .properties(title='Compound Interest Simulation',
-                    height=420)
+        .properties(title='Single Instrument Compounding Projection',
+                    height=450)
 
-    cols[1].altair_chart(compound_chart)
+    cols[1].altair_chart(compound_chart, use_container_width=True)
+    
+    st.download_button(
+        label="Download Projection Data (CSV)",
+        data=return_df.to_csv(index=False),
+        file_name='basic_compounding_sim.csv',
+        mime='text/csv',
+    )
 
 
 ##################################################################################
@@ -282,17 +335,45 @@ with st.container(border=True):
 with st.container(border=True):
     st.write('## #2 Multi stock compounding simulation')
 
-    cols = st.columns(3)
+    cols = st.columns([1, 2])
     num_of_stocks = cols[0].number_input('Number of stocks', value=2, min_value=1, max_value=12)
 
-    investment_per_stock = [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)]
-    investment_per_stock = cols[1].text_area('investment per stock (in million rupiah)', value='\n'.join([f'{int(i):d}' for i in investment_per_stock]))
-    investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
+    # Initial data for data_editor
+    initial_allocations = pd.DataFrame({
+        'Stock': [f'Stock {i+1}' for i in range(num_of_stocks)],
+        'Investment (Mio IDR)': [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)],
+        'Expected Yield (%)': [avg_yield*100 for _ in range(num_of_stocks)]
+    })
 
-    yield_per_stock = cols[2].text_area('yield per stock', value='\n'.join([f'{(avg_yield*100):.2f}' for _ in range(num_of_stocks)]))
-    yield_per_stock = [float(i)/100 for i in yield_per_stock.split('\n')]
+    edited_allocations = cols[1].data_editor(
+        initial_allocations,
+        num_rows='dynamic',
+        column_config={
+            'Stock': st.column_config.TextColumn('Stock Name'),
+            'Investment (Mio IDR)': st.column_config.NumberColumn('Investment (Mio IDR)', format='%,d', min_value=0),
+            'Expected Yield (%)': st.column_config.NumberColumn('Yield (%)', format='%.2f', min_value=0, max_value=100)
+        },
+        use_container_width=True,
+        hide_index=True,
+        key='multi_stock_editor'
+    )
+
+    investment_per_stock = [row['Investment (Mio IDR)'] * 1_000_000 for _, row in edited_allocations.iterrows()]
+    yield_per_stock = [row['Expected Yield (%)'] / 100 for _, row in edited_allocations.iterrows()]
+    num_of_stocks = len(edited_allocations)
 
     multi_return_df = simulate_multi_stock_compounding(num_year, num_of_stocks, investment_per_stock, yield_per_stock)
+
+    cols = st.columns([1, 1, 1])
+    final_investment = multi_return_df['investment'].iloc[-1]
+    final_returns = multi_return_df['returns'].iloc[-1]
+    total_returns = multi_return_df['returns'].sum()
+    
+    cols[0].metric('Final Aggregated Value', f'IDR {final_investment:,.0f}')
+    cols[1].metric('Total Passive Income', f'IDR {total_returns:,.0f}')
+    cols[2].metric('Weighted Annual Yield', f'{(final_returns/final_investment*100):.2f}%')
+
+    st.divider()
 
     cols = st.columns([0.33, 0.67])
 
@@ -300,10 +381,11 @@ with st.container(border=True):
         multi_return_df[['year', 'investment', 'returns']], 
         column_config={
             'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Investment', format='localized'),
-            'returns': st.column_config.NumberColumn('Returns', format='localized'),
+            'investment': st.column_config.NumberColumn('Investment', format='IDR %,d'),
+            'returns': st.column_config.NumberColumn('Returns', format='IDR %,d'),
         },
-        hide_index=True
+        hide_index=True,
+        use_container_width=True
     )
 
     multi_investment_chart = alt.Chart(multi_return_df).mark_bar().encode(
@@ -344,10 +426,11 @@ with st.container(border=True):
 
     this_year = datetime.now().year
 
-    cols = st.columns(3)
-    stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK').upper()
+    cols = st.columns([2, 1, 1, 1])
+    stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK', help='Add .JK for Indonesian stocks').upper()
     start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
     end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
+    drip_enabled = cols[3].toggle('Enable DRIP', value=True, help='Automatically reinvest dividends to buy more shares')
 
     try:
         return_df, without_drip = simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year)
@@ -358,41 +441,66 @@ with st.container(border=True):
 
     cols = st.columns([0.33, 0.67])
 
+    without_drip['type'] = 'No DRIP'
+    return_df['type'] = 'With DRIP'
+    display_df = return_df if drip_enabled else without_drip
+    
+    # Summary Metrics for Sim #3
+    metric_cols = st.columns([1, 1, 1])
+    final_val = display_df['investment'].iloc[-1]
+    final_div = display_df['returns'].iloc[-1]
+    total_div = display_df['returns'].sum()
+    
+    metric_cols[0].metric('Final Portfolio Value', f'IDR {final_val:,.0f}')
+    metric_cols[1].metric('Total Dividend Income', f'IDR {total_div:,.0f}')
+    metric_cols[2].metric('Yield on Cost (Final)', f'{(final_div/initial_value*100):.2f}%')
+
+    st.divider()
+
+    cols = st.columns([0.33, 0.67])
     cols[0].dataframe(
-        return_df[['year', 'investment', 'returns']], 
+        display_df[['year', 'investment', 'returns']], 
         column_config={
             'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Investment', format='localized'),
-            'returns': st.column_config.NumberColumn('Returns', format='localized'),
+            'investment': st.column_config.NumberColumn('Asset Value', format='IDR %,d'),
+            'returns': st.column_config.NumberColumn('Div. Received', format='IDR %,d'),
         }, 
         hide_index=True,
+        use_container_width=True,
         height=430)
 
-    without_drip['type'] = 'no reinvest'
-    return_df = pd.concat([without_drip, return_df])
+    # Combine for visual comparison in the main chart
+    plot_df = pd.concat([without_drip, return_df])
 
-    bar_color_scale = alt.Scale(scheme='tableau10')
-    investment_chart = alt.Chart(return_df).mark_bar().encode(
+    bar_color_scale = alt.Scale(domain=['No DRIP', 'With DRIP'], range=['#87CEFA', '#4682B4'])
+    
+    investment_chart = alt.Chart(plot_df).mark_bar(opacity=0.8, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('investment:Q', title='Investment'),
-        xOffset=alt.XOffset('type:N', sort=['no reinvest', 'reinvest']),
-        color=alt.Color('type:N',
-                        scale=bar_color_scale,
-                    ),
+        y=alt.Y('investment:Q', title='Investment Value'),
+        xOffset=alt.XOffset('type:N', sort=['No DRIP', 'With DRIP']),
+        color=alt.Color('type:N', scale=bar_color_scale, title='Strategy'),
+        tooltip=[alt.Tooltip('year:O'), alt.Tooltip('type:N'), alt.Tooltip('investment:Q', format=',.0f')]
     )
 
-    return_chart = alt.Chart(return_df).mark_line(point=True).encode(
+    return_chart = alt.Chart(plot_df).mark_line(point=True).encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('returns:Q', title='Returns'),
-        color=alt.Color('type:N').scale(domain=['reinvest', 'no reinvest'], range=['red', 'yellow'])
+        y=alt.Y('returns:Q', title='Dividends'),
+        color=alt.Color('type:N', scale=alt.Scale(range=['#FFD700', '#FF4500']), title='Dividend strategy')
     ).properties(
-        title=f'{stock_name} Dividend Reinvestment Compounding',
+        title=f'{stock_name} Historical Performance: DRIP Comparison',
         height=430
     )
 
     cols[1].altair_chart((investment_chart + return_chart)\
                     .resolve_scale(y='independent', color='independent'),
-                    width='stretch')
+                    use_container_width=True)
+    
+    st.download_button(
+        label=f"Download {stock_name} Historical Data (CSV)",
+        data=return_df.to_csv(index=False),
+        file_name=f'{stock_name}_historical_sim.csv',
+        mime='text/csv',
+    )
 
 
 ################################################################################
@@ -401,70 +509,107 @@ with st.container(border=True):
     st.write('## #4 Multi stock dividend reinvestment simulation')
 
     # process input form
-    cols = st.columns(2)
-    with cols[0]:
-        stocks_input_str = st.text_area(
-            label='Enter stock list (one per line):',
-            value='BJTM.JK\nSMSM.JK',
-            height=70
-        )
-        stock_list_raw = stocks_input_str.split('\n')
-        stock_list = [stock.strip().upper() for stock in stock_list_raw if stock.strip()]
+    cols = st.columns([1, 2])
+    
+    # Default stocks for Sim #4
+    default_sim4_stocks = pd.DataFrame({
+        'Ticker': ['BJTM.JK', 'SMSM.JK'],
+        'Investment (Mio IDR)': [initial_value/1_000_000 / 2 for _ in range(2)]
+    })
 
-    with cols[1]:
-        num_of_stocks = len(stock_list)
-        investment_per_stock = [initial_value/1_000_000 / num_of_stocks for _ in range(num_of_stocks)]
-        investment_per_stock = cols[1].text_area('investment per stock (in million rupiah)', 
-                                                 value='\n'.join([f'{int(i):d}' for i in investment_per_stock]), 
-                                                 key='investment_per_stock_sim_4',
-                                                 height=70)
-        investment_per_stock = [float(i)*1_000_000 for i in investment_per_stock.split('\n')]
+    edited_sim4 = cols[1].data_editor(
+        default_sim4_stocks,
+        num_rows='dynamic',
+        column_config={
+            'Ticker': st.column_config.TextColumn('Stock Ticker (e.g. BBCA.JK)'),
+            'Investment (Mio IDR)': st.column_config.NumberColumn('Initial Investment', format='%,d', min_value=0)
+        },
+        use_container_width=True,
+        hide_index=True,
+        key='sim4_stock_editor'
+    )
+
+    stock_list = [row['Ticker'].strip().upper() for _, row in edited_sim4.iterrows() if row['Ticker'].strip()]
+    investment_per_stock = [row['Investment (Mio IDR)'] * 1_000_000 for _, row in edited_sim4.iterrows()]
 
     # run the simulation
     try:
+        if not stock_list:
+            st.warning('Please add at least one stock ticker.')
+            st.stop()
+            
         investments, returns, without_drip, porto_df, transactions = simulate_real_multistock_compounding(initial_value, investment_per_stock, start_year, end_year, stock_list)
     except Exception as e:
-        st.error('Cannot find the stocks. Please check again and dont forget to add .JK for Indonesian stocks')
+        st.error('Error running simulation. Please check your stock tickers (add .JK for Indonesian stocks).')
         logger.error(f'Error on sim4 for stocks {stock_list}: {e}')
         st.stop()
 
     # show log, display result table, and plot the graph
-    with st.expander('Activity Log'):
-        st.write(transactions)
+    with st.expander('Historical Transaction Log'):
+        log_items = []
+        for date, desc in transactions.items():
+            log_items.append({'Date': date, 'Activity': desc})
+        st.table(pd.DataFrame(log_items).sort_values('Date', ascending=False))
 
     return_df = pd.DataFrame({'investment': investments, 'returns': returns})
     return_df['year'] = [f'Year {i}' for i in range(start_year, end_year+1)]
 
-    cols = st.columns([0.33, 0.67])
+    # Summary Metrics for Sim #4
+    metric_cols = st.columns([1, 1, 1])
+    final_val = return_df['investment'].iloc[-1]
+    final_div = return_df['returns'].iloc[-1]
+    total_div = return_df['returns'].sum()
+    
+    metric_cols[0].metric('Final Aggregate Value', f'IDR {final_val:,.0f}')
+    metric_cols[1].metric('Total Dividend Collected', f'IDR {total_div:,.0f}')
+    metric_cols[2].metric('Portfolio Yield (Final)', f'{(final_div/initial_value*100):.2f}%')
 
+    st.divider()
+
+    cols = st.columns([0.33, 0.67])
     cols[0].dataframe(
         return_df[['year', 'investment', 'returns']], 
         column_config={
             'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Investment', format='localized'),
-            'returns': st.column_config.NumberColumn('Returns', format='localized'),
+            'investment': st.column_config.NumberColumn('Total Value', format='IDR %,d'),
+            'returns': st.column_config.NumberColumn('Total Div.', format='IDR %,d'),
         }, 
         hide_index=True,
+        use_container_width=True,
         height=430
     )
 
-    porto_df['type'] = 'with drip'
-    without_drip['type'] = 'no drip'
-    porto_df = pd.concat([porto_df, without_drip])
-    investment_chart = alt.Chart(porto_df).mark_bar().encode(
+    porto_df['Strategy'] = 'With DRIP'
+    without_drip['Strategy'] = 'No DRIP'
+    
+    # Value column rename for consistency
+    without_drip.rename(columns={'value': 'Value'}, inplace=True)
+    porto_df.rename(columns={'value': 'Value'}, inplace=True)
+    
+    combined_plot_df = pd.concat([porto_df, without_drip])
+    
+    investment_chart = alt.Chart(combined_plot_df).mark_bar(opacity=0.8).encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('value:Q', title='Investment'),
-        color='stock',
-        xOffset='type'
+        y=alt.Y('Value:Q', title='Portfolio Value'),
+        color=alt.Color('stock:N', title='Stock'),
+        xOffset='Strategy:N',
+        tooltip=[alt.Tooltip('year:O'), alt.Tooltip('stock:N'), alt.Tooltip('Strategy:N'), alt.Tooltip('Value:Q', format=',.0f')]
     )
 
-    return_chart = alt.Chart(return_df).mark_line(point=True).encode(
+    return_chart = alt.Chart(return_df).mark_line(point=True, color='#FA8072', size=3).encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('returns:Q', title='Returns'),
-        color=alt.value('#FA8072')
+        y=alt.Y('returns:Q', title='Total Dividends'),
     ).properties(
+        title='Multi-Stock Historical DRIP Comparison',
         height=430
     )
 
     cols[1].altair_chart((investment_chart + return_chart).resolve_scale(y='independent'),
-                         width='stretch')
+                         use_container_width=True)
+    
+    st.download_button(
+        label="Download Multi-Stock Sim Data (CSV)",
+        data=return_df.to_csv(index=False),
+        file_name='multi_stock_historical_sim.csv',
+        mime='text/csv',
+    )
