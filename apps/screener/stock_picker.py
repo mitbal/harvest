@@ -2,15 +2,13 @@ import os
 import json
 import time
 import psutil
-
 import logging
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import redis
 import numpy as np
-import altair as alt
 import pandas as pd
-import seaborn as sns
+import altair as alt
 import streamlit as st
 from streamlit_echarts5 import st_echarts
 from datetime import date, datetime, timedelta
@@ -1325,7 +1323,7 @@ with full_table_section:
             x_range=x_range,
             fill_opacity=fill_opacity
         )
-        st.altair_chart(dist_chart, width='stretch')
+        st.altair_chart(dist_chart, width="stretch")
 
 
 if view == 'Table' and len(event.selection['rows']) > 0:

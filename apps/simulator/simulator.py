@@ -121,7 +121,7 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
         buy = cash / close_price / 100
         porto += [int(buy)]
         cash -= int(buy) * close_price * 100
-        activities.append(f'buy {int(buy)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
+        activities.append(f'buy {int(buy):,} lots of {stock_name} @ {close_price:,.2f} at {buy_date["date"]}')
 
         if y == start_year:
             initial_investment = buy
@@ -133,7 +133,7 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
             div_payment = div_df[(div_df['date'] >= f'{y}-01-01') & (div_df['date'] <= f'{y}-12-31')]['adjDividend'].sum()
             div = int(div_payment * np.sum(porto) * 100)
             cash += div
-            activities.append(f'receive dividend payment {div_payment}')
+            activities.append(f'receive dividend payment {div_payment:,.2f}')
 
             returns += [div]
         except Exception as e:
@@ -319,7 +319,7 @@ with st.container(border=True):
         .properties(title='Single Instrument Compounding Projection',
                     height=450)
 
-    cols[1].altair_chart(compound_chart, use_container_width=True)
+    cols[1].altair_chart(compound_chart, width="stretch")
     
     st.download_button(
         label="Download Projection Data (CSV)",
@@ -416,7 +416,7 @@ with st.container(border=True):
         height=420
     )
 
-    cols[1].altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'))
+    cols[1].altair_chart((combined_chart + compound_chart).resolve_scale(y='independent'), width="stretch")
 
 
 #############################################################################################
@@ -493,7 +493,7 @@ with st.container(border=True):
 
     cols[1].altair_chart((investment_chart + return_chart)\
                     .resolve_scale(y='independent', color='independent'),
-                    use_container_width=True)
+                    width="stretch")
     
     st.download_button(
         label=f"Download {stock_name} Historical Data (CSV)",
@@ -605,7 +605,7 @@ with st.container(border=True):
     )
 
     cols[1].altair_chart((investment_chart + return_chart).resolve_scale(y='independent'),
-                         use_container_width=True)
+                         width="stretch")
     
     st.download_button(
         label="Download Multi-Stock Sim Data (CSV)",
