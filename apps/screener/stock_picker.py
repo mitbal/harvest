@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import psutil
 
 import logging
 from pythonjsonlogger.jsonlogger import JsonFormatter
@@ -18,6 +19,7 @@ import harvest.plot as hp
 import harvest.data as hd
 from harvest.utils import setup_logging
 
+# memory optimization steps https://claude.ai/chat/44f339b5-5049-4eca-8b2e-37283a7f2bfb
 
 st.title('Jajan Saham')
 
@@ -211,6 +213,19 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
         stats['revenueTTM'] = 0
 
     return pd.Series(stats, name=stock_name)
+
+
+@st.cache_data(show_spinner=False)
+def calculate_missing_stats_cached(stock_name, fin_json, cp_json, price_json, sdf_json, n_share):
+    """
+    Cached wrapper around calculate_missing_stats.
+    DataFrames are passed as JSON strings so Streamlit can hash them.
+    """
+    fin      = pd.read_json(fin_json)      if fin_json      else pd.DataFrame()
+    cp_df    = pd.read_json(cp_json)      if cp_json       else pd.DataFrame()
+    price_df = pd.read_json(price_json)   if price_json    else pd.DataFrame()
+    sdf      = pd.read_json(sdf_json)     if sdf_json      else None
+    return calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
 
 
 @st.cache_data
@@ -556,7 +571,10 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
 
 def render_financial_info(fin, currency, stock_name, filtered_df):
 
-    fin = fin.copy()
+    # Only copy the columns we might mutate — avoids a full 60-row × 50-col copy
+    cols_needed = [c for c in ['date', 'calendarYear', 'revenue', 'netIncome', 'reportedCurrency',
+                                'period', 'eps'] if c in fin.columns]
+    fin = fin[cols_needed].copy()
     if not fin.empty and 'reportedCurrency' in fin.columns:
         reported_currency = fin.loc[0, 'reportedCurrency']
         if currency == 'IDR' and reported_currency == 'USD':
@@ -591,7 +609,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                     stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
                 
                 st.write('**Financial Metrics Summary**')
-                fin_stats = hd.calc_fin_stats(fin, target_currency=currency)
+                fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
                 
                 def render_metric(label, val, avg):
                     if val > avg:
@@ -621,7 +639,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                     stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
 
                 st.write('**Financial Metrics Summary**')
-                fin_stats = hd.calc_fin_stats(fin, target_currency=currency)
+                fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
                 
                 def render_metric(label, val, avg):
                     if val > avg:
@@ -644,6 +662,22 @@ def render_price_movement(price_df):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
     st.altair_chart(candlestick_chart, width='content')
 
+
+@st.cache_data(show_spinner=False)
+def cached_calc_ratio_history(price_df_json, fin_json, n_shares, ratio, reported_currency, target_currency):
+    """Cached wrapper — roll-over PE/PS ratio history only recomputed when inputs change."""
+    price_df = pd.read_json(price_df_json)
+    fin      = pd.read_json(fin_json)
+    return hd.calc_ratio_history(price_df, fin, n_shares=n_shares, ratio=ratio,
+                                 reported_currency=reported_currency, target_currency=target_currency)
+
+
+@st.cache_data(show_spinner=False)
+def cached_calc_fin_stats(fin_json, target_currency):
+    """Cached wrapper — fin stats recomputed only when the financial data changes."""
+    fin = pd.read_json(fin_json)
+    return hd.calc_fin_stats(fin, target_currency=target_currency)
+
 def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df):
     cols = st.columns(3, gap='large')
     year = cols[0].slider('Select Number of Year', min_value=1, max_value=15, key=f"val_year_{stock_name}")
@@ -654,13 +688,17 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     last_year_df = price_df[price_df['date']>= str(start_date)]
     fin_currency = fin.loc[0, 'reportedCurrency']
     target_currency = 'IDR' if sl == 'JKSE' else 'USD'
-    
+
+    # Serialise to JSON once — the cached helpers use these as cache keys
+    last_year_json = last_year_df.to_json()
+    fin_json_val   = fin.to_json()
+
     if val_metric == 'Price-to-Earnings':
         ratio = 'P/E'; pratio = 'peRatio'
-        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='pe', reported_currency=fin_currency, target_currency=target_currency)
+        pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'pe', fin_currency, target_currency)
     else:
         ratio = 'P/S'; pratio = 'psRatio'
-        pe_df = hd.calc_ratio_history(last_year_df, fin, n_shares=n_share, ratio='ps', reported_currency=fin_currency, target_currency=target_currency)
+        pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'ps', fin_currency, target_currency)
         
     if stock_name in filtered_df.index:
         stock_data = filtered_df.loc[stock_name]
@@ -834,6 +872,68 @@ if sl == 'JKSE':
     if is_syariah:
         final_df = final_df[final_df['is_syariah'] == True]
 
+# ---------------------------------------------------------------------------
+# Column pruning — keep only columns actually used in the page
+# ---------------------------------------------------------------------------
+_KEEP_COLS = [
+    # Identifiers / display
+    'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate',
+    # Dividend
+    'yield', 'lastDiv', 'avgFlatAnnualDivIncrease', 'numDividendYear',
+    'positiveYear', 'numOfYear', 'maximumCutPct', 'max10CutPct',
+    # Financial
+    'peRatio', 'psRatio', 'revenueGrowth', 'netIncomeGrowth',
+    'medianProfitMargin', 'earningTTM', 'revenueTTM',
+    'revenueGrowthTTM', 'netIncomeGrowthTTM',
+    # Returns
+    'return_7d', 'return_1m', 'return_1y', 'return_10y',
+    'total_return_1y', 'total_return_10y',
+    # Syariah flag (JKSE only)
+    'is_syariah',
+]
+_keep = [c for c in _KEEP_COLS if c in final_df.columns]
+final_df = final_df[_keep]
+
+# Show total app RAM in the sidebar
+_rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
+st.sidebar.caption(f'RAM: {_rss_mb:.0f} MB')
+
+
+# ---------------------------------------------------------------------------
+# Cached compute pipeline — only re-runs when final_df changes
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def get_processed_df(df):
+    """Compute all derived columns and sort. Cached so it only runs when data changes."""
+    df = df.copy()
+
+    df['marginTTM'] = df['earningTTM'] / df['revenueTTM'] * 100
+    df['mc_penalty'] = df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
+
+    df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
+    df['max10CutPct']   = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
+    df['maxDivIncrease']       = df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
+    df['maxRevGrowthDecrease'] = df.apply(lambda x: min(x['revenueGrowthTTM'], 0), axis=1)
+    df['maxIncGrowthDecrease'] = df.apply(lambda x: min(x['netIncomeGrowthTTM'], 0), axis=1)
+
+    return_cols = ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
+    for col in return_cols:
+        if col in df.columns:
+            df[col] = df[col] * 100
+
+    df['DScore'] = (
+        (df['lastDiv'] + df['maxDivIncrease'] * 5 * (df['positiveYear'] / df['numOfYear'])) / df['price']
+    ) * 100 \
+      * (df['numDividendYear'] / (df['numDividendYear'] + 25)) \
+      * (1 - np.exp(-df['numDividendYear'] / 5)) \
+      * (100 - df['max10CutPct']) / 100 \
+      * df['mc_penalty'] \
+      * (1 + df['maxRevGrowthDecrease'] / 100) \
+      * (1 + df['maxIncGrowthDecrease'] / 100)
+
+    return df.fillna(0).sort_values('DScore', ascending=False)
+
+
 default_view = 'Table'
 color_var_index = 1
 if 'view' in st.query_params:
@@ -846,35 +946,8 @@ if 'view' in st.query_params:
 full_table_section = st.container(border=True)
 with full_table_section:
 
-    final_df['marginTTM'] = final_df['earningTTM'] / final_df['revenueTTM'] * 100
+    filtered_df = get_processed_df(final_df)
 
-    final_df['mc_penalty'] = final_df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x/3_000_000_000_000 - 1))))
-
-    final_df['maximumCutPct'] = final_df['maximumCutPct'].apply(lambda x: min(x, 0)*-1)
-    final_df['max10CutPct'] = final_df['max10CutPct'].apply(lambda x: min(x, 0)*-1)
-    final_df['maxDivIncrease'] = final_df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
-    final_df['maxRevGrowthDecrease'] = final_df.apply(lambda x: min(x['revenueGrowthTTM'], 0), axis=1)
-    final_df['maxIncGrowthDecrease'] = final_df.apply(lambda x: min(x['netIncomeGrowthTTM'], 0), axis=1)
-    
-    # Convert return columns to percentage
-    return_cols = ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
-    for col in return_cols:
-        if col in final_df.columns:
-            final_df[col] = final_df[col] * 100
-
-    final_df['DScore'] = ((final_df['lastDiv'] + final_df['maxDivIncrease']*5*(final_df['positiveYear'] / final_df['numOfYear'])) / final_df['price']) * 100 \
-                        * (final_df['numDividendYear']/ (final_df['numDividendYear']+25)) \
-                        * (1 - np.exp(-final_df['numDividendYear'] / 5)) \
-                        * (100-final_df['max10CutPct'])/100 \
-                        * final_df['mc_penalty'] \
-                        * ((1+final_df['maxRevGrowthDecrease']/100)) \
-                        * ((1+final_df['maxIncGrowthDecrease']/100)) \
-
-    filtered_df = final_df.fillna(0).sort_values('DScore', ascending=False)
-
-    mcap_pos = filtered_df.columns.get_loc('mktCap')
-    earning_pos = filtered_df.columns.get_loc('earningTTM')
-    revenue_pos = filtered_df.columns.get_loc('revenueTTM')
     if sl == 'JKSE':
         divisor = 1_000_000_000_000
         mcap_label = 'Market Cap (T IDR)'
@@ -889,19 +962,29 @@ with full_table_section:
         earning_label = 'Earning TTM (B USD)'
         revenue_label = 'Revenue TTM (B USD)'
         fin_format = '%.2f B'
-    filtered_df.insert(mcap_pos, 'mktCapDisplay', filtered_df['mktCap'] / divisor)
-    filtered_df.insert(earning_pos + 1, 'earningTTMDisplay', filtered_df['earningTTM'] / divisor)
-    filtered_df.insert(revenue_pos + 2, 'revenueTTMDisplay', filtered_df['revenueTTM'] / divisor)
+
+    # Build display-only columns without mutating the cached filtered_df
+    display_df = filtered_df.copy()
+    mcap_pos    = display_df.columns.get_loc('mktCap')
+    earning_pos = display_df.columns.get_loc('earningTTM')
+    revenue_pos = display_df.columns.get_loc('revenueTTM')
+    display_df.insert(mcap_pos,         'mktCapDisplay',    display_df['mktCap']     / divisor)
+    display_df.insert(earning_pos + 1,  'earningTTMDisplay', display_df['earningTTM'] / divisor)
+    display_df.insert(revenue_pos + 2,  'revenueTTMDisplay', display_df['revenueTTM'] / divisor)
+
+    # Measure the fully processed (cached) filtered_df
+    # (removed — measurement moved to sidebar as process RSS)
 
     top_cols = st.columns(2)
     view = top_cols[0].segmented_control(label='View Option', 
                          options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
                          selection_mode='single',
                          default=default_view)
-    
+
+
     if view == 'Table':
 
-        cfig={
+        cfig={  # noqa: E225
             'stock': st.column_config.TextColumn(
                 'Stock',
                 help='Stock Code',
@@ -1054,7 +1137,7 @@ with full_table_section:
 
         }
 
-        event = st.dataframe(filtered_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
+        event = st.dataframe(display_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
     elif view == 'Treemap':
         
@@ -1064,25 +1147,27 @@ with full_table_section:
         sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
         group_secs = treemap_cols[3].toggle('Group by Sector', value=True)
         
-        df_tree = filtered_df[['sector', 'industry']].copy()
-
-        df_tree.loc[:, 'Market Cap'] = filtered_df['mktCap'] / 1_000_000_000
-        df_tree.loc[:, 'Revenue'] = filtered_df['revenueTTM']
-        df_tree.loc[:, 'Net Income'] = filtered_df['earningTTM']
-        df_tree.loc[:, 'Dividend Yield'] = filtered_df['yield']
-        df_tree.loc[:, 'Median Profit Margin'] = filtered_df['medianProfitMargin']
-        df_tree.loc[:, 'TTM Profit Margin'] = filtered_df['marginTTM']
-        df_tree.loc[:, 'Revenue Growth'] = filtered_df['revenueGrowth']
-        df_tree.loc[:, '1D Price Return'] = filtered_df['changes'] / filtered_df['price'] * 100
-        df_tree.loc[:, '7D Price Return'] = filtered_df['return_7d']
-        df_tree.loc[:, '1M Price Return'] = filtered_df['return_1m']
-        df_tree.loc[:, '1Y Price Return'] = filtered_df['return_1y']
-        df_tree.loc[:, '10Y Price Return'] = filtered_df['return_10y']
-        df_tree.loc[:, 'Total 1Y Return'] = filtered_df['total_return_1y']
-        df_tree.loc[:, 'Total 10Y Return'] = filtered_df['total_return_10y']
-        df_tree.loc[:, 'PE Ratio'] = filtered_df['peRatio']
-        df_tree.loc[:, 'PS Ratio'] = filtered_df['psRatio']
-        df_tree = df_tree.dropna()
+        # Build df_tree in one shot — avoids 17 separate column-assignment intermediate arrays
+        df_tree = pd.DataFrame({
+            'sector':              filtered_df['sector'],
+            'industry':            filtered_df['industry'],
+            'Market Cap':          filtered_df['mktCap'] / 1_000_000_000,
+            'Revenue':             filtered_df['revenueTTM'],
+            'Net Income':          filtered_df['earningTTM'],
+            'Dividend Yield':      filtered_df['yield'],
+            'Median Profit Margin': filtered_df['medianProfitMargin'],
+            'TTM Profit Margin':   filtered_df['marginTTM'],
+            'Revenue Growth':      filtered_df['revenueGrowth'],
+            '1D Price Return':     filtered_df['changes'] / filtered_df['price'] * 100,
+            '7D Price Return':     filtered_df['return_7d'],
+            '1M Price Return':     filtered_df['return_1m'],
+            '1Y Price Return':     filtered_df['return_1y'],
+            '10Y Price Return':    filtered_df['return_10y'],
+            'Total 1Y Return':     filtered_df['total_return_1y'],
+            'Total 10Y Return':    filtered_df['total_return_10y'],
+            'PE Ratio':            filtered_df['peRatio'],
+            'PS Ratio':            filtered_df['psRatio'],
+        }, index=filtered_df.index).dropna()
 
         if sector_var != 'ALL':
             df_tree = df_tree[df_tree['sector'] == sector_var]
