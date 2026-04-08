@@ -67,7 +67,7 @@ def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email:
 
 @st.cache_resource
 def connect_redis(redis_url):
-    r = redis.from_url(redis_url)
+    r = redis.from_url(redis_url, socket_connect_timeout=10, socket_timeout=30, socket_keepalive=True, retry_on_timeout=True)
     return r
 
 
@@ -292,10 +292,18 @@ def get_company_profile_data(porto):
     r = connect_redis(redis_url)
 
     rjson = r.get('div_score_jkse')
-    div_score_json = json.loads(rjson)
-    cp_df = pd.DataFrame(json.loads(div_score_json['content']))
+    if isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
+        cp_df = pd.read_parquet(io.BytesIO(rjson))
+    else:
+        div_score_json = json.loads(rjson)
+        if 'content' in div_score_json:
+            cp_df = pd.DataFrame(json.loads(div_score_json['content']))
+        else:
+            cp_df = pd.DataFrame(div_score_json)
+            
     cp_df.rename(columns={'symbol': 'stock'}, inplace=True)
-    cp_df.set_index('stock', inplace=True)
+    if 'stock' in cp_df.columns:
+        cp_df.set_index('stock', inplace=True)
     
     cp_df['Symbol'] = [x[:-3] for x in cp_df.index.to_list()]
     df = porto.merge(cp_df[['Symbol', 'price', 'sector', 'lastDiv']])

@@ -21,14 +21,13 @@ DEFAULT_MAX_CONCURRENCY = 5
 
 
 def store_df_to_redis(key: str, df: pd.DataFrame) -> None:
-    """Stores a Pandas DataFrame to Redis as JSON."""
+    """Stores a Pandas DataFrame to Redis as Parquet (fallback legacy string format possible too)."""
 
     redis_url = os.environ['REDIS_URL']
-    r = redis.from_url(redis_url)
+    r = redis.from_url(redis_url, socket_connect_timeout=10, socket_timeout=30, socket_keepalive=True, retry_on_timeout=True)
     try:
-        df_json = df.to_json(orient='records')
-        data = {'date': datetime.now().strftime('%Y-%m-%d'), 'content': df_json}
-        r.set(key, json.dumps(data))
+        df_parquet = df.to_parquet(engine='pyarrow', compression='snappy')
+        r.set(key, df_parquet)
     except redis.exceptions.ConnectionError as e:
         print(f"Error connecting to Redis: {e}")
     except Exception as e:

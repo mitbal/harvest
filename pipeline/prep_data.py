@@ -64,9 +64,9 @@ def compute_all(exch='jkse'):
 def store_df_to_redis(key, df):
 
     url = os.environ['REDIS_URL']
-    r = redis.from_url(url)
-    df_json = json.dumps(df.to_dict(orient='records'))
-    r.set(key, df_json)
+    r = redis.from_url(url, socket_connect_timeout=10, socket_timeout=30, socket_keepalive=True, retry_on_timeout=True)
+    df_parquet = df.to_parquet(engine='pyarrow', compression='snappy')
+    r.set(key, df_parquet)
 
 
 def prep_div_cal(cp, div_dict, filter):

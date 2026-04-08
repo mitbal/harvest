@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import time
 import psutil
@@ -17,7 +18,6 @@ import harvest.plot as hp
 import harvest.data as hd
 from harvest.utils import setup_logging
 
-# memory optimization steps https://claude.ai/chat/44f339b5-5049-4eca-8b2e-37283a7f2bfb
 
 st.title('Jajan Saham')
 
@@ -37,7 +37,7 @@ def get_logger(name, level=logging.INFO):
 
 @st.cache_resource
 def connect_redis(redis_url):
-    r = redis.from_url(redis_url)
+    r = redis.from_url(redis_url, socket_connect_timeout=10, socket_timeout=30, socket_keepalive=True, retry_on_timeout=True)
     return r
 
 
@@ -54,10 +54,17 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
     logger.info(f'redis get {key} took {end-start:.04f} seconds')
 
     if rjson is not None:
-        div_score_json = json.loads(rjson)
-        last_updated = div_score_json['date']
-        logger.info(f'dividend table last updated: {last_updated}')
-        final_df = pd.DataFrame(json.loads(div_score_json['content']))
+        if isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
+            final_df = pd.read_parquet(io.BytesIO(rjson))
+            logger.info("dividend table loaded from parquet")
+        else:
+            div_score_json = json.loads(rjson)
+            if 'date' in div_score_json:
+                last_updated = div_score_json['date']
+                logger.info(f'dividend table last updated: {last_updated}')
+                final_df = pd.DataFrame(json.loads(div_score_json['content']))
+            else:
+                final_df = pd.DataFrame(div_score_json)
     else:
         final_df = pd.read_csv('dividend_historical.csv')
 

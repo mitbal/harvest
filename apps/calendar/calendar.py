@@ -49,10 +49,10 @@ logger = get_logger('calendar')
 
 @st.cache_resource
 def connect_redis(redis_url):
-    r = redis.from_url(redis_url)
+    r = redis.from_url(redis_url, socket_connect_timeout=10, socket_timeout=30, socket_keepalive=True, retry_on_timeout=True)
     return r
 
-r = redis.from_url(url)
+r = connect_redis(url)
 
 
 @st.cache_data(ttl=60*60, show_spinner='Downloading dividend data')
@@ -66,13 +66,21 @@ def get_data_from_redis(key):
         st.stop()
     end = time.time()
 
-    rjson = json.loads(j)
-    last_updated = rjson['date']
-    
-    logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds, last updated: {last_updated}')
+    if isinstance(j, bytes) and j.startswith(b'PAR1'):
+        import io
+        logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds (parquet)')
+        return pd.read_parquet(io.BytesIO(j))
 
-    content = rjson['content']
-    return pd.DataFrame(json.loads(content))
+    rjson = json.loads(j)
+    
+    if 'date' in rjson and 'content' in rjson:
+        last_updated = rjson['date']
+        logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds, last updated: {last_updated}')
+        content = rjson['content']
+        return pd.DataFrame(json.loads(content))
+    else:
+        logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds')
+        return pd.DataFrame(rjson)
 
 
 def prep_div_month(df, month_idx=1):
