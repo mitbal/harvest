@@ -363,7 +363,7 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=N
     
     for label, value in metrics_dict.items():
         if isinstance(value, float):
-            st.write(f"**{label}**: {value:.2f}")
+            st.write(f"**{label}**: {value:,.2f}")
         else:
             st.write(f"**{label}**: {value}")
             
@@ -470,7 +470,7 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
             sdf[['date', 'adjDividend']],
             column_config={
                 'date': st.column_config.DateColumn('Ex-Date'),
-                'adjDividend': st.column_config.NumberColumn('Dividend', format='%.01f'),
+                'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f'),
             },
             hide_index=True)
 
@@ -550,8 +550,8 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
             cagr_10y_str = f"**:green[{cagr_10y:.2f}%]**" if cagr_10y is not None and cagr_10y >= 0 else (f"**:red[{cagr_10y:.2f}%]**" if cagr_10y is not None else "N/A")
 
             dividend_markdown = f'''
-            Estimated next year dividend payment: **:green[{next_div:0.2f}]**\n
-            Yield on current price: **:green[{next_yield:0.2f}%]**\n
+            Estimated next year dividend payment: **:green[{next_div:,.2f}]**\n
+            Yield on current price: **:green[{next_yield:,.2f}%]**\n
             Payout Ratio (Current): {payout_str}\n
             Payout Ratio (Average): {avg_payout_str}
 
@@ -559,7 +559,7 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
 
             Number of years increasing dividend: **{pos_years:,}**
 
-            Positive consistency rate: **:green[{consistency:.2f}%]**
+            Positive consistency rate: **:green[{consistency:,.2f}%]**
 
             5-Year CAGR: {cagr_5y_str}
 
@@ -745,16 +745,16 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         markdown_table = f"""
         | Metric | Value |
         | ------ | ----- |
-        | Current {ratio} | **:{highlight_color}[{pe_ttm:.2f}]** |
+        | Current {ratio} | **:{highlight_color}[{pe_ttm:,.2f}]** |
         | Current Price | **:{highlight_color}[{int(current_price):,}]** |
-        | Median last {year} year {ratio} | {median_pe:.2f} |
+        | Median last {year} year {ratio} | {median_pe:,.2f} |
         | Fair Price | {int((median_pe/pe_ttm)*current_price):,} |
-        | 95% Confidence Interval range {ratio} | {ci[0]:.2f} - {ci[1]:.2f} |
+        | 95% Confidence Interval range {ratio} | {ci[0]:,.2f} - {ci[1]:,.2f} |
         | 95% Confidence Interval range Price | {int((ci[0]/pe_ttm)*current_price):,} - {int((ci[1]/pe_ttm)*current_price):,} |
         """
         if industry_pe != -1 and sector_pe != -1:
-            markdown_table += f"| Industry: {industry_name} {ratio} | **:{industry_color}[{industry_pe:.2f}]** | \n \
-        | Sector: {sector_name} {ratio} | **:{sector_color}[{sector_pe:.2f}]** |"
+            markdown_table += f"| Industry: {industry_name} {ratio} | **:{industry_color}[{industry_pe:,.2f}]** | \n \
+        | Sector: {sector_name} {ratio} | **:{sector_color}[{sector_pe:,.2f}]** |"
         st.markdown(markdown_table)
 
     diff = median_pe / pe_ttm
@@ -951,17 +951,17 @@ with full_table_section:
     if sl == 'JKSE':
         divisor = 1_000_000_000_000
         mcap_label = 'Market Cap (T IDR)'
-        mcap_format = '%.2f T'
+        mcap_format = '%,.2f T'
         earning_label = 'Earning TTM (T IDR)'
         revenue_label = 'Revenue TTM (T IDR)'
-        fin_format = '%.2f T'
+        fin_format = '%,.2f T'
     else:
         divisor = 1_000_000_000
         mcap_label = 'Market Cap (B USD)'
-        mcap_format = '%.2f B'
+        mcap_format = '%,.2f B'
         earning_label = 'Earning TTM (B USD)'
         revenue_label = 'Revenue TTM (B USD)'
-        fin_format = '%.2f B'
+        fin_format = '%,.2f B'
 
     # Build display-only columns without mutating the cached filtered_df
     display_df = filtered_df.copy()
@@ -997,7 +997,7 @@ with full_table_section:
             'price': st.column_config.NumberColumn(
                 'Price',
                 help='Current Stock Price',
-                format='localized',
+                format='%,.2f',
             ),
             'yield': st.column_config.NumberColumn(
                 'Dividend Yield',
@@ -1005,7 +1005,7 @@ with full_table_section:
                 min_value=0,
                 max_value=100,
                 step=0.01,
-                format='%.02f',
+                format='%,.02f',
             ),
             'sector': st.column_config.TextColumn(
                 'Sector',
@@ -1028,59 +1028,62 @@ with full_table_section:
             'revenueGrowth': st.column_config.NumberColumn(
                 'Revenue Growth',
                 help='Average revenue growth in the last 5 years',
-                format='%.02f',
+                format='%,.02f',
             ),
             'revenueGrowthTTM': st.column_config.NumberColumn(
                 'Revenue Growth (TTM)',
                 help='Revenue growth in the last twelve months',
-                format='%.02f',
+                format='%,.02f',
             ),
             'netIncomeGrowth': st.column_config.NumberColumn(
                 'Income Growth',
                 help='Average net income growth in the last 5 years',
-                format='%.02f',
+                format='%,.02f',
             ),
             'netIncomeGrowthTTM': st.column_config.NumberColumn(
                 'Income Growth (TTM)',
                 help='Net income growth in the last twelve months',
-                format='%.02f',
+                format='%,.02f',
             ),
             'medianProfitMargin': st.column_config.NumberColumn(
                 'Profit Margin',
                 help='Median profit margin in the last 5 years',
-                format='%.02f',
+                format='%,.02f',
             ),
             'avgFlatAnnualDivIncrease': st.column_config.NumberColumn(
                 'Dividend Growth',
                 help='Average annual dividend increase in the last 5 years',
-                format='%.02f',
+                format='%,.02f',
             ),
             'numOfYear': st.column_config.NumberColumn(
                 'Num of Year',
                 help='Number of years the stock has been listed',
+                format='%,d',
             ),
             'numDividendYear': st.column_config.NumberColumn(
                 'Num of Dividend Year',
                 help='Number of years the stock has paid dividend',
+                format='%,d',
             ),
             'positiveYear': st.column_config.NumberColumn(
                 'Positive Year',
                 help='Number of years the stock has increased dividend',
+                format='%,d',
             ),
             'score': st.column_config.NumberColumn(
                 'Score',
                 help='Score of the stock',
-                format='%.02f',
+                format='%,.02f',
             ),
             'DScore': st.column_config.NumberColumn(
                 'Dividend Score',
                 help='Dividend Score of the stock',
-                format='%.02f',
+                format='%,.02f',
             ),
             'lastDiv': st.column_config.NumberColumn(
                 'Last Dividend',
                 help='Last Dividend Paid in Last/Current Fiscal Year',
-                format='%.02f',
+                format='%,.02f',
             ),
             'earningTTM': None,
             'earningTTMDisplay': st.column_config.NumberColumn(
@@ -1097,7 +1100,7 @@ with full_table_section:
             'peRatio': st.column_config.NumberColumn(
                 'PE Ratio',
                 help='Price to Earnings Ratio',
-                format='%.2f'
+                format='%,.2f'
             ),
             'psRatio': st.column_config.NumberColumn(
                 'PS Ratio',
