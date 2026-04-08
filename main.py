@@ -36,9 +36,9 @@ pages = st.navigation(
         'Apps': [page_screener,
                  page_calendar,
                 #  page_assistant,
-                 page_article,
                  page_simulator,
                  page_porto,
+                 page_article,
                 #  page_viz,
                 #  page_history,
                 #  page_trading
