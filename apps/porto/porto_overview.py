@@ -71,16 +71,114 @@ def connect_redis(redis_url):
     return r
 
 
-st.title('Portfolio Analysis')
+# --- UI Styling ---
+st.html("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    
+    .main {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    h1 {
+        font-weight: 700 !important;
+        background: linear-gradient(90deg, #064E3B 0%, #059669 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        padding-bottom: 1rem;
+    }
+    
+    .stMetric {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 1rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Premium KPI Card Styling */
+    .kpi-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 1.5rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        backdrop-filter: blur(10px);
+    }
+    
+    .kpi-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+        border-color: rgba(5, 150, 105, 0.3);
+    }
+    
+    .kpi-label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #6B7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
+    }
+    
+    .kpi-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 0.25rem;
+    }
+    
+    .kpi-delta {
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    .delta-plus { color: #059669; }
+    .delta-minus { color: #DC2626; }
+    
+    /* Custom container for cards */
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+</style>
+""")
 
-with st.sidebar:
-    if not st.user.is_logged_in:
-        if st.button('Log in with Google', icon=':material/login:'):
-            st.login('google')
+def render_kpi(label, value, delta=None, delta_type="normal"):
+    delta_html = ""
+    if delta:
+        cls = "delta-plus" if (delta_type == "normal" and "-" not in delta) or (delta_type == "inverse" and "-" in delta) else "delta-minus"
+        delta_html = f'<div class="kpi-delta {cls}">{delta}</div>'
+    
+    st.html(f"""
+        <div class="kpi-card">
+            <div class="kpi-label">{label}</div>
+            <div class="kpi-value">{value}</div>
+            {delta_html}
+        </div>
+    """)
+
+# --- Header ---
+col_head1, col_head2 = st.columns([3, 1])
+with col_head1:
+    st.title('Portfolio Analytics')
+    if st.user.is_logged_in:
+        st.markdown(f"**Welcome back, {st.user.name.split()[0]}!** Here's your harvest overview for today.")
     else:
-        st.text(f"Welcome! {st.user.name}")
-        if st.button('Log Out', icon=':material/logout:'):
-            st.logout()
+        st.markdown("Analyze your portfolio performance and dividend growth.")
+
+with col_head2:
+    if st.user.is_logged_in:
+         st.button('Log Out', icon=':material/logout:', on_click=st.logout, use_container_width=True)
+    else:
+         st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), use_container_width=True)
+
 
 conn = get_db_connection()
 
@@ -101,82 +199,88 @@ else:
     data_input_expand_flag = False
 
 
-with st.expander('Data Input', expanded=data_input_expand_flag):
+with st.expander('📥 Porto Data Input', expanded=data_input_expand_flag):
 
-    if os.environ == 'prod':
-        default_input = 1
-    else:
-        default_input = 1
-
-    method = st.radio('Method', ['Upload CSV', 'Form', 'Paste Raw'], index=default_input, horizontal=True)
-
-    with st.form('abc'):
-
-        if method == 'Upload CSV':
-            uploaded_file = st.file_uploader('Choose a file', type='csv')
-
-            if uploaded_file:
-                st.session_state['porto_file'] = uploaded_file
-            
-        elif method == 'Paste Raw':
-            raw = st.text_area('Paste the Raw Data here from Stockbit Portfolio page')
+    input_cols = st.columns([1, 2])
+    
+    with input_cols[0]:
+        st.markdown("### Selection")
+        method = st.radio('Import Method', ['Upload CSV', 'Form', 'Paste Raw'], index=1, horizontal=False)
         
-        elif method == 'Form':
-            if st.session_state['porto_df'] is None:
-                example_df = pd.read_csv('data/porto_sample1.csv')
-            else:
-                example_df = st.session_state['porto_df'].copy(deep=True)
-            edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True)
-
-        form_cols = st.columns(2)
-
-        target = form_cols[0].number_input(
-            label='Input Target Annual Income (in million IDR)',
+        st.divider()
+        st.markdown("### Settings")
+        target = st.number_input(
+            label='Target Annual Income (M IDR)',
             value=240, step=1, min_value=1, max_value=10_000,
-            format='%d'
+            format='%d',
+            help="Your financial freedom goal"
         )
 
-        baseline = form_cols[1].number_input(
-            label='Benchmark Performance (in percent)',
-            value=6.35, step=.01, min_value=0.01, max_value=99.99
+        baseline = st.number_input(
+            label='Benchmark (%)',
+            value=6.35, step=.01, min_value=0.01, max_value=99.99,
+            help="Benchmark yield for comparison (e.g. S&P500 or Govt Bond)"
         )
 
-        submit = st.form_submit_button('Submit data')
-        if submit:
-
+    with input_cols[1]:
+        st.markdown(f"### {method} Interface")
+        with st.form('abc', border=False):
             if method == 'Upload CSV':
-                if st.session_state['porto_file'] != 'EMPTY':
-                    st.session_state['porto_file'].seek(0)
-                    st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], sep=',', dtype='str')
-
-            elif method == 'Paste Raw':
-                rows = np.array(raw.split())
-
-                stock = rows[range(0, len(rows), 11)]
-                lot = rows[range(1, len(rows), 11)]
-                lot = [x.replace(',', '') for x in lot]
-                price = rows[range(3, len(rows), 11)]
-                price = [p.replace(',', '') for p in price]
-
-                df = pd.DataFrame({
-                    'Symbol': stock,
-                    'Available Lot': lot,
-                    'Average Price': price
-                })
-                st.session_state['porto_df'] = df
-
-            elif method == 'Paste CSV':
-                input_str = io.StringIO(raw)
-                df = pd.read_csv(input_str, sep=';', dtype='str')
-                st.session_state['porto_df'] = df
+                uploaded_file = st.file_uploader('Select your portfolio CSV', type='csv')
+                if uploaded_file:
+                    st.session_state['porto_file'] = uploaded_file
                 
+            elif method == 'Paste Raw':
+                raw = st.text_area('Paste data from Stockbit Portfolio page', height=200)
+            
             elif method == 'Form':
-                df = edited_df.copy(deep=True)
-                df['Symbol'] = df['Symbol'].str.upper()
-                st.session_state['porto_df'] = df
+                if st.session_state['porto_df'] is None:
+                    # Load default template from the data folder
+                    try:
+                        example_df = pd.read_csv('data/porto_sample1.csv')
+                    except Exception:
+                        example_df = pd.DataFrame(columns=['Symbol', 'Available Lot', 'Average Price'])
+                        example_df.loc[0] = ['BBCA', 10, 10000]
+                else:
+                    example_df = st.session_state['porto_df'].copy(deep=True)
+                edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True, use_container_width=True)
 
-            logger.info(f'Porto data submitted via {method}')
-            logger.info(f'target: {target}. baseline: {baseline}. porto: {st.session_state["porto_df"].to_records()}')
+            submit = st.form_submit_button('🚀 Load Portfolio Data', use_container_width=True)
+            
+            if submit:
+                if method == 'Upload CSV':
+                    if st.session_state['porto_file'] != 'EMPTY':
+                        st.session_state['porto_file'].seek(0)
+                        st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], sep=',', dtype='str')
+
+                elif method == 'Paste Raw':
+                    rows = np.array(raw.split())
+
+                    stock = rows[range(0, len(rows), 11)]
+                    lot = rows[range(1, len(rows), 11)]
+                    lot = [x.replace(',', '') for x in lot]
+                    price = rows[range(3, len(rows), 11)]
+                    price = [p.replace(',', '') for p in price]
+
+                    df = pd.DataFrame({
+                        'Symbol': stock,
+                        'Available Lot': lot,
+                        'Average Price': price
+                    })
+                    st.session_state['porto_df'] = df
+
+                elif method == 'Paste CSV':
+                    input_str = io.StringIO(raw)
+                    df = pd.read_csv(input_str, sep=';', dtype='str')
+                    st.session_state['porto_df'] = df
+                    
+                elif method == 'Form':
+                    df = edited_df.copy(deep=True)
+                    df['Symbol'] = df['Symbol'].str.upper()
+                    st.session_state['porto_df'] = df
+
+                logger.info(f'Porto data submitted via {method}')
+                logger.info(f'target: {target}. baseline: {baseline}. porto: {st.session_state["porto_df"].to_records()}')
 
 
 api_key = os.environ['FMP_API_KEY']
@@ -240,21 +344,31 @@ df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_
 
 # Overall summary
 with st.container(border=True):
-    overall_cols = st.columns([8,10,10,10,6], gap='small')
-    with overall_cols[0]:
-        delta = total_yield_on_cost - baseline
-        if delta > 0:
-            text_delta = f'{delta:.2f}% above benchmark'
-        else:
-            text_delta = f'{delta:.2f}% below benchmark'
-        st.metric('Total Dividend Yield on Cost', 
-                  value=f'{total_yield_on_cost:.3f} %',
-                  delta=text_delta)
+    overall_cols = st.columns(5)
     
-    overall_cols[1].metric('Dividend Annual Income', value=f'IDR {annual_dividend:,.0f}')
-    overall_cols[2].metric('Total Investment', value=f'IDR {total_investment:,.0f}')
-    overall_cols[3].metric('Current Market Value', value=f'IDR {current_investment_value:,.0f}', delta=f'{current_investment_value-total_investment:,.0f} IDR')
-    overall_cols[4].metric('Percent on Target', value=f'{achieve_percentage:.2f} %')
+    # 1. Total Dividend Yield on Cost
+    delta_val = total_yield_on_cost - baseline
+    delta_text = f"{delta_val:+.2f}% vs benchmark"
+    with overall_cols[0]:
+        render_kpi("Yield on Cost", f"{total_yield_on_cost:.2f}%", delta_text)
+    
+    # 2. Dividend Annual Income
+    with overall_cols[1]:
+        render_kpi("Annual Income", f"IDR {annual_dividend:,.0f}")
+        
+    # 3. Total Investment
+    with overall_cols[2]:
+        render_kpi("Total Invested", f"IDR {total_investment:,.0f}")
+        
+    # 4. Current Market Value
+    market_delta = current_investment_value - total_investment
+    market_delta_text = f"IDR {market_delta:+,.0f}"
+    with overall_cols[3]:
+        render_kpi("Market Value", f"IDR {current_investment_value:,.0f}", market_delta_text)
+        
+    # 5. Percent on Target
+    with overall_cols[4]:
+        render_kpi("Target Progress", f"{achieve_percentage:.2f}%")
 
 # Table List
 with st.container(border=True):
@@ -262,40 +376,42 @@ with st.container(border=True):
     tabs = st.tabs(['Table View', 'Bar Chart View', 'Voronoi Treemap'])
     
     with tabs[0]:
-        st.write('Current Portfolio')
+        st.subheader('Portfolio Holdings', divider='grey')
 
         cfig = {
             'yield_on_cost': st.column_config.NumberColumn(
-                'Yield on Cost (in pct)',
-                format='%.2f',
+                'Yield on Cost',
+                format='%.2f%%',
+                help='Dividend Yield based on your Average Purchase Price'
             ),
             'yield_on_price': st.column_config.NumberColumn(
-                'Yield on Price (in pct)',
-                format='%.2f',
+                'Yield on Price',
+                format='%.2f%%',
+                help='Dividend Yield based on Current Market Price'
             ),
             'div_rate': st.column_config.NumberColumn(
-                'Last Dividend Paid',
-                format='%.0f'
+                'Last Dividend',
+                format='IDR %,.0f'
             ),
             'avg_price': st.column_config.NumberColumn(
-                'Average Price',
-                format='localized'
+                'Avg Price',
+                format='IDR %,d'
             ),
             'total_invested': st.column_config.NumberColumn(
                 'Total Invested',
-                format='localized'
+                format='IDR %,d'
             ),
             'last_price': st.column_config.NumberColumn(
-                'Last Price',
-                format='localized'
+                'Market Price',
+                format='IDR %,d'
             ),
             'total_dividend': st.column_config.NumberColumn(
-                'Total Dividend',
-                format='localized'
+                'Annual Dividend',
+                format='IDR %,d'
             ),
             'Available Lot': st.column_config.NumberColumn(
-                'Available Lot',
-                format='localized'
+                'Lots',
+                format='%,d'
             )
         }
 
@@ -303,8 +419,8 @@ with st.container(border=True):
             df_display.set_index('Symbol'),
             on_select='rerun',
             selection_mode='single-row',
-            # hide_index=True,
-            column_config=cfig
+            column_config=cfig,
+            use_container_width=True
         )
 
     with tabs[1]:
@@ -317,7 +433,7 @@ with st.container(border=True):
             y=alt.Y('yield_on_cost', scale=alt.Scale(domain=[0, 100])),
         )
         combined_chart = (div_bar + yield_bar).resolve_scale(y='independent')
-        st.altair_chart(combined_chart)
+        st.altair_chart(combined_chart, width="stretch")
 
     with tabs[2]:
         ctrl_cols = st.columns([2, 2, 1, 1, 2])
@@ -383,7 +499,7 @@ if main_event.selection['rows']:
                     div_df[['date', 'adjDividend']],
                     column_config={
                         'date': st.column_config.DateColumn('Ex-Date'),
-                        'adjDividend': st.column_config.NumberColumn('Dividend', format='localized')
+                        'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f')
                     },
                     height=420,
                     hide_index=True
@@ -398,53 +514,61 @@ if main_event.selection['rows']:
                                                     last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
                                                     inc_val=stats['historical_mean_flat'])
 
-                st.altair_chart(div_bar)
+                st.altair_chart(div_bar, width="stretch")
 
             # with div_hist_cols[2]:
 
 
-with st.expander('Sectoral View', expanded=True):
+with st.expander('📊 Sectoral Exposure', expanded=True):
 
-    sector_cols = st.columns([.7,.5,1])    
+    sector_cols = st.columns([1, 1, 1])    
     with sector_cols[0]:
+        st.markdown("**Dividends by Sector**")
         sector_df = df.groupby('sector')['total_dividend'].sum().to_frame().sort_values('total_dividend', ascending=False).reset_index()
         event = st.dataframe(
             sector_df,
             selection_mode=['single-row'],
             on_select='rerun',
             hide_index=True,
-            key='data',
+            key='sector_table',
+            use_container_width=True,
             column_config={
-                'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                'sector': 'Sector',
+                'total_dividend': st.column_config.NumberColumn('Total Div (IDR)', format='%,d'),
             }
         )
 
     with sector_cols[1]:
+        st.markdown("**Stocks in Selection**")
         if len(event.selection['rows']) > 0:
             row_idx = event.selection['rows'][0]
             sector_name = sector_df.loc[row_idx, 'sector']
             st.dataframe(
                 df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), 
                 hide_index=True, 
+                use_container_width=True,
                 column_config={
-                    'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                    'total_dividend': st.column_config.NumberColumn('Total Div (IDR)', format='%,d'),
                 }
             )
         else:
-            st.info('Select one of the sector on the table on the left')
-
-    sector_pie = alt.Chart(df).mark_arc().encode(
-        theta='sum(total_dividend)',
-        color='sector'
-    ).interactive()
+            st.info('Select a sector on the left to see holdings', icon="👈")
 
     with sector_cols[2]:
-        st.altair_chart(sector_pie)
+        st.markdown("**Diversification**")
+        sector_pie = alt.Chart(df).mark_arc(innerRadius=50).encode(
+            theta='sum(total_dividend)',
+            color=alt.Color('sector', scale=alt.Scale(scheme='greens'), legend=None),
+            tooltip=['sector', alt.Tooltip('sum(total_dividend)', format=',d')]
+        ).properties(height=250)
+        st.altair_chart(sector_pie, width="stretch")
 
 
-with st.expander('Calendar View', expanded=True):
+with st.expander('📅 Dividend Timeline', expanded=True):
 
-    view_type = st.radio('Select View', ['Calendar', 'Bar Chart', 'Table'], horizontal=True)
+    view_cols = st.columns([2, 1])
+    with view_cols[0]:
+        view_type = st.segmented_control('View Pattern', ['Calendar', 'Monthly Bar', 'Grid Table'], default='Monthly Bar')
 
     # prepare calendar data
     div_lists = []
@@ -485,39 +609,46 @@ with st.expander('Calendar View', expanded=True):
         all_divs['date'] = all_divs['date'].apply(lambda x: x.replace(year=current_year-1))
         all_divs['symbol'] = all_divs['Symbol']
         cal = hp.plot_dividend_calendar(all_divs)
-        st.altair_chart(cal)
+        st.altair_chart(cal, width="stretch")
     
-    elif view_type == 'Bar Chart':
-        bar_cols = st.columns(2)
-        bar_cols[0].dataframe(
-            month_div[['month_name', 'total_dividend']],
-            column_config={
-                'month_name': 'Month',
-                'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
-            },
-            hide_index=True
-        )
+    elif view_type == 'Monthly Bar':
+        bar_cols = st.columns([1, 2])
+        with bar_cols[0]:
+            st.dataframe(
+                month_div[['month_name', 'total_dividend']],
+                column_config={
+                    'month_name': 'Month',
+                    'total_dividend': st.column_config.NumberColumn('Total Div (IDR)', format='%,d'),
+                },
+                hide_index=True,
+                use_container_width=True
+            )
 
-        month_bar = alt.Chart(month_div).mark_bar().encode(
-            x=alt.X('month:N'),
-            y=alt.Y('total_dividend')
-        )
-        bar_cols[1].altair_chart(month_bar)
+        with bar_cols[1]:
+            month_bar = alt.Chart(month_div).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+                x=alt.X('month_name:N', sort=month_div['month_name'].tolist(), title='Month'),
+                y=alt.Y('total_dividend:Q', title='Total Dividend (IDR)'),
+                color=alt.value('#10B981'),
+                tooltip=['month_name', alt.Tooltip('total_dividend', format=',d')]
+            ).properties(height=300)
+            st.altair_chart(month_bar, width="stretch")
     
     else:
+        # Grid Table View
         row_1 = st.container()
         with row_1:
             row_1_cols = st.columns(6)
             for c, i in zip(row_1_cols, range(1, 7)):
                 m = all_divs[all_divs['month'] == i]
-                c.write(calendar.month_name[i])
+                c.markdown(f"**{calendar.month_name[i]}**")
                 c.dataframe(
                     m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
                     hide_index=True,
+                    use_container_width=True,
                     column_config={
-                        'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                        'total_dividend': st.column_config.NumberColumn('Div', format='%,d'),
                     },
-                    height=210
+                    height=200
                 )
 
         row_2 = st.container()
@@ -525,53 +656,54 @@ with st.expander('Calendar View', expanded=True):
             row_2_cols = st.columns(6)
             for c, i in zip(row_2_cols, range(7, 13)):
                 m = all_divs[all_divs['month'] == i]
-                c.write(calendar.month_name[i])
+                c.markdown(f"**{calendar.month_name[i]}**")
                 c.dataframe(
                     m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
                     hide_index=True,
+                    use_container_width=True,
                     column_config={
-                        'total_dividend': st.column_config.NumberColumn('Total Dividend', format='localized'),
+                        'total_dividend': st.column_config.NumberColumn('Div', format='%,d'),
                     },
-                    height=210
+                    height=200
                 )
 
 # Project future earnings
-with st.expander('Future Projection', expanded=True):
-    # Assume growth based on current yield with reinvestment
+with st.expander('📈 Compounding Projection', expanded=True):
+    st.markdown("Estimate your future returns based on compounding dividends and yield growth.")
 
-    future_cols = st.columns(2)
-    number_of_year = future_cols[0].number_input('Number of Year', value=25, min_value=1, max_value=50)
-    inc = future_cols[1].number_input('Input annual percentage increase', value=total_yield_on_cost, min_value=0.1, max_value=50.0, step=0.1)
+    proj_input_cols = st.columns([1, 1, 3])
+    with proj_input_cols[0]:
+        number_of_year = st.number_input('Years', value=25, min_value=1, max_value=50)
+    with proj_input_cols[1]:
+        inc = st.number_input('Expected Yield (%)', value=total_yield_on_cost, min_value=0.1, max_value=50.0, step=0.1)
+    
     futures = [0]*number_of_year
     for i in range(number_of_year):
         futures[i] = annual_dividend * (1+inc/100)**i
 
-    df_future = pd.DataFrame({'years': [f'Year {i+1:2d}' for i in range(number_of_year)], 'returns': futures})
+    df_future = pd.DataFrame({'years': [f'Year {i+1:02d}' for i in range(number_of_year)], 'returns': futures})
     df_future['achieved'] = df_future['returns'] > (target*1_000_000)
     df_future['yield'] = df_future['returns'] / total_investment * 100
     
     base_chart = alt.Chart(df_future)
-    return_chart = base_chart.mark_bar().encode(
-        x=alt.X('years'),
-        y=alt.Y('returns'),
-        color=alt.condition(alt.datum['achieved'], alt.value('#008631'), alt.value('#87CEFA')),
+    return_chart = base_chart.mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+        x=alt.X('years:N', title='Compounding Journey'),
+        y=alt.Y('returns:Q', title='Annual Income (IDR)'),
+        color=alt.condition(alt.datum['achieved'], alt.value('#059669'), alt.value('#93C5FD')),
         tooltip=['years', alt.Tooltip('returns', format=',.0f')]
-    ).properties(
-        width=1000
     )
 
-    yield_chart = base_chart.mark_line(point=True).encode(
-        x=alt.X('years'),
-        y=alt.Y('yield'),
-        color=alt.value("#FF0000"),
-        size=alt.value(3)
+    yield_chart = base_chart.mark_line(point=True, color='#D97706').encode(
+        x=alt.X('years:N'),
+        y=alt.Y('yield:Q', title='Yield on Cost (%)'),
+        tooltip=['years', alt.Tooltip('yield', format='.2f')]
     )
 
-    future_chart = (return_chart + yield_chart).resolve_scale(y='independent')
-    st.altair_chart(future_chart)
+    future_chart = (return_chart + yield_chart).resolve_scale(y='independent').properties(height=400)
+    st.altair_chart(future_chart, width="stretch")
 
 
 if st.user.is_logged_in:
-    if st.sidebar.button('Update Porto', icon=':material/cloud_upload:'):
+    if st.button('💾 Sync Portfolio to Cloud', use_container_width=True):
         update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.user.email)
-        st.sidebar.badge('Porto updated successfully', icon=':material/check:', color='green')
+        st.success('Portfolio synced successfully!', icon="✅")
