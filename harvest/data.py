@@ -2,6 +2,13 @@ import os
 import io
 import datetime
 import requests
+from requests.adapters import HTTPAdapter
+
+session = requests.Session()
+adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10)
+session.mount('https://', adapter)
+session.mount('http://', adapter)
+requests.get = session.get
 from typing import Dict
 # from datetime import datetime, timedelta
 
