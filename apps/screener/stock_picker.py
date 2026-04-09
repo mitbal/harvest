@@ -4,6 +4,7 @@ import json
 import time
 import psutil
 import logging
+import concurrent.futures
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import redis
@@ -93,7 +94,6 @@ def get_specific_stock_detail(stock_name):
         cp_df = hd.get_company_profile([stock_name])
         progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
 
-        # start_date = (datetime.today() - timedelta(days=365*10)).isoformat()
         start_date = '2010-01-01'
         price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
         progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
@@ -671,8 +671,8 @@ def render_price_movement(price_df):
 @st.cache_data(show_spinner=False)
 def cached_calc_ratio_history(price_df_json, fin_json, n_shares, ratio, reported_currency, target_currency):
     """Cached wrapper — roll-over PE/PS ratio history only recomputed when inputs change."""
-    price_df = pd.read_json(price_df_json)
-    fin      = pd.read_json(fin_json)
+    price_df = pd.read_json(io.StringIO(price_df_json))
+    fin      = pd.read_json(io.StringIO(fin_json))
     return hd.calc_ratio_history(price_df, fin, n_shares=n_shares, ratio=ratio,
                                  reported_currency=reported_currency, target_currency=target_currency)
 
@@ -680,7 +680,7 @@ def cached_calc_ratio_history(price_df_json, fin_json, n_shares, ratio, reported
 @st.cache_data(show_spinner=False)
 def cached_calc_fin_stats(fin_json, target_currency):
     """Cached wrapper — fin stats recomputed only when the financial data changes."""
-    fin = pd.read_json(fin_json)
+    fin = pd.read_json(io.StringIO(fin_json))
     return hd.calc_fin_stats(fin, target_currency=target_currency)
 
 def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df):
