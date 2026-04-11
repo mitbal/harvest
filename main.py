@@ -47,31 +47,37 @@ pages = st.navigation(
 )
 
 
-# --- UTM Tracking ---
-# Runs on every page navigation; UTM params captured once per session
-UTM_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']
+# --- URL Parameter Tracking ---
+# Runs on every page navigation; URL params captured once per session
+if 'tracked_url_params' not in st.session_state:
+    st.session_state['tracked_url_params'] = set()
 
 if 'visitor_id' not in st.session_state:
     st.session_state['visitor_id'] = str(uuid.uuid4())
 
-for param in UTM_PARAMS:
+# Capture any new url parameters present in this request
+for param, value in st.query_params.items():
     if param not in st.session_state:
-        st.session_state[param] = st.query_params.get(param, None)
+        st.session_state[param] = value
+        st.session_state['tracked_url_params'].add(param)
 
 if 'visited_pages' not in st.session_state:
     st.session_state['visited_pages'] = set()
 
 if pages.title not in st.session_state['visited_pages']:
-    _logger = setup_logging('utm')
-    _logger.info(
-        f"VISIT | visitor={st.session_state['visitor_id']} "
-        f"| page={pages.title} "
-        f"| source={st.session_state['utm_source']} "
-        f"| medium={st.session_state['utm_medium']} "
-        f"| campaign={st.session_state['utm_campaign']}"
-    )
+    _logger = setup_logging('tracking')
+    
+    # Build a string of all tracked URL parameters
+    logged_params = [f"{p}={st.session_state[p]}" for p in st.session_state['tracked_url_params']]
+    params_str = " | ".join(logged_params)
+    
+    log_msg = f"VISIT | visitor={st.session_state['visitor_id']} | page={pages.title}"
+    if params_str:
+        log_msg += f" | {params_str}"
+        
+    _logger.info(log_msg)
     st.session_state['visited_pages'].add(pages.title)
-# --- End UTM Tracking ---
+# --- End URL Parameter Tracking ---
 
 
 st.html("""
