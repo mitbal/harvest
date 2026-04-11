@@ -55,7 +55,7 @@ else:
         with cols[idx % 3]:
             st.divider()
             st.markdown(f"### {article['icon']} {article['title']}")
-            if st.button(f"Read '{article['title']}'", key=article['name'], use_container_width=True):
+            if st.button(f"Read '{article['title']}'", key=article['name'], width='stretch'):
                 st.session_state.selected_article = article['name']
                 st.query_params["name"] = article['name']
                 st.rerun()

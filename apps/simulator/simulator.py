@@ -296,7 +296,7 @@ with st.container(border=True):
             'investment': st.column_config.NumberColumn('Investment', format='IDR %,d'), 
             'returns': st.column_config.NumberColumn('Returns (p.a.)', format='IDR %,d'), }, 
         hide_index=True,
-        use_container_width=True
+        width='stretch'
     )
 
     base_chart = alt.Chart(return_df)
@@ -353,7 +353,7 @@ with st.container(border=True):
             'Investment (Mio IDR)': st.column_config.NumberColumn('Investment (Mio IDR)', format='%,d', min_value=0),
             'Expected Yield (%)': st.column_config.NumberColumn('Yield (%)', format='%.2f', min_value=0, max_value=100)
         },
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key='multi_stock_editor'
     )
@@ -385,7 +385,7 @@ with st.container(border=True):
             'returns': st.column_config.NumberColumn('Returns', format='IDR %,d'),
         },
         hide_index=True,
-        use_container_width=True
+        width='stretch'
     )
 
     multi_investment_chart = alt.Chart(multi_return_df).mark_bar().encode(
@@ -466,7 +466,7 @@ with st.container(border=True):
             'returns': st.column_config.NumberColumn('Div. Received', format='IDR %,d'),
         }, 
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
         height=430)
 
     # Combine for visual comparison in the main chart
@@ -524,7 +524,7 @@ with st.container(border=True):
             'Ticker': st.column_config.TextColumn('Stock Ticker (e.g. BBCA.JK)'),
             'Investment (Mio IDR)': st.column_config.NumberColumn('Initial Investment', format='%,d', min_value=0)
         },
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key='sim4_stock_editor'
     )
@@ -575,7 +575,7 @@ with st.container(border=True):
             'returns': st.column_config.NumberColumn('Total Div.', format='IDR %,d'),
         }, 
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
         height=430
     )
 

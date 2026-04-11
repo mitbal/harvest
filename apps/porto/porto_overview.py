@@ -175,9 +175,9 @@ with col_head1:
 
 with col_head2:
     if st.user.is_logged_in:
-         st.button('Log Out', icon=':material/logout:', on_click=st.logout, use_container_width=True)
+         st.button('Log Out', icon=':material/logout:', on_click=st.logout, width='stretch')
     else:
-         st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), use_container_width=True)
+         st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), width='stretch')
 
 
 conn = get_db_connection()
@@ -243,9 +243,9 @@ with st.expander('📥 Porto Data Input', expanded=data_input_expand_flag):
                         example_df.loc[0] = ['BBCA', 10, 10000]
                 else:
                     example_df = st.session_state['porto_df'].copy(deep=True)
-                edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True, use_container_width=True)
+                edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True, width='stretch')
 
-            submit = st.form_submit_button('🚀 Load Portfolio Data', use_container_width=True)
+            submit = st.form_submit_button('🚀 Load Portfolio Data', width='stretch')
             
             if submit:
                 if method == 'Upload CSV':
@@ -428,7 +428,7 @@ with st.container(border=True):
             on_select='rerun',
             selection_mode='single-row',
             column_config=cfig,
-            use_container_width=True
+            width='stretch'
         )
 
     with tabs[1]:
@@ -467,7 +467,7 @@ with st.container(border=True):
         if 'vortree_refresh_count' not in st.session_state:
             st.session_state['vortree_refresh_count'] = 0
 
-        if ctrl_cols2[2].button('Refresh Plot', icon=':material/refresh:', use_container_width=True):
+        if ctrl_cols2[2].button('Refresh Plot', icon=':material/refresh:', width='stretch'):
             st.session_state['vortree_refresh_count'] += 1
             st.rerun()
         
@@ -539,7 +539,7 @@ with st.expander('📊 Sectoral Exposure', expanded=True):
             on_select='rerun',
             hide_index=True,
             key='sector_table',
-            use_container_width=True,
+            width='stretch',
             column_config={
                 'sector': 'Sector',
                 'total_dividend': st.column_config.NumberColumn('Total Div (IDR)', format='%,d'),
@@ -554,7 +554,7 @@ with st.expander('📊 Sectoral Exposure', expanded=True):
             st.dataframe(
                 df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False), 
                 hide_index=True, 
-                use_container_width=True,
+                width='stretch',
                 column_config={
                     'total_dividend': st.column_config.NumberColumn('Total Div (IDR)', format='%,d'),
                 }
@@ -629,7 +629,7 @@ with st.expander('📅 Dividend Timeline', expanded=True):
                     'total_dividend': st.column_config.NumberColumn('Total Div (IDR)', format='%,d'),
                 },
                 hide_index=True,
-                use_container_width=True
+                width='stretch'
             )
 
         with bar_cols[1]:
@@ -652,7 +652,7 @@ with st.expander('📅 Dividend Timeline', expanded=True):
                 c.dataframe(
                     m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
                     hide_index=True,
-                    use_container_width=True,
+                    width='stretch',
                     column_config={
                         'total_dividend': st.column_config.NumberColumn('Div', format='%,d'),
                     },
@@ -668,7 +668,7 @@ with st.expander('📅 Dividend Timeline', expanded=True):
                 c.dataframe(
                     m[['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
                     hide_index=True,
-                    use_container_width=True,
+                    width='stretch',
                     column_config={
                         'total_dividend': st.column_config.NumberColumn('Div', format='%,d'),
                     },
@@ -712,6 +712,6 @@ with st.expander('📈 Compounding Projection', expanded=True):
 
 
 if st.user.is_logged_in:
-    if st.button('💾 Sync Portfolio to Cloud', use_container_width=True):
+    if st.button('💾 Sync Portfolio to Cloud', width='stretch'):
         update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.user.email)
         st.success('Portfolio synced successfully!', icon="✅")
