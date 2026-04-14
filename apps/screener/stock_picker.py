@@ -25,6 +25,9 @@ st.title('Jajan Saham')
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
 
+# Constants for Dividend Score (DScore) calculation
+DIV_MATURITY_HALFLIFE = 25   # Years until dividend consistency is considered "mature"
+PROJECTION_HORIZON_YRS = 5   # Number of forecast years for dividend extrapolation
 
 ### Start of Function definition
 
@@ -79,47 +82,24 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
 
 
 @st.cache_data(ttl=60*60, show_spinner=False)
-def get_specific_stock_detail(stock_name):
+def get_specific_stock_detail(stock_name, sl):
+    """Pure data-fetching function — no UI side-effects so cache is safe to share."""
+    start_time = time.time()
 
-    try:
+    n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
+    fin     = hd.get_financial_data(stock_name)
+    cp_df   = hd.get_company_profile([stock_name])
 
-        start_time = time.time()
-        progress_bar = st.progress(0, text='Downloading stock data... Please wait')
+    start_date = '2010-01-01'
+    price_df   = hd.get_daily_stock_price(stock_name, start_from=start_date)
 
-        n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
+    source = 'dag' if sl == 'JKSE' else 'fmp'
+    sdf    = hd.get_dividend_history_single_stock(stock_name, source=source)
 
-        fin = hd.get_financial_data(stock_name)
-        progress_bar.progress(20, text='Downloading historical financial data... Progresss 20%')
+    end_time = time.time()
+    logger.info(f'Total download time for {stock_name}: {end_time-start_time:.04f}')
 
-        cp_df = hd.get_company_profile([stock_name])
-        progress_bar.progress(40, text='Downloading stock data... Progresss 40%')
-
-        start_date = '2010-01-01'
-        price_df = hd.get_daily_stock_price(stock_name, start_from=start_date)
-        progress_bar.progress(60, text='Downloading historical price data... Progresss 60%')
-        
-        if sl == 'JKSE':
-            sdf = hd.get_dividend_history_single_stock(stock_name, source='dag')
-        else:
-            sdf = hd.get_dividend_history_single_stock(stock_name, source='fmp')
-        progress_bar.progress(80, text='Downloading historical dividend data... Progresss 80%')
-
-        progress_bar.progress(100, text='Progress 100% complete')
-
-        end_time = time.time()
-        logger.info(f'Total download time for {stock_name}: {end_time-start_time:.04f}')
-
-        time.sleep(0.2)
-        progress_bar.empty()
-
-        return fin, cp_df, price_df, sdf, n_share
-
-    except Exception as e:
-        logger.error(f'Error in downloading data for {stock_name}: {e}')
-        st.error(f'Cannot find the stock {stock_name}. Please check the name again and dont forget to add exchange code at the end. For example .JK for Indonesian stock, .SI for Singaporean stock, .T for Japanese Stock, etc.', icon="🚨")
-        if 'progress_bar' in locals():
-            progress_bar.empty()
-        st.stop()
+    return fin, cp_df, price_df, sdf, n_share
 
 
 def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
@@ -233,102 +213,90 @@ def calculate_missing_stats_cached(stock_name, fin_json, cp_json, price_json, sd
     return calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
 
 
-@st.cache_data
-def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=None):
-    if stock_data is not None:
-        pass # use stock_data
-    elif stock_name in filtered_df.index:
-        stock_data = filtered_df.loc[stock_name]
-    elif final_df is not None and stock_name in final_df.index:
-        stock_data = final_df.loc[stock_name]
-    else:
-        return None
-    
+# Columns from filtered_df that rating logic actually needs — serialise only these as the cache key
+_RATING_COLS = ['peRatio', 'numDividendYear', 'yield', 'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin', 'sector']
+
+
+@st.cache_data(show_spinner=False)
+def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json):
+    """
+    Cached implementation — DataFrames are passed as JSON strings so Streamlit hashes
+    them cheaply. Only the narrow columns needed for rating are serialised.
+    """
+    ranking_df = pd.read_json(io.StringIO(ranking_df_json))
+    stock_data = pd.read_json(io.StringIO(stock_data_json), typ='series')
+
     # 1. Valuation Rating (inverted PE, lower is better)
-    # Filter for positive PE only for ranking
-    positive_pe_mask = filtered_df['peRatio'] > 0
-    
-    # Create a series initialized with 0 for all (punish negative PE)
-    val_score_series = pd.Series(0.0, index=filtered_df.index)
-    
+    positive_pe_mask = ranking_df['peRatio'] > 0
+    val_score_series = pd.Series(0.0, index=ranking_df.index)
     if positive_pe_mask.any():
-        # Rank only positive PEs. ascending=False means High PE gets Low Rank/Pct, Low PE gets High Rank/Pct.
-        positive_ranks = filtered_df.loc[positive_pe_mask, 'peRatio'].rank(pct=True, ascending=False)
+        positive_ranks = ranking_df.loc[positive_pe_mask, 'peRatio'].rank(pct=True, ascending=False)
         val_score_series.loc[positive_pe_mask] = positive_ranks * 100
 
     if stock_name in val_score_series.index:
         val_score = val_score_series[stock_name]
     else:
-        # Fallback: Calculate rank manually against filtered_df
         if stock_data['peRatio'] > 0:
-             passing = filtered_df[filtered_df['peRatio'] > 0]
-             # Lower PE is better
-             if not passing.empty:
-                 better_than = passing[passing['peRatio'] > stock_data['peRatio']].shape[0]
-                 val_score = better_than / len(passing) * 100
-             else:
-                 val_score = 0
+            passing = ranking_df[ranking_df['peRatio'] > 0]
+            if not passing.empty:
+                better_than = passing[passing['peRatio'] > stock_data['peRatio']].shape[0]
+                val_score = better_than / len(passing) * 100
+            else:
+                val_score = 0
         else:
-             val_score = 0
-    
+            val_score = 0
+
     # 2. Dividend Rating (Consistency & Yield)
-    # Average of dividend years percentile and yield percentile
-    div_year_rank = filtered_df['numDividendYear'].rank(pct=True)
-    yield_rank = filtered_df['yield'].rank(pct=True)
-    
+    div_year_rank = ranking_df['numDividendYear'].rank(pct=True)
+    yield_rank    = ranking_df['yield'].rank(pct=True)
     if stock_name in div_year_rank.index:
         div_score = (div_year_rank[stock_name] + yield_rank[stock_name]) / 2 * 100
     else:
-        dy_rank = (filtered_df['numDividendYear'] < stock_data['numDividendYear']).mean()
-        y_rank = (filtered_df['yield'] < stock_data['yield']).mean()
+        dy_rank   = (ranking_df['numDividendYear'] < stock_data['numDividendYear']).mean()
+        y_rank    = (ranking_df['yield'] < stock_data['yield']).mean()
         div_score = (dy_rank + y_rank) / 2 * 100
-    
+
     # 3. Growth Rating (Revenue & Net Income)
-    rev_growth_rank = filtered_df['revenueGrowth'].rank(pct=True)
-    inc_growth_rank = filtered_df['netIncomeGrowth'].rank(pct=True)
-    
+    rev_growth_rank = ranking_df['revenueGrowth'].rank(pct=True)
+    inc_growth_rank = ranking_df['netIncomeGrowth'].rank(pct=True)
     if stock_name in rev_growth_rank.index:
         growth_score = (rev_growth_rank[stock_name] + inc_growth_rank[stock_name]) / 2 * 100
     else:
-        rg_rank = (filtered_df['revenueGrowth'] < stock_data['revenueGrowth']).mean()
-        ig_rank = (filtered_df['netIncomeGrowth'] < stock_data['netIncomeGrowth']).mean()
+        rg_rank      = (ranking_df['revenueGrowth'] < stock_data['revenueGrowth']).mean()
+        ig_rank      = (ranking_df['netIncomeGrowth'] < stock_data['netIncomeGrowth']).mean()
         growth_score = (rg_rank + ig_rank) / 2 * 100
-    
+
     # 4. Profitability Rating (Margin)
-    margin_rank = filtered_df['medianProfitMargin'].rank(pct=True)
+    margin_rank = ranking_df['medianProfitMargin'].rank(pct=True)
     if stock_name in margin_rank.index:
         profit_score = margin_rank[stock_name] * 100
     else:
-        profit_score = (filtered_df['medianProfitMargin'] < stock_data['medianProfitMargin']).mean() * 100
-    
+        profit_score = (ranking_df['medianProfitMargin'] < stock_data['medianProfitMargin']).mean() * 100
+
     # 5. Sector & Industry Rating
-    # Compare PE vs Sector PE (lower is better relative to sector)
-    sector = stock_data['sector']
-    sector_df = filtered_df[filtered_df['sector'] == sector]
+    sector    = stock_data['sector']
+    sector_df = ranking_df[ranking_df['sector'] == sector]
     if len(sector_df) > 1:
-        # Same logic: punish negative PE
         sector_pos_mask = sector_df['peRatio'] > 0
-        sector_scores = pd.Series(0.0, index=sector_df.index)
-        
+        sector_scores   = pd.Series(0.0, index=sector_df.index)
         if sector_pos_mask.any():
             sector_ranks = sector_df.loc[sector_pos_mask, 'peRatio'].rank(pct=True, ascending=False)
             sector_scores.loc[sector_pos_mask] = sector_ranks * 100
-            
         if stock_name in sector_scores.index:
             sector_score = sector_scores[stock_name]
         else:
-             pass_sector = sector_df[sector_df['peRatio'] > 0]
-             if not pass_sector.empty and stock_data['peRatio'] > 0:
+            pass_sector = sector_df[sector_df['peRatio'] > 0]
+            if not pass_sector.empty and stock_data['peRatio'] > 0:
                 better = pass_sector[pass_sector['peRatio'] > stock_data['peRatio']].shape[0]
                 sector_score = better / len(pass_sector) * 100
-             else:
+            else:
                 sector_score = 0
     else:
-        sector_score = 50 # Default middle if no comparison
-        
+        sector_score = 50  # Default middle if no sector peers
+
     # 6. Overall Rating
     overall_score = np.mean([val_score, div_score, growth_score, profit_score, sector_score])
-    
+
     return {
         'overall': overall_score,
         'valuation': val_score,
@@ -337,15 +305,42 @@ def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=N
         'profitability': profit_score,
         'sector': sector_score,
         'metrics': {
-            'pe': stock_data['peRatio'],
-            'yield': stock_data['yield'],
-            'div_years': stock_data['numDividendYear'],
+            'pe':         stock_data['peRatio'],
+            'yield':      stock_data['yield'],
+            'div_years':  stock_data['numDividendYear'],
             'rev_growth': stock_data['revenueGrowth'],
             'net_growth': stock_data['netIncomeGrowth'],
-            'margin': stock_data['medianProfitMargin'],
-            'sector': sector
+            'margin':     stock_data['medianProfitMargin'],
+            'sector':     sector,
         }
     }
+
+
+def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=None):
+    """
+    Public wrapper: resolves stock_data, narrows DataFrames to only the columns
+    needed for rating, serialises them to JSON, then delegates to the cached impl.
+    """
+    if stock_data is None:
+        if stock_name in filtered_df.index:
+            stock_data = filtered_df.loc[stock_name]
+        elif final_df is not None and stock_name in final_df.index:
+            stock_data = final_df.loc[stock_name]
+        else:
+            return None
+
+    # Build a narrow ranking DataFrame — only the 7 columns the algorithm uses
+    available_rating_cols = [c for c in _RATING_COLS if c in filtered_df.columns]
+    ranking_df = filtered_df[available_rating_cols]
+
+    # Serialise stock_data as a Series keeping only rating columns
+    stock_series = stock_data[available_rating_cols] if hasattr(stock_data, '__getitem__') else stock_data
+
+    return _calculate_stock_ratings_cached(
+        stock_name,
+        ranking_df.to_json(),
+        pd.Series(stock_series).to_json(),
+    )
 
 def get_rating_color(score):
     if score >= 80:
@@ -468,7 +463,7 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
 def render_company_profile(cp_df, stock_name):
     st.write(cp_df.loc[stock_name, 'description'])
     
-def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_share=None, currency='IDR'):
+def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_share=None, currency='IDR', cp_df=None, price_df=None):
     if sdf is not None:
         dividend_history_cols = st.columns([3, 10, 4])
         dividend_history_cols[0].dataframe(
@@ -612,26 +607,8 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                     stock_data = filtered_df.loc[stock_name]
                 else:
                     stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
-                
-                st.write('**Financial Metrics Summary**')
                 fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
-                
-                def render_metric(label, val, avg):
-                    if val > avg:
-                        st.markdown(f'{label}: **:green[{val:.2f}%]**')
-                    elif val < avg * 0.9:
-                        st.markdown(f'{label}: **:red[{val:.2f}%]**')
-                    else:
-                        st.write(f'{label}: **{val:.2f}%**')
-                
-                render_metric('TTM Revenue Growth', fin_stats["revenue_growth_TTM"], stock_data["revenueGrowth"])
-                render_metric('TTM Net Income Growth', fin_stats["netIncome_growth_TTM"], stock_data["netIncomeGrowth"])
-                render_metric('TTM Net Profit Margin', fin_stats["marginTTM"], stock_data["medianProfitMargin"])
-                
-                st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
-                st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
-                st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
-                st.write('---')
+                _render_fin_summary(fin_stats, stock_data)
         else:
             annual_cols = st.columns([80, 20])
             annual_cols[0].write('Annual Financial Chart')
@@ -642,26 +619,30 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                     stock_data = filtered_df.loc[stock_name]
                 else:
                     stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
-
-                st.write('**Financial Metrics Summary**')
                 fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
-                
-                def render_metric(label, val, avg):
-                    if val > avg:
-                        st.markdown(f'{label}: **:green[{val:.2f}%]**')
-                    elif val < avg * 0.9:
-                        st.markdown(f'{label}: **:red[{val:.2f}%]**')
-                    else:
-                        st.write(f'{label}: **{val:.2f}%**')
-                
-                render_metric('TTM Revenue Growth', fin_stats["revenue_growth_TTM"], stock_data["revenueGrowth"])
-                render_metric('TTM Net Income Growth', fin_stats["netIncome_growth_TTM"], stock_data["netIncomeGrowth"])
-                render_metric('TTM Net Profit Margin', fin_stats["marginTTM"], stock_data["medianProfitMargin"])
-                
-                st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
-                st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
-                st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
-                st.write('---')
+                _render_fin_summary(fin_stats, stock_data)
+
+def _render_fin_metric(label, val, avg):
+    """Colour-coded financial metric line: green if better than avg, red if clearly worse."""
+    if val > avg:
+        st.markdown(f'{label}: **:green[{val:.2f}%]**')
+    elif val < avg * 0.9:
+        st.markdown(f'{label}: **:red[{val:.2f}%]**')
+    else:
+        st.write(f'{label}: **{val:.2f}%**')
+
+
+def _render_fin_summary(fin_stats, stock_data):
+    """Render the TTM vs historical financial metrics summary panel."""
+    st.write('**Financial Metrics Summary**')
+    _render_fin_metric('TTM Revenue Growth',   fin_stats['revenue_growth_TTM'], stock_data['revenueGrowth'])
+    _render_fin_metric('TTM Net Income Growth', fin_stats['netIncome_growth_TTM'], stock_data['netIncomeGrowth'])
+    _render_fin_metric('TTM Net Profit Margin', fin_stats['marginTTM'],           stock_data['medianProfitMargin'])
+    st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
+    st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
+    st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
+    st.write('---')
+
 
 def render_price_movement(price_df):
     candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
@@ -683,7 +664,7 @@ def cached_calc_fin_stats(fin_json, target_currency):
     fin = pd.read_json(io.StringIO(fin_json))
     return hd.calc_fin_stats(fin, target_currency=target_currency)
 
-def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df):
+def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=None, sdf=None):
     cols = st.columns(3, gap='large')
     year = cols[0].slider('Select Number of Year', min_value=1, max_value=15, key=f"val_year_{stock_name}")
     val_metric = cols[1].radio('Valuation Metric', ['Price-to-Earnings', 'Price-to-Sales/Revenue'], index=0, horizontal=True, key=f"val_metric_{stock_name}")
@@ -812,7 +793,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     currency = cp_df.loc[stock_name, 'currency']
 
     with st.expander(f'Dividend History: {stock_name}', expanded=True):
-        render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency)
+        render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
         
     with st.expander(f'Financial Information: {stock_name}', expanded=True):
         render_financial_info(fin, currency, stock_name, filtered_df)
@@ -821,7 +802,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
         render_price_movement(price_df)
         
     with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
-        render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df)
+        render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
 
     with st.expander(f'Compounding Simulation: {stock_name}'):
         render_compounding_simulation(stock_name, price_df, sdf)
@@ -862,9 +843,6 @@ else:
     mcap_value = 100
     currency = 'USD'
 
-
-minimum_market_cap = 0
-minimum_year = 0
 
 logger = get_logger('screener')
 
@@ -927,16 +905,18 @@ def get_processed_df(df):
             df[col] = df[col] * 100
 
     df['DScore'] = (
-        (df['lastDiv'] + df['maxDivIncrease'] * 5 * (df['positiveYear'] / df['numOfYear'])) / df['price']
+        (df['lastDiv'] + df['maxDivIncrease'] * PROJECTION_HORIZON_YRS * (df['positiveYear'] / df['numOfYear'])) / df['price']
     ) * 100 \
-      * (df['numDividendYear'] / (df['numDividendYear'] + 25)) \
+      * (df['numDividendYear'] / (df['numDividendYear'] + DIV_MATURITY_HALFLIFE)) \
       * (1 - np.exp(-df['numDividendYear'] / 5)) \
       * (100 - df['max10CutPct']) / 100 \
       * df['mc_penalty'] \
       * (1 + df['maxRevGrowthDecrease'] / 100) \
       * (1 + df['maxIncGrowthDecrease'] / 100)
 
-    return df.fillna(0).sort_values('DScore', ascending=False)
+    df = df.fillna(0).sort_values('DScore', ascending=False)
+    df.insert(0, 'Rank', range(1, len(df) + 1))
+    return df
 
 
 default_view = 'Table'
@@ -990,6 +970,11 @@ with full_table_section:
     if view == 'Table':
 
         cfig={  # noqa: E225
+            'Rank': st.column_config.NumberColumn(
+                'Rank',
+                help='Rank based on Dividend Score',
+                format='%d',
+            ),
             'stock': st.column_config.TextColumn(
                 'Stock',
                 help='Stock Code',
@@ -1211,7 +1196,7 @@ with full_table_section:
             option,
             events={"click": click_event_js},
             height='900px', 
-            width='1550px'
+            width='100%'
         )
     
 
@@ -1356,7 +1341,19 @@ if select_stock:
 else:
     st.stop()
 
-fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name)
+progress_bar = st.progress(0, text='Downloading stock data... Please wait')
+try:
+    fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name, sl)
+except Exception as e:
+    logger.error(f'Error in downloading data for {stock_name}: {e}')
+    st.error(
+        f'Cannot find the stock {stock_name}. Please check the name again and dont forget to add exchange code at the end. '
+        'For example .JK for Indonesian stock, .SI for Singaporean stock, .T for Japanese Stock, etc.',
+        icon='🚨'
+    )
+    progress_bar.empty()
+    st.stop()
+progress_bar.empty()
 
 
 default_dashboard = False
