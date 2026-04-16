@@ -243,6 +243,8 @@ with st.expander('📥 Porto Data Input', expanded=data_input_expand_flag):
                         example_df.loc[0] = ['BBCA', 10, 10000]
                 else:
                     example_df = st.session_state['porto_df'].copy(deep=True)
+                
+                example_df = example_df.reset_index(drop=True)
                 edited_df = st.data_editor(example_df, num_rows='dynamic', hide_index=True, width='stretch')
 
             submit = st.form_submit_button('🚀 Load Portfolio Data', width='stretch')
