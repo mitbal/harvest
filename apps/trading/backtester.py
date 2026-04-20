@@ -42,7 +42,7 @@ with st.container():
     min_pe = filter_cols[1].number_input("Minimum PE", value=5.0, step=1.0)
     max_pe = filter_cols[2].number_input("Maximum PE", value=50.0, step=1.0)
     max_stocks = filter_cols[3].number_input("Max Stocks Output", min_value=10, max_value=200, value=50, step=10)
-    include_big_banks = st.checkbox("Pin Big 4 Banks (BBCA, BMRI, BBRI, BBNI)", value=True, help="Always show Big 4 banks at the top of the list, regardless of filters")
+    include_blue_chips = st.checkbox("Pin Major Blue-chips (Banks, Consumer, Telecom, Astra, Energy, Mining)", value=True, help="Always show major blue-chip stocks at the top of the list, regardless of filters")
 
     final_df = pd.DataFrame()
     try:
@@ -72,13 +72,27 @@ with st.container():
         
         filtered_df = val_df[mask].copy().sort_values(by='Discount', ascending=False)
         
-        # 3. Handle Big Banks pinning & trim to max_stocks
-        if include_big_banks:
-            big_banks = ['BBCA.JK', 'BMRI.JK', 'BBRI.JK', 'BBNI.JK']
-            banks_df = val_df[val_df['stock'].isin(big_banks)].copy()
-            banks_df = banks_df.sort_values(by='Discount', ascending=False)
-            filtered_df = filtered_df[~filtered_df['stock'].isin(big_banks)]
-            final_df = pd.concat([banks_df, filtered_df]).head(int(max_stocks))
+        # 3. Handle Special Pinning (Blue Chips) & trim to max_stocks
+        special_stocks_df = pd.DataFrame()
+        
+        if include_blue_chips:
+            blue_chips = [
+                'BBCA.JK', 'BMRI.JK', 'BBRI.JK', 'BBNI.JK', # Banks
+                'INDF.JK', 'ICBP.JK', 'UNVR.JK', 'AMRT.JK', # Consumer/Retail
+                'TLKM.JK', 'EXCL.JK', 'ISAT.JK',            # Telecom
+                'ASII.JK', 'UNTR.JK',                      # Astra Group
+                'ADRO.JK', 'PTBA.JK', 'ITMG.JK',           # Mining/Energy
+                'BRIS.JK', 'KLBF.JK', 'GOTO.JK'            # Others
+            ]
+            special_stocks_df = val_df[val_df['stock'].isin(blue_chips)].copy()
+            
+        if not special_stocks_df.empty:
+            # Deduplicate and sort by Discount
+            special_stocks_df = special_stocks_df.drop_duplicates(subset=['stock']).sort_values(by='Discount', ascending=False)
+            # Remove special stocks from the filtered list to avoid duplicates
+            filtered_df = filtered_df[~filtered_df['stock'].isin(special_stocks_df['stock'])]
+            # Prepend special stocks to the shortlist
+            final_df = pd.concat([special_stocks_df, filtered_df]).head(int(max_stocks))
         else:
             final_df = filtered_df.head(int(max_stocks))
             
