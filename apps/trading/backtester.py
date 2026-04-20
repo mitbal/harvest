@@ -112,7 +112,7 @@ with st.container():
 # RSI PARAMETER GRID SEARCH OPTIMIZER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_rsi_backtest(price_series: pd.Series, period: int, buy_thresh: int, sell_thresh: int, max_hold: int):
+def _run_rsi_backtest(price_series: pd.Series, period: int, buy_thresh: int, sell_thresh: int, max_hold: int, buy_fee: float, sell_fee: float, sell_tax: float):
     """Run RSI day-trading backtest and return (total_return, win_rate, max_drawdown, num_trades)."""
     if len(price_series) < period + 5:
         return None
@@ -150,8 +150,13 @@ def _run_rsi_backtest(price_series: pd.Series, period: int, buy_thresh: int, sel
     entries = pd.Series(clean_entries, index=price_series.index)
     exits   = pd.Series(clean_exits, index=price_series.index)
 
+    # Create a fee series that applies the correct fee at the point of entry and exit
+    fees = pd.Series(0.0, index=price_series.index)
+    fees[entries] = buy_fee / 100.0
+    fees[exits]  = (sell_fee + sell_tax) / 100.0
+
     try:
-        pf = vbt.Portfolio.from_signals(price_series, entries, exits, freq='1D')
+        pf = vbt.Portfolio.from_signals(price_series, entries, exits, freq='1D', fees=fees)
         num_trades = len(pf.trades)
         if num_trades == 0:
             return None
@@ -201,6 +206,18 @@ with st.expander("⚙️ Configure Grid Parameters", expanded=True):
         )
         opt_top_n = st.number_input("Show Top N Rows", min_value=5, max_value=300, value=30, step=5, key="opt_top_n")
 
+    st.markdown("---")
+    c_col1, c_col2, c_col3, c_col4 = st.columns(4)
+    with c_col1:
+        st.markdown("**Trading Costs (%)**")
+        opt_buy_fee  = st.number_input("Buy Fee %",  min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="opt_buy_fee")
+    with c_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        opt_sell_fee = st.number_input("Sell Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="opt_sell_fee")
+    with c_col3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        opt_sell_tax = st.number_input("Sell Tax %", min_value=0.0, max_value=5.0, value=0.1,  step=0.01, key="opt_sell_tax")
+
     g_date_col1, g_date_col2 = st.columns(2)
     opt_start = g_date_col1.date_input("Start Date", value=datetime.date(2023, 1, 1), key="opt_start")
     opt_end   = g_date_col2.date_input("End Date",   value=datetime.date.today(),     key="opt_end")
@@ -236,7 +253,7 @@ price_cache_key = hashlib.md5(
     f"{sorted(shortlist_tickers)}{opt_start}{opt_end}".encode()
 ).hexdigest()
 results_cache_key = hashlib.md5(
-    f"{periods}{buy_thresholds}{sell_thresholds}{opt_max_hold}{opt_start}{opt_end}{shortlist_tickers}".encode()
+    f"{periods}{buy_thresholds}{sell_thresholds}{opt_max_hold}{opt_start}{opt_end}{shortlist_tickers}{opt_buy_fee}{opt_sell_fee}{opt_sell_tax}".encode()
 ).hexdigest()
 
 if run_optimizer:
@@ -322,7 +339,10 @@ if run_optimizer:
                     processed += 1
                     continue
 
-                result = _run_rsi_backtest(price_series, period, buy_thresh, sell_thresh, int(opt_max_hold))
+                result = _run_rsi_backtest(
+                    price_series, period, buy_thresh, sell_thresh, int(opt_max_hold),
+                    opt_buy_fee, opt_sell_fee, opt_sell_tax
+                )
 
                 if result is not None:
                     tot_ret, win_rate, max_dd, num_trades = result
@@ -482,6 +502,12 @@ if strategy == 'Short-Term: RSI Day Trading (Max 3 Days)':
     bt_sell_thresh  = rsi_cols[2].number_input("Sell if RSI >",   min_value=51, max_value=95, value=70, step=1,  key="bt_sell_thresh")
     bt_max_hold     = rsi_cols[3].number_input("Max Hold Days",   min_value=1,  max_value=20, value=3,  step=1,  key="bt_max_hold")
 
+st.markdown("**Trading Costs (%)**")
+cost_cols = st.columns(4)
+bt_buy_fee  = cost_cols[0].number_input("Buy Fee %",  min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="bt_buy_fee")
+bt_sell_fee = cost_cols[1].number_input("Sell Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="bt_sell_fee")
+bt_sell_tax = cost_cols[2].number_input("Sell Tax %", min_value=0.0, max_value=5.0, value=0.1,  step=0.01, key="bt_sell_tax")
+
 st.divider()
 
 
@@ -564,8 +590,13 @@ if st.button('Run Backtest'):
                         entries = (price_df['SMA20'] > price_df['SMA50']) & (price_df['SMA20'].shift(1) <= price_df['SMA50'].shift(1))
                         exits = (price_df['SMA20'] < price_df['SMA50']) & (price_df['SMA20'].shift(1) >= price_df['SMA50'].shift(1))
 
+                    # Prepare fees
+                    fees = pd.Series(0.0, index=price_df.index)
+                    fees[entries] = bt_buy_fee / 100.0
+                    fees[exits]  = (bt_sell_fee + bt_sell_tax) / 100.0
+
                     # Perform VectorBT backtesting
-                    pf = vbt.Portfolio.from_signals(price_df['close'], entries, exits, freq='1D')
+                    pf = vbt.Portfolio.from_signals(price_df['close'], entries, exits, freq='1D', fees=fees)
                     
                     st.subheader('Performance Outline')
                     metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
@@ -650,11 +681,11 @@ if scan_button:
     scan_progress = st.progress(0, text="Scanning shortlist…")
     scan_rows = []
 
-    # Prefer cached optimizer prices if they cover the needed date range, else fetch fresh
+    # Prefer cached optimizer prices if they cover enough bars, else fetch fresh
     cached_prices = st.session_state.get('optimizer_prices', pd.DataFrame())
     use_cache = (
         not cached_prices.empty
-        and cached_prices['date'].min() <= pd.to_datetime(alert_start)
+        and (cached_prices.groupby('symbol')['date'].count() >= (int(alert_period) + 5)).all()
     )
 
     if use_cache:
@@ -669,7 +700,7 @@ if scan_button:
             if series is None or series.empty:
                 continue
             
-            series = series[series.index >= pd.to_datetime(alert_start)].copy()
+            series = series.copy()
             
             # Incorporate live price from cp_df
             if ticker in cp_df.index:
@@ -694,7 +725,8 @@ if scan_button:
                     conn.table("historical_prices")
                         .select("symbol,date,close")
                         .eq("symbol", ticker)
-                        .gte("date", alert_start)
+                        .order("date", desc=True)
+                        .limit(int(alert_period) + 100) # Ensure enough bars for RSI stability
                         .execute()
                 )
                 rows = res.data or []
@@ -710,17 +742,23 @@ if scan_button:
                     # Incorporate live price from cp_df
                     if ticker in cp_df.index:
                         live_price = float(cp_df.loc[ticker, 'price'])
-                        today_ts = pd.Timestamp(datetime.date.today())
-                        if series.index[-1].date() == today_ts.date():
-                            series.iloc[-1] = live_price
+                        today_ts = pd.Timestamp(datetime.date.today()).normalize()
+                        
+                        if not series.empty:
+                            last_date = series.index[-1].normalize()
+                            if last_date == today_ts:
+                                series.iloc[-1] = live_price
+                            else:
+                                series[today_ts] = live_price
                         else:
                             series[today_ts] = live_price
                         series = series.sort_index()
 
-                    current_price = float(series.iloc[-1])
-                    rsi_val = _compute_current_rsi(series, int(alert_period))
-                    if rsi_val is not None:
-                        scan_rows.append({'Symbol': ticker, 'Current Price': current_price, 'RSI': rsi_val})
+                    if len(series) > 0:
+                        current_price = float(series.iloc[-1])
+                        rsi_val = _compute_current_rsi(series, int(alert_period))
+                        if rsi_val is not None:
+                            scan_rows.append({'Symbol': ticker, 'Current Price': current_price, 'RSI': rsi_val})
             except Exception:
                 pass
 
