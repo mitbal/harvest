@@ -195,7 +195,7 @@ with st.expander("⚙️ Configure Grid Parameters", expanded=True):
     with g_col1:
         st.markdown("**RSI Period**")
         rsi_period_min  = st.number_input("Period Min",  min_value=3,  max_value=50, value=7,  step=1,  key="opt_period_min")
-        rsi_period_max  = st.number_input("Period Max",  min_value=3,  max_value=50, value=21, step=1,  key="opt_period_max")
+        rsi_period_max  = st.number_input("Period Max",  min_value=3,  max_value=50, value=14, step=1,  key="opt_period_max")
         rsi_period_step = st.number_input("Period Step", min_value=1,  max_value=20, value=7,  step=1,  key="opt_period_step")
 
     with g_col2:
@@ -208,7 +208,7 @@ with st.expander("⚙️ Configure Grid Parameters", expanded=True):
         st.markdown("**Sell if RSI >**")
         sell_min  = st.number_input("Sell Min",  min_value=51, max_value=95, value=60, step=1, key="opt_sell_min")
         sell_max  = st.number_input("Sell Max",  min_value=51, max_value=95, value=80, step=1, key="opt_sell_max")
-        sell_step = st.number_input("Sell Step", min_value=1,  max_value=20, value=5,  step=1, key="opt_sell_step")
+        sell_step = st.number_input("Sell Step", min_value=1,  max_value=20, value=20,  step=1, key="opt_sell_step")
 
     with g_col4:
         st.markdown("**Other Settings**")
