@@ -753,6 +753,124 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         assessment = f'**:red[Overvalued]**. Potential Downside: **:red[{(1-diff)*100:.2f}% - {abs((ci[0]/pe_ttm-1)*100):.2f}%]**'
     st.write(f'Assessment: {assessment}')
 
+def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, price_df=None, n_share=None):
+    if stock_name in filtered_df.index:
+        stock_data = filtered_df.loc[stock_name]
+    else:
+        stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
+        
+    last_div = stock_data['lastDiv']
+    current_price = stock_data['price']
+    
+    if sdf is not None and not sdf.empty:
+        stats = hd.calc_div_stats(hd.preprocess_div(sdf))
+        cagr_5y = stats.get('cagr_5y', None)
+    else:
+        cagr_5y = None
+    
+    default_g = min(cagr_5y, 5.0) if (cagr_5y is not None and cagr_5y > 0) else 2.5
+    
+    cols = st.columns(2)
+    r_pct = cols[0].number_input(label='Required Rate of Return (Cost of Equity) %', value=10.0, min_value=1.0, max_value=50.0, step=0.5, key=f"ddm_r_{stock_name}")
+    g_pct = cols[1].number_input(label='Terminal Dividend Growth Rate %', value=float(default_g), min_value=0.0, max_value=20.0, step=0.5, key=f"ddm_g_{stock_name}")
+    
+    if g_pct >= r_pct:
+        st.error('Gordon Growth Model requires the Growth Rate to be strictly less than the Required Rate of Return.')
+        return
+        
+    r = r_pct / 100.0
+    g = g_pct / 100.0
+    
+    next_div = last_div * (1 + g)
+    intrinsic_value = next_div / (r - g) if (r - g) > 0 else 0
+    
+    if current_price > 0:
+        margin_of_safety = (intrinsic_value - current_price) / current_price
+    else:
+        margin_of_safety = 0
+        
+    diff = intrinsic_value / current_price if current_price > 0 else 1
+    
+    if intrinsic_value > current_price * 1.05:
+        assessment = f'**:green[Undervalued]**. Margin of Safety: **:green[{margin_of_safety*100:.2f}%]**'
+        highlight_color = 'green'
+    elif intrinsic_value < current_price * 0.95:
+        assessment = f'**:red[Overvalued]**. Premium: **:red[{abs(margin_of_safety)*100:.2f}%]**'
+        highlight_color = 'red'
+    else:
+        assessment = '**Fair Valued**'
+        highlight_color = 'green'
+        
+    ci_lower = intrinsic_value * 0.9
+    ci_upper = intrinsic_value * 1.1
+
+    markdown_table = f"""
+    | Metric | Value |
+    | ------ | ----- |
+    | Current Price | **:{highlight_color}[{int(current_price):,}]** |
+    | Next Expected Dividend (D1) | {next_div:,.2f} |
+    | Intrinsic Value (DDM) | {int(intrinsic_value):,} |
+    | Range Estimate | {int(ci_lower):,} - {int(ci_upper):,} |
+    """
+    
+    res_cols = st.columns(2)
+    with res_cols[0]:
+        st.markdown(markdown_table)
+        st.write(f'Assessment: {assessment}')
+
+    # Heatmap generation
+    data = []
+    g_range = [max(0.0, g_pct + i) for i in [-2, -1, 0, 1, 2]]
+    r_range = [max(1.0, r_pct + i) for i in [-2, -1, 0, 1, 2]]
+    
+    for r_val in r_range:
+        for g_val in g_range:
+            r_dec = r_val / 100.0
+            g_dec = g_val / 100.0
+            if r_dec > g_dec:
+                val = (last_div * (1 + g_dec)) / (r_dec - g_dec)
+            else:
+                val = None
+                
+            if val is not None:
+                data.append({
+                    'Cost of Equity (r)': f"{r_val}%",
+                    'Growth Rate (g)': f"{g_val}%",
+                    'Intrinsic Value': val,
+                    'r_val': r_val,
+                    'g_val': g_val
+                })
+                
+    if data:
+        heatmap_df = pd.DataFrame(data)
+        
+        base = alt.Chart(heatmap_df).encode(
+            x=alt.X('Growth Rate (g):O', sort=alt.EncodingSortField(field='g_val', order='ascending')),
+            y=alt.Y('Cost of Equity (r):O', sort=alt.EncodingSortField(field='r_val', order='descending')),
+        )
+        
+        heatmap = base.mark_rect().encode(
+            color=alt.Color('Intrinsic Value:Q', scale=alt.Scale(scheme='redyellowgreen', domainMid=current_price), legend=None),
+            tooltip=['Cost of Equity (r)', 'Growth Rate (g)', alt.Tooltip('Intrinsic Value:Q', format=',.0f')]
+        )
+        
+        text = base.mark_text(baseline='middle').encode(
+            text=alt.Text('Intrinsic Value:Q', format=',.0f'),
+            color=alt.condition(
+                alt.datum['Intrinsic Value'] > current_price,
+                alt.value('black'),
+                alt.value('white')
+            )
+        )
+        
+        chart = (heatmap + text).properties(
+            title='Sensitivity: Intrinsic Value',
+            height=300
+        )
+        
+        with res_cols[1]:
+            st.altair_chart(chart, width='stretch')
+
 def render_compounding_simulation(stock_name, price_df, sdf):
     this_year = datetime.now().year
     cols = st.columns(2)
@@ -803,6 +921,9 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
         
     with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
+
+    with st.expander(f'Dividend Discount Model Valuation: {stock_name}', expanded=True):
+        render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
 
     with st.expander(f'Compounding Simulation: {stock_name}'):
         render_compounding_simulation(stock_name, price_df, sdf)
@@ -987,7 +1108,7 @@ with full_table_section:
             'price': st.column_config.NumberColumn(
                 'Price',
                 help='Current Stock Price',
-                format='%,.2f',
+                format='%,.0f',
             ),
             'yield': st.column_config.NumberColumn(
                 'Dividend Yield',
@@ -1329,17 +1450,39 @@ elif 'stock' in st.query_params:
 else:
     stock_name = None
 
-select_stock = st.text_input(
-    label='Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information',
-    value=stock_name
-)
+if sl == 'JKSE':
+    if stock_name:
+        stock_name = stock_name.upper()
+        if '.JK' not in stock_name:
+            stock_name += '.JK'
 
-if select_stock:
-    stock_name = select_stock.upper()
-    if sl == 'JKSE' and '.JK' not in stock_name:
-        stock_name += '.JK'
+    stock_options = sorted(final_df.index.tolist())
+    try:
+        default_idx = stock_options.index(stock_name) if stock_name else None
+    except ValueError:
+        default_idx = None
+
+    select_stock = st.selectbox(
+        label='Click the checkbox on the leftside of the table above or select a stock from the list to get detailed information',
+        options=stock_options,
+        index=default_idx,
+        placeholder="Type or select a stock..."
+    )
+
+    if select_stock:
+        stock_name = select_stock
+    else:
+        st.stop()
 else:
-    st.stop()
+    select_stock = st.text_input(
+        label='Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information',
+        value=stock_name
+    )
+
+    if select_stock:
+        stock_name = select_stock.upper()
+    else:
+        st.stop()
 
 progress_bar = st.progress(0, text='Downloading stock data... Please wait')
 try:
