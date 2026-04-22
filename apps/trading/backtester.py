@@ -202,7 +202,7 @@ with st.expander("⚙️ Configure Grid Parameters", expanded=True):
         st.markdown("**Buy if RSI <**")
         buy_min  = st.number_input("Buy Min",  min_value=5,  max_value=49, value=20, step=1, key="opt_buy_min")
         buy_max  = st.number_input("Buy Max",  min_value=5,  max_value=49, value=35, step=1, key="opt_buy_max")
-        buy_step = st.number_input("Buy Step", min_value=1,  max_value=20, value=5,  step=1, key="opt_buy_step")
+        buy_step = st.number_input("Buy Step", min_value=1,  max_value=20, value=10,  step=1, key="opt_buy_step")
 
     with g_col3:
         st.markdown("**Sell if RSI >**")
