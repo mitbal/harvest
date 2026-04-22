@@ -76,7 +76,7 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
 
     cp_df = hd.get_company_profile(final_df['stock'].to_list())
     final_df.drop(columns=['price'], inplace=True)
-    final_df = final_df.merge(cp_df[['price', 'changes']], left_on='stock', right_on='symbol')
+    final_df = final_df.merge(cp_df[['price', 'changes', 'beta']], left_on='stock', right_on='symbol')
 
     return final_df.set_index('stock')
 
@@ -116,6 +116,7 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
         stats['mktCap'] = cp.get('mktCap', 0)
         stats['sector'] = cp.get('sector', 'Unknown')
         stats['industry'] = cp.get('industry', 'Unknown')
+        stats['beta'] = cp.get('beta', 1.0)
         
         # Calculate years since IPO if available
         ipo_date = cp.get('ipoDate')
@@ -770,8 +771,20 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
     
     default_g = min(cagr_5y, 5.0) if (cagr_5y is not None and cagr_5y > 0) else 2.5
     
+    beta = stock_data.get('beta', 1.0)
+    
+    # Cost of Equity calculation using CAPM
+    st.write("#### Cost of Equity (CAPM)")
+    capm_cols = st.columns(3)
+    rf_pct = capm_cols[0].number_input('Risk-Free Rate (%)', value=6.5 if stock_name.endswith('.JK') else 4.5, step=0.1, key=f"ddm_rf_{stock_name}", help="Yield of 10-year government bond")
+    erp_pct = capm_cols[1].number_input('Equity Risk Premium (%)', value=5.0, step=0.1, key=f"ddm_erp_{stock_name}", help="Extra return expected from stocks over risk-free rate")
+    beta_val = capm_cols[2].number_input('Beta', value=float(beta), step=0.01, key=f"ddm_beta_{stock_name}", help="Stock volatility relative to the market")
+    
+    capm_ke = rf_pct + (beta_val * erp_pct)
+    st.info(f"**Calculated Cost of Equity ($K_e$)**: {rf_pct}% + ({beta_val:.2f} × {erp_pct}%) = **{capm_ke:.2f}%**")
+
     cols = st.columns(2)
-    r_pct = cols[0].number_input(label='Required Rate of Return (Cost of Equity) %', value=10.0, min_value=1.0, max_value=50.0, step=0.5, key=f"ddm_r_{stock_name}")
+    r_pct = cols[0].number_input(label='Required Rate of Return (Cost of Equity) %', value=float(capm_ke), min_value=1.0, max_value=50.0, step=0.5, key=f"ddm_r_{stock_name}")
     g_pct = cols[1].number_input(label='Terminal Dividend Growth Rate %', value=float(default_g), min_value=0.0, max_value=20.0, step=0.5, key=f"ddm_g_{stock_name}")
     
     if g_pct >= r_pct:
@@ -988,7 +1001,7 @@ _KEEP_COLS = [
     # Financial
     'peRatio', 'psRatio', 'revenueGrowth', 'netIncomeGrowth',
     'medianProfitMargin', 'earningTTM', 'revenueTTM',
-    'revenueGrowthTTM', 'netIncomeGrowthTTM',
+    'revenueGrowthTTM', 'netIncomeGrowthTTM', 'beta',
     # Returns
     'return_7d', 'return_1m', 'return_1y', 'return_10y',
     'total_return_1y', 'total_return_10y',
@@ -1109,6 +1122,11 @@ with full_table_section:
                 'Price',
                 help='Current Stock Price',
                 format='%,.0f',
+            ),
+            'beta': st.column_config.NumberColumn(
+                'Beta',
+                help='Stock Beta (Risk relative to market)',
+                format='%.2f',
             ),
             'yield': st.column_config.NumberColumn(
                 'Dividend Yield',
