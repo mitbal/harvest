@@ -847,8 +847,8 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
                 
             if val is not None:
                 data.append({
-                    'Cost of Equity (r)': f"{r_val}%",
-                    'Growth Rate (g)': f"{g_val}%",
+                    'Cost of Equity (r)': f"{r_val:.2f}%",
+                    'Growth Rate (g)': f"{g_val:.2f}%",
                     'Intrinsic Value': val,
                     'r_val': r_val,
                     'g_val': g_val
@@ -884,7 +884,155 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
         with res_cols[1]:
             st.altair_chart(chart, width='stretch')
 
+@st.cache_data(show_spinner=False)
+def _calc_best_buy_cached(price_json, sdf_json):
+    """Cached wrapper for calc_best_buy_timing — DataFrames passed as JSON."""
+    price_df = pd.read_json(io.StringIO(price_json))
+    sdf = pd.read_json(io.StringIO(sdf_json)) if sdf_json else None
+    return hd.calc_best_buy_timing(price_df, sdf)
+
+
+def render_best_buy_timing(price_df, sdf, stock_name):
+    """
+    Render two charts that answer "When is the best time to buy?":
+      1. Monthly price seasonality (bar + IQR error band)
+      2. Average price trajectory relative to ex-dividend date
+    """
+    import calendar as _cal
+
+    try:
+        sdf_json = sdf.to_json() if sdf is not None and not sdf.empty else None
+        seasonality_df, pre_ex_df = _calc_best_buy_cached(price_df.to_json(), sdf_json)
+    except Exception as e:
+        st.warning(f'Could not compute buy-timing analysis: {e}')
+        return
+
+    if seasonality_df is None and pre_ex_df is None:
+        st.info('Not enough historical data to compute buy-timing analysis (need ≥ 2 years of price data).')
+        return
+
+    chart_cols = st.columns(2)
+
+    # ------------------------------------------------------------------ #
+    # Chart 1 — Monthly Seasonality                                        #
+    # ------------------------------------------------------------------ #
+    with chart_cols[0]:
+        st.markdown('#### 📅 Monthly Price Seasonality')
+        st.caption('Relative price vs. annual average (< 100 = cheaper than average)')
+
+        if seasonality_df is not None:
+            month_order = list(_cal.month_abbr[1:])
+            best_month_row = seasonality_df.loc[seasonality_df['mean'].idxmin()]
+            best_month = best_month_row['month_name']
+            best_val = best_month_row['mean']
+
+            base = alt.Chart(seasonality_df)
+
+            # IQR band
+            band = base.mark_area(opacity=0.2, color='#2ecc71').encode(
+                x=alt.X('month_name:O', sort=month_order, title='Month'),
+                y=alt.Y('q25:Q', title='Relative Price (%)'),
+                y2=alt.Y2('q75:Q'),
+            )
+
+            # Median line
+            line = base.mark_line(point=True, color='#2ecc71', strokeWidth=2).encode(
+                x=alt.X('month_name:O', sort=month_order),
+                y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
+                tooltip=[
+                    alt.Tooltip('month_name:O', title='Month'),
+                    alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
+                    alt.Tooltip('median:Q', title='Median', format='.2f'),
+                    alt.Tooltip('q25:Q', title='Q25', format='.2f'),
+                    alt.Tooltip('q75:Q', title='Q75', format='.2f'),
+                ]
+            )
+
+            # Reference line at 100
+            ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+            ).encode(y='y:Q')
+
+            # Highlight bar for cheapest month
+            best_data = seasonality_df[seasonality_df['month_name'] == best_month]
+            best_bar = alt.Chart(best_data).mark_bar(
+                color='#27ae60', opacity=0.35, width=30
+            ).encode(
+                x=alt.X('month_name:O', sort=month_order),
+                y=alt.Y('q25:Q'),
+                y2=alt.Y2('q75:Q'),
+            )
+
+            chart = (band + best_bar + line + ref).properties(height=280)
+            st.altair_chart(chart, use_container_width=True)
+
+            st.success(f'🏆 **Best month to buy**: **{best_month}** — avg {best_val:.1f}% of annual price')
+        else:
+            st.info('Insufficient price history for monthly seasonality (need ≥ 2 years).')
+
+    # ------------------------------------------------------------------ #
+    # Chart 2 — Pre-Ex-Date Trajectory                                     #
+    # ------------------------------------------------------------------ #
+    with chart_cols[1]:
+        st.markdown('#### 📉 Price Trajectory Around Ex-Dividend Date')
+        st.caption('Normalised to ex-date = 100. Values < 100 before day 0 indicate a pre-ex dip.')
+
+        if pre_ex_df is not None and not pre_ex_df.empty:
+            # Clip to only days with meaningful coverage (avoid sparse edges)
+            pre_ex_plot = pre_ex_df[
+                (pre_ex_df['days_to_ex'] >= -180) & (pre_ex_df['days_to_ex'] <= 30)
+            ].copy()
+
+            base = alt.Chart(pre_ex_plot)
+
+            band = base.mark_area(opacity=0.2, color='#3498db').encode(
+                x=alt.X('days_to_ex:Q', title='Days to Ex-Date'),
+                y=alt.Y('q25:Q', title='Relative Price (ex-date = 100)'),
+                y2=alt.Y2('q75:Q'),
+            )
+
+            line = base.mark_line(color='#3498db', strokeWidth=2).encode(
+                x=alt.X('days_to_ex:Q'),
+                y=alt.Y('mean:Q', scale=alt.Scale(zero=False)),
+                tooltip=[
+                    alt.Tooltip('days_to_ex:Q', title='Days to Ex-Date'),
+                    alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
+                    alt.Tooltip('median:Q', title='Median', format='.2f'),
+                ]
+            )
+
+            # Ex-date vertical rule
+            ex_rule = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
+                color='#e74c3c', strokeDash=[5, 4], strokeWidth=2
+            ).encode(x='x:Q')
+
+            ex_label = alt.Chart(pd.DataFrame({'x': [2], 'y': [pre_ex_plot['mean'].max()], 'text': ['Ex-Date']})).mark_text(
+                align='left', color='#e74c3c', fontSize=11
+            ).encode(x='x:Q', y='y:Q', text='text:N')
+
+            ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+            ).encode(y='y:Q')
+
+            chart = (band + line + ref + ex_rule + ex_label).properties(height=280)
+            st.altair_chart(chart, use_container_width=True)
+
+            # Find the best dip point
+            pre_only = pre_ex_plot[pre_ex_plot['days_to_ex'] < 0]
+            if not pre_only.empty:
+                best_dip = pre_only.loc[pre_only['mean'].idxmin()]
+                dip_day = int(best_dip['days_to_ex'])
+                dip_val = best_dip['mean']
+                st.success(
+                    f'🎯 **Best buy window**: ~**{abs(dip_day)} days before** ex-date '
+                    f'(avg {100 - dip_val:.1f}% cheaper than ex-date price)'
+                )
+        else:
+            st.info('No dividend history available to compute ex-date trajectory.')
+
+
 def render_compounding_simulation(stock_name, price_df, sdf):
+
     this_year = datetime.now().year
     cols = st.columns(2)
     start_year = cols[0].number_input(label='Start Year', value=2021, min_value=2010, max_value=this_year-2, key=f"sim_start_{stock_name}")
@@ -925,6 +1073,9 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     with st.expander(f'Dividend History: {stock_name}', expanded=True):
         render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
+
+    with st.expander(f'Best Time to Buy: {stock_name}', expanded=True):
+        render_best_buy_timing(price_df, sdf, stock_name)
         
     with st.expander(f'Financial Information: {stock_name}', expanded=True):
         render_financial_info(fin, currency, stock_name, filtered_df)
@@ -940,6 +1091,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     with st.expander(f'Compounding Simulation: {stock_name}'):
         render_compounding_simulation(stock_name, price_df, sdf)
+
 
 
 
