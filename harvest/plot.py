@@ -206,15 +206,104 @@ def plot_pe_distribution(df, pe, axis_label=None):
 
 def plot_pe_timeseries(pe_df, axis_label=None):
 
-    chart = alt.Chart(pe_df).mark_line().encode(
-        x = 'date:T',
-        y = alt.Y('pe', title=axis_label).scale(zero=False),
+    # Compute median & band reference lines
+    valid = pe_df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna()
+    median_pe = valid.median()
+    p10 = valid.quantile(0.10)
+    p90 = valid.quantile(0.90)
+
+    base = alt.Chart(pe_df)
+
+    # Shaded overvalued / undervalued regions
+    p90_rule = alt.Chart(pd.DataFrame({'y': [p90]})).mark_rule(
+        strokeDash=[4, 3], color='#e74c3c', strokeWidth=1, opacity=0.7
+    ).encode(y='y:Q')
+    p10_rule = alt.Chart(pd.DataFrame({'y': [p10]})).mark_rule(
+        strokeDash=[4, 3], color='#27ae60', strokeWidth=1, opacity=0.7
+    ).encode(y='y:Q')
+    med_rule = alt.Chart(pd.DataFrame({'y': [median_pe]})).mark_rule(
+        color='#f39c12', strokeWidth=1.5, opacity=0.9
+    ).encode(y='y:Q')
+
+    line = base.mark_line(color='#3498db', strokeWidth=2).encode(
+        x='date:T',
+        y=alt.Y('pe', title=axis_label).scale(zero=False),
         tooltip=(
             alt.Tooltip('date:T', title='Date'),
             alt.Tooltip('pe:Q', format='.2f', title=axis_label)
         )
     )
-    return chart
+    return (line + med_rule + p10_rule + p90_rule).properties(height=220)
+
+
+def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
+    """
+    Overlay actual price with median-multiple-implied fair value and a 10th–90th
+    percentile confidence band.  Areas where price < fair value are "cheap zones".
+
+    Parameters
+    ----------
+    pe_df : DataFrame with columns ['date', 'close', 'pe'] plus the per-share metric column.
+    ratio_label : str  – axis / tooltip label ('P/E' or 'P/S').
+    """
+    df = pe_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+
+    valid_pe = df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna()
+    if len(valid_pe) < 4:
+        return None
+
+    median_pe = float(valid_pe.median())
+    p10_pe    = float(valid_pe.quantile(0.10))
+    p90_pe    = float(valid_pe.quantile(0.90))
+
+    # Detect per-share metric column (everything except date, close, pe)
+    metric_col = [c for c in df.columns if c not in ('date', 'close', 'pe')]
+    if not metric_col:
+        return None
+    metric_col = metric_col[0]
+
+    df = df.dropna(subset=[metric_col])
+    df['fair_value_median'] = median_pe * df[metric_col]
+    df['fair_value_p10']    = p10_pe    * df[metric_col]
+    df['fair_value_p90']    = p90_pe    * df[metric_col]
+
+    base = alt.Chart(df)
+
+    # Confidence band (p10–p90 multiple applied to current metric)
+    band = base.mark_area(opacity=0.15, color='#f39c12').encode(
+        x=alt.X('date:T', title=''),
+        y=alt.Y('fair_value_p10:Q', title='Price', scale=alt.Scale(zero=False)),
+        y2=alt.Y2('fair_value_p90:Q'),
+        tooltip=[
+            alt.Tooltip('date:T', title='Date'),
+            alt.Tooltip('fair_value_p10:Q', format=',.0f', title=f'Fair Value ({ratio_label}=p10)'),
+            alt.Tooltip('fair_value_p90:Q', format=',.0f', title=f'Fair Value ({ratio_label}=p90)'),
+        ]
+    )
+
+    # Median fair-value line
+    fair_line = base.mark_line(strokeDash=[4, 3], color='#f39c12', strokeWidth=2).encode(
+        x='date:T',
+        y=alt.Y('fair_value_median:Q', scale=alt.Scale(zero=False)),
+        tooltip=[
+            alt.Tooltip('date:T', title='Date'),
+            alt.Tooltip('fair_value_median:Q', format=',.0f', title='Fair Value (median)'),
+        ]
+    )
+
+    # Actual price line
+    price_line = base.mark_line(color='#2980b9', strokeWidth=2.5).encode(
+        x='date:T',
+        y=alt.Y('close:Q', scale=alt.Scale(zero=False)),
+        tooltip=[
+            alt.Tooltip('date:T', title='Date'),
+            alt.Tooltip('close:Q', format=',.0f', title='Actual Price'),
+        ]
+    )
+
+    return (band + fair_line + price_line).resolve_scale(y='shared').properties(height=260)
 
 
 def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=0, inc_val=0, eps_df=None):
