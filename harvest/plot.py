@@ -117,60 +117,172 @@ def plot_quarter_income(fin_df, metric, currency='idr'):
     return chart
 
 
-def plot_candlestick(price_df, width=1000, height=300):
+# MA palette: window → (line colour, dash pattern)
+_MA_STYLES = {
+    20:  ('#f39c12', []),         # amber  – solid
+    50:  ('#3498db', []),         # blue   – solid
+    200: ('#9b59b6', [4, 3]),     # purple – dashed
+}
+
+
+def _compute_rsi(close: pd.Series, window: int = 14) -> pd.Series:
+    """Wilder-smoothed RSI."""
+    delta = close.diff()
+    gain  = delta.clip(lower=0)
+    loss  = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
+    rs  = avg_gain / avg_loss.replace(0, float('nan'))
+    return 100 - 100 / (1 + rs)
+
+
+def plot_candlestick(
+    price_df,
+    width: int = 1000,
+    height: int = 300,
+    ma_windows: list | None = None,   # e.g. [20, 50, 200]
+    show_rsi: bool = False,
+):
+    """
+    Interactive candlestick chart with optional MA overlays and RSI panel.
+
+    Parameters
+    ----------
+    price_df   : DataFrame with columns [date, open, high, low, close, volume]
+    ma_windows : list of integers – moving-average windows to overlay (e.g. [20, 50, 200])
+    show_rsi   : bool – append an RSI(14) panel below the volume bar
+    """
+    df = price_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+
+    # ── Compute MAs & RSI on the full series so brush filtering shows correct lines ── #
+    if ma_windows:
+        for w in ma_windows:
+            df[f'ma{w}'] = df['close'].rolling(w, min_periods=max(1, w // 2)).mean()
+
+    if show_rsi:
+        df['rsi'] = _compute_rsi(df['close'])
+
     open_close_color = alt.condition(
         'datum.open <= datum.close',
-        alt.value("#06982d"),
-        alt.value("#ae1325")
+        alt.value('#06982d'),
+        alt.value('#ae1325'),
     )
 
-    today = datetime.today()
+    today        = datetime.today()
     one_year_ago = today.replace(year=today.year - 1)
-    x_init = pd.to_datetime([today.strftime('%Y-%m-%d'), one_year_ago.strftime('%Y-%m-%d')]).astype(int) / 1E6
-    interval = alt.selection_interval(encodings=['x'], value={'x':list(x_init)})
+    x_init = (
+        pd.to_datetime([today.strftime('%Y-%m-%d'), one_year_ago.strftime('%Y-%m-%d')])
+        .astype(int) / 1e6
+    )
+    interval = alt.selection_interval(encodings=['x'], value={'x': list(x_init)})
 
-    base = alt.Chart(price_df).encode(
-        alt.X('date:T', scale=alt.Scale(domain=interval)),
+    # ── Candlestick layers ──────────────────────────────────────────────── #
+    base = alt.Chart(df).encode(
+        alt.X('date:T', title='', scale=alt.Scale(domain=interval)),
         color=open_close_color,
     )
 
     rule = base.mark_rule().encode(
-        alt.Y(
-            'low:Q',
-            title='Price',
-            scale=alt.Scale(zero=False)
-        ),
-        alt.Y2('high:Q')
+        alt.Y('low:Q',  title='Price', scale=alt.Scale(zero=False)),
+        alt.Y2('high:Q'),
+        tooltip=[
+            alt.Tooltip('date:T',  title='Date'),
+            alt.Tooltip('open:Q',  title='Open',  format=',.2f'),
+            alt.Tooltip('high:Q',  title='High',  format=',.2f'),
+            alt.Tooltip('low:Q',   title='Low',   format=',.2f'),
+            alt.Tooltip('close:Q', title='Close', format=',.2f'),
+        ],
     )
 
     bar = base.mark_bar().encode(
-        alt.Y('open:Q', scale=alt.Scale(zero=False, padding=10)),
-        alt.Y2('close:Q')
+        alt.Y('open:Q',  scale=alt.Scale(zero=False, padding=10)),
+        alt.Y2('close:Q'),
     )
 
-    candlestick = alt.layer(rule, bar).properties(
-        width=width,
-        height=height
-    ).transform_filter(
-        interval
-    )
+    layers = [rule, bar]
 
-    view = alt.Chart(price_df).mark_bar().encode(
-        x=alt.X('date:T'),
-        y='volume',
-        color=alt.condition(
-            interval,
-            alt.value('#007FFF'),
-            alt.value('lightgrey')
+    # ── Moving-average overlays ─────────────────────────────────────────── #
+    for w in (ma_windows or []):
+        style = _MA_STYLES.get(w, ('#aaaaaa', []))
+        col, dash = style
+        ma_line = alt.Chart(df).mark_line(
+            color=col,
+            strokeWidth=1.5,
+            strokeDash=dash,
+            opacity=0.85,
+        ).encode(
+            x=alt.X('date:T', scale=alt.Scale(domain=interval)),
+            y=alt.Y(f'ma{w}:Q', scale=alt.Scale(zero=False)),
+            tooltip=[
+                alt.Tooltip('date:T',       title='Date'),
+                alt.Tooltip(f'ma{w}:Q',     title=f'MA{w}', format=',.2f'),
+            ],
+        ).transform_filter(interval)
+        layers.append(ma_line)
+
+    candlestick = alt.layer(*layers).properties(width=width, height=height).transform_filter(interval)
+
+    # ── Volume navigator bar ────────────────────────────────────────────── #
+    volume_bar = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X('date:T'),
+            y=alt.Y('volume:Q', title='Volume', axis=alt.Axis(labelFontSize=9, format='~s')),
+            color=alt.condition(interval, alt.value('#007FFF'), alt.value('lightgrey')),
+            tooltip=[
+                alt.Tooltip('date:T',   title='Date'),
+                alt.Tooltip('volume:Q', title='Volume', format=',.0f'),
+            ],
         )
-    ).add_params(interval)
-    
-    view = view.properties(
-        width=width,
-        height=50
+        .add_params(interval)
+        .properties(width=width, height=50)
     )
-    
-    return candlestick & view
+
+    chart = candlestick & volume_bar
+
+    # ── Optional RSI panel ──────────────────────────────────────────────── #
+    if show_rsi:
+        # Overbought / oversold reference bands
+        ob_band = alt.Chart(pd.DataFrame({'y1': [70], 'y2': [100]})).mark_rect(
+            color='#e74c3c', opacity=0.08
+        ).encode(y='y1:Q', y2='y2:Q')
+        os_band = alt.Chart(pd.DataFrame({'y1': [0], 'y2': [30]})).mark_rect(
+            color='#27ae60', opacity=0.08
+        ).encode(y='y1:Q', y2='y2:Q')
+        ob_rule = alt.Chart(pd.DataFrame({'y': [70]})).mark_rule(
+            strokeDash=[4, 3], color='#e74c3c', strokeWidth=1, opacity=0.7
+        ).encode(y='y:Q')
+        os_rule = alt.Chart(pd.DataFrame({'y': [30]})).mark_rule(
+            strokeDash=[4, 3], color='#27ae60', strokeWidth=1, opacity=0.7
+        ).encode(y='y:Q')
+        mid_rule = alt.Chart(pd.DataFrame({'y': [50]})).mark_rule(
+            strokeDash=[2, 4], color='#aaaaaa', strokeWidth=1, opacity=0.5
+        ).encode(y='y:Q')
+
+        rsi_line = (
+            alt.Chart(df)
+            .mark_line(color='#8e44ad', strokeWidth=2)
+            .encode(
+                x=alt.X('date:T', scale=alt.Scale(domain=interval)),
+                y=alt.Y('rsi:Q', title='RSI(14)', scale=alt.Scale(domain=[0, 100])),
+                tooltip=[
+                    alt.Tooltip('date:T', title='Date'),
+                    alt.Tooltip('rsi:Q',  title='RSI',  format='.1f'),
+                ],
+            )
+            .transform_filter(interval)
+        )
+
+        rsi_panel = (
+            alt.layer(ob_band, os_band, ob_rule, os_rule, mid_rule, rsi_line)
+            .properties(width=width, height=90, title='')
+        )
+        chart = chart & rsi_panel
+
+    return chart
 
 
 def plot_pe_distribution(df, pe, axis_label=None):

@@ -645,9 +645,106 @@ def _render_fin_summary(fin_stats, stock_data):
     st.write('---')
 
 
-def render_price_movement(price_df):
-    candlestick_chart = hp.plot_candlestick(price_df, width=1000, height=300)
-    st.altair_chart(candlestick_chart, width='content')
+def render_price_movement(price_df, stock_name='', stock_row=None):
+    """
+    Enhanced Price Movement section with:
+      - Hero KPI row (price, 52W H/L, drawdown, returns)
+      - Time-range selector (3M / 6M / 1Y / 3Y / All)
+      - Moving-average overlays (MA20 / MA50 / MA200)
+      - RSI(14) panel toggle
+    """
+    df = price_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+
+    if df.empty:
+        st.warning('No price data available.')
+        return
+
+    # ── Derived stats from the full history ────────────────────────────── #
+    current_price = float(df['close'].iloc[-1])
+    ath           = float(df['high'].max())
+    atl           = float(df['low'].min())
+
+    w52_df        = df[df['date'] >= df['date'].max() - pd.DateOffset(weeks=52)]
+    high_52w      = float(w52_df['high'].max())
+    low_52w       = float(w52_df['low'].min())
+    drawdown_ath  = (current_price / ath - 1) * 100
+
+    # Pre-computed returns from filtered_df (may not be present)
+    ret_7d  = float(stock_row['return_7d'])  if stock_row is not None and 'return_7d'  in stock_row.index else None
+    ret_1m  = float(stock_row['return_1m'])  if stock_row is not None and 'return_1m'  in stock_row.index else None
+    ret_1y  = float(stock_row['return_1y'])  if stock_row is not None and 'return_1y'  in stock_row.index else None
+
+    # ── Hero KPI row ───────────────────────────────────────────────────── #
+    kpi_cols = st.columns(7)
+    kpi_cols[0].metric('💹 Current Price',    f'{current_price:,.2f}')
+    kpi_cols[1].metric('🔺 52W High',         f'{high_52w:,.2f}',
+                       delta=f'{(current_price/high_52w-1)*100:+.1f}%',
+                       delta_color='normal')
+    kpi_cols[2].metric('🔻 52W Low',          f'{low_52w:,.2f}',
+                       delta=f'{(current_price/low_52w-1)*100:+.1f}%',
+                       delta_color='normal')
+    kpi_cols[3].metric('📉 Drawdown from ATH', f'{drawdown_ath:.1f}%',
+                       delta=f'ATH {ath:,.2f}',
+                       delta_color='off')
+    if ret_7d is not None:
+        kpi_cols[4].metric('7D Return',  f'{ret_7d:+.2f}%',
+                           delta_color='normal' if ret_7d >= 0 else 'inverse')
+    if ret_1m is not None:
+        kpi_cols[5].metric('1M Return',  f'{ret_1m:+.2f}%',
+                           delta_color='normal' if ret_1m >= 0 else 'inverse')
+    if ret_1y is not None:
+        kpi_cols[6].metric('1Y Return',  f'{ret_1y:+.2f}%',
+                           delta_color='normal' if ret_1y >= 0 else 'inverse')
+
+    st.markdown('---')
+
+    # ── Controls row ───────────────────────────────────────────────────── #
+    ctrl_cols = st.columns([2, 3, 1])
+
+    time_range = ctrl_cols[0].segmented_control(
+        'Time Range',
+        options=['3M', '6M', '1Y', '3Y', 'All'],
+        default='1Y',
+        key=f'pm_range_{stock_name}',
+    )
+
+    ma_options = ctrl_cols[1].multiselect(
+        'Moving Averages',
+        options=['MA20', 'MA50', 'MA200'],
+        default=['MA50', 'MA200'],
+        key=f'pm_ma_{stock_name}',
+    )
+
+    show_rsi = ctrl_cols[2].toggle('Show RSI', value=True, key=f'pm_rsi_{stock_name}')
+
+    # ── Filter price_df by selected time range ─────────────────────────── #
+    range_map = {'3M': 90, '6M': 180, '1Y': 365, '3Y': 365 * 3}
+    if time_range != 'All':
+        cutoff = df['date'].max() - pd.DateOffset(days=range_map[time_range])
+        plot_df = df[df['date'] >= cutoff]
+    else:
+        plot_df = df
+
+    ma_windows = [int(m.replace('MA', '')) for m in (ma_options or [])]
+
+    candlestick_chart = hp.plot_candlestick(
+        plot_df,
+        width=1000,
+        height=320,
+        ma_windows=ma_windows if ma_windows else None,
+        show_rsi=show_rsi,
+    )
+    st.altair_chart(candlestick_chart, width='stretch')
+
+    # ── MA legend caption ──────────────────────────────────────────────── #
+    if ma_windows:
+        legend_parts = []
+        colours = {20: '🟡 MA20', 50: '🔵 MA50', 200: '🟣 MA200'}
+        for w in sorted(ma_windows):
+            legend_parts.append(colours.get(w, f'MA{w}'))
+        st.caption('  ·  '.join(legend_parts) + '  |  RSI overbought > 70 (🔴) · oversold < 30 (🟢)')
 
 
 @st.cache_data(show_spinner=False)
@@ -1316,7 +1413,8 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
         render_financial_info(fin, currency, stock_name, filtered_df)
         
     with st.expander('Price Movement', expanded=True):
-        render_price_movement(price_df)
+        _stock_row = filtered_df.loc[stock_name] if stock_name in filtered_df.index else None
+        render_price_movement(price_df, stock_name=stock_name, stock_row=_stock_row)
         
     with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
