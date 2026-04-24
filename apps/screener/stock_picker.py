@@ -964,7 +964,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             )
 
             chart = (band + best_bar + line + ref).properties(height=280)
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width='stretch')
 
             st.success(f'🏆 **Best month to buy**: **{best_month}** — avg {best_val:.1f}% of annual price')
         else:
@@ -1015,7 +1015,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             ).encode(y='y:Q')
 
             chart = (band + line + ref + ex_rule + ex_label).properties(height=280)
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width='stretch')
 
             # Find the best dip point
             pre_only = pre_ex_plot[pre_ex_plot['days_to_ex'] < 0]
@@ -1034,36 +1034,193 @@ def render_best_buy_timing(price_df, sdf, stock_name):
 def render_compounding_simulation(stock_name, price_df, sdf):
 
     this_year = datetime.now().year
-    cols = st.columns(2)
+    cols = st.columns(4)
     start_year = cols[0].number_input(label='Start Year', value=2021, min_value=2010, max_value=this_year-2, key=f"sim_start_{stock_name}")
     end_year = cols[1].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1, key=f"sim_end_{stock_name}")
-    cols = st.columns(2)
-    initial_value = cols[0].number_input(label='Initial investment (in million)', value=10, min_value=1, max_value=1000, key=f"sim_init_{stock_name}")
-    monthly_topup = cols[1].number_input(label='Monthly Topup (in million)', value=1, min_value=0, max_value=100, key=f"sim_monthly_{stock_name}")
+    initial_value = cols[2].number_input(label='Initial investment (million)', value=10, min_value=1, max_value=1000, key=f"sim_init_{stock_name}")
+    monthly_topup = cols[3].number_input(label='Monthly Top-up (million)', value=1, min_value=0, max_value=100, key=f"sim_monthly_{stock_name}")
 
-    porto, activities = hd.simulate_dividend_compounding(stock_name, price_df, sdf, start_year, end_year, initial_value * 1_000_000, monthly_topup * 1_000_000)
-    
-    st.write('Activities:')
-    st.write(activities)
-    st.write('Portfolio:')
+    porto, activities = hd.simulate_dividend_compounding(
+        stock_name, price_df, sdf,
+        start_year, end_year,
+        initial_value * 1_000_000,
+        monthly_topup * 1_000_000,
+    )
 
+    if not porto:
+        st.warning('No simulation data available for the selected period.')
+        return
+
+    # ── Build portfolio timeline DataFrame ─────────────────────────────── #
     porto_df = pd.DataFrame(porto)
-    porto_df['total'] = porto_df['num_stock'] * porto_df['price'] * 100
+    porto_df['date']      = pd.to_datetime(porto_df['date'])
+    porto_df['cost']      = porto_df['num_stock'] * porto_df['price'] * 100
     porto_df['cum_stock'] = porto_df['num_stock'].cumsum()
-    porto_df['cum_total'] = porto_df['total'].cumsum()
-    if not porto_df['cum_stock'].empty and (porto_df['cum_stock'] != 0).all():
-         porto_df['avg_price'] = porto_df['cum_total'] / porto_df['cum_stock'] / 100
-    else:
-         porto_df['avg_price'] = 0
+    porto_df['cum_cost']  = porto_df['cost'].cumsum()
+    porto_df['mkt_value'] = porto_df['price'] * porto_df['cum_stock'] * 100
 
-    porto_df['current_value'] = porto_df['price'] * porto_df['cum_stock'] * 100
+    # ── Parse dividend income from activity log ─────────────────────────── #
+    div_rows = []
+    for act in activities:
+        if 'receive dividend' in act:
+            try:
+                parts = act.split()
+                act_date = pd.to_datetime(parts[0])
+                total_idx = parts.index('Total') + 1
+                total_div = float(parts[total_idx])
+                div_rows.append({'date': act_date, 'dividend_income': total_div})
+            except Exception:
+                pass
+    div_income_df = pd.DataFrame(div_rows) if div_rows else pd.DataFrame(columns=['date', 'dividend_income'])
 
-    cols = st.columns(2)
-    cols[0].write(porto_df[['date', 'cum_total', 'current_value']])
+    # ── Key metrics ────────────────────────────────────────────────────── #
+    n_years         = max(end_year - start_year, 1)
+    total_invested  = initial_value * 1_000_000 + monthly_topup * 1_000_000 * n_years * 12
+    final_mkt_value = porto_df['mkt_value'].iloc[-1]
+    total_dividends = div_income_df['dividend_income'].sum() if not div_income_df.empty else 0
+    final_lots      = int(porto_df['cum_stock'].iloc[-1])
+    avg_price       = porto_df['price'].mean()
+    div_lots_approx = int(total_dividends / (avg_price * 100)) if avg_price > 0 else 0
+    cagr            = ((final_mkt_value / total_invested) ** (1 / n_years) - 1) * 100 if total_invested > 0 else 0
+    total_return_pct = (final_mkt_value / total_invested - 1) * 100 if total_invested > 0 else 0
 
-    return_chart1 = alt.Chart(porto_df).mark_line().encode(x=alt.X('date', axis=alt.Axis(labels=False)), y=alt.Y('cum_total').scale(zero=False))
-    return_chart2 = alt.Chart(porto_df).mark_line().encode(x=alt.X('date', axis=alt.Axis(labels=False)), y=alt.Y('current_value').scale(zero=False), color=alt.value('green'))
-    cols[1].altair_chart(return_chart1 + return_chart2)
+    # ── Hero KPI row ───────────────────────────────────────────────────── #
+    st.markdown('---')
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric('💰 Total Invested',          f'Rp {total_invested/1e6:,.1f}M')
+    delta_color = 'normal' if final_mkt_value >= total_invested else 'inverse'
+    k2.metric('📈 Portfolio Value',          f'Rp {final_mkt_value/1e6:,.1f}M',
+              delta=f'{total_return_pct:+.1f}%', delta_color=delta_color)
+    k3.metric('🎁 Total Dividends Received', f'Rp {total_dividends/1e6:,.1f}M')
+    k4.metric('📊 CAGR',                     f'{cagr:.1f}%/yr')
+    k5.metric('🎯 Bonus Lots from Dividends', f'~{div_lots_approx:,} lots',
+              help='Approximate lots purchased using reinvested dividends')
+    st.markdown('---')
+
+    if div_lots_approx > 0:
+        pct_from_div = div_lots_approx / final_lots * 100 if final_lots > 0 else 0
+        st.success(
+            f"🚀 **The Power of Compounding:** Over {n_years} years, reinvesting dividends bought you "
+            f"approximately **{div_lots_approx:,} bonus lots** (~{pct_from_div:.0f}% of your total "
+            f"{final_lots:,} lots), contributing **Rp {total_dividends/1e6:,.1f}M** to your portfolio "
+            f"— *without any extra money from your pocket!*"
+        )
+
+    chart_col1, chart_col2 = st.columns([3, 2])
+
+    # ── Chart 1: Stacked area — cost basis vs gains ─────────────────────── #
+    with chart_col1:
+        st.markdown('#### 📈 Portfolio Growth Over Time')
+        st.caption('Blue = cash you invested. Green = total portfolio value (incl. dividend compounding gains).')
+
+        cost_area = alt.Chart(porto_df).mark_area(
+            opacity=0.55, color='#5b8dee', interpolate='monotone'
+        ).encode(
+            x=alt.X('date:T', title='Date'),
+            y=alt.Y('cum_cost:Q', title='Value (Rp)', stack=None),
+            tooltip=[
+                alt.Tooltip('date:T', title='Date'),
+                alt.Tooltip('cum_cost:Q', title='Total Invested', format=',.0f'),
+            ]
+        )
+        mkt_area = alt.Chart(porto_df).mark_area(
+            opacity=0.40, color='#27ae60', interpolate='monotone'
+        ).encode(
+            x=alt.X('date:T'),
+            y=alt.Y('mkt_value:Q', stack=None),
+        )
+        mkt_line = alt.Chart(porto_df).mark_line(
+            color='#1e8449', strokeWidth=2.5, interpolate='monotone'
+        ).encode(
+            x=alt.X('date:T'),
+            y=alt.Y('mkt_value:Q'),
+            tooltip=[
+                alt.Tooltip('date:T', title='Date'),
+                alt.Tooltip('mkt_value:Q', title='Portfolio Value', format=',.0f'),
+                alt.Tooltip('cum_cost:Q', title='Total Invested', format=',.0f'),
+            ]
+        )
+        cost_line = alt.Chart(porto_df).mark_line(
+            color='#2471a3', strokeWidth=1.5, strokeDash=[5, 3], interpolate='monotone'
+        ).encode(
+            x=alt.X('date:T'),
+            y=alt.Y('cum_cost:Q'),
+        )
+        st.altair_chart((cost_area + mkt_area + mkt_line + cost_line).properties(height=300), width='stretch')
+
+    # ── Chart 2: Annual dividend income snowball ─────────────────────────── #
+    with chart_col2:
+        st.markdown('#### 🎁 Annual Dividend Income')
+        st.caption('Growing each year as you accumulate more shares — the snowball effect!')
+
+        if not div_income_df.empty:
+            div_income_df['year'] = div_income_df['date'].dt.year
+            annual_div = div_income_df.groupby('year')['dividend_income'].sum().reset_index()
+            annual_div['year_str'] = annual_div['year'].astype(str)
+
+            bar = alt.Chart(annual_div).mark_bar(
+                cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color='#f39c12'
+            ).encode(
+                x=alt.X('year_str:O', title='Year', sort=None),
+                y=alt.Y('dividend_income:Q', title='Dividend Income (Rp)'),
+                tooltip=[
+                    alt.Tooltip('year_str:O', title='Year'),
+                    alt.Tooltip('dividend_income:Q', title='Annual Dividend', format=',.0f'),
+                ]
+            )
+            trend = alt.Chart(annual_div).mark_line(
+                color='#e67e22', strokeWidth=2, strokeDash=[4, 2]
+            ).encode(
+                x=alt.X('year_str:O', sort=None),
+                y=alt.Y('dividend_income:Q'),
+            )
+            st.altair_chart((bar + trend).properties(height=280), width='stretch')
+        else:
+            st.info('No dividend events recorded in this period.')
+
+    # ── Chart 3: Strategy Comparison ────────────────────────────────────── #
+    st.markdown('#### ⚖️ Strategy Comparison: Reinvest vs. Pocket Dividends vs. Buy-and-Hold Only')
+    st.caption('What if you had not reinvested dividends, or had bought a non-dividend stock instead?')
+
+    start_price     = porto_df['price'].iloc[0]
+    start_lots      = int((initial_value * 1_000_000) / (start_price * 100)) if start_price > 0 else 0
+    porto_df['hold_only_value'] = start_lots * porto_df['price'] * 100
+
+    compare_df = pd.DataFrame({
+        'date':                          porto_df['date'],
+        'DRIP (Reinvest Dividends)':     porto_df['mkt_value'],
+        'Cash (Pocket Dividends)':       porto_df['cum_cost'],
+        'Hold Only (No Dividend Stock)': porto_df['hold_only_value'],
+    }).melt(id_vars='date', var_name='Strategy', value_name='Value')
+
+    compare_chart = alt.Chart(compare_df).mark_line(strokeWidth=2.5, interpolate='monotone').encode(
+        x=alt.X('date:T', title='Date'),
+        y=alt.Y('Value:Q', title='Portfolio Value (Rp)', scale=alt.Scale(zero=False)),
+        color=alt.Color('Strategy:N', scale=alt.Scale(
+            domain=['DRIP (Reinvest Dividends)', 'Cash (Pocket Dividends)', 'Hold Only (No Dividend Stock)'],
+            range=['#27ae60', '#2980b9', '#95a5a6']
+        )),
+        tooltip=[
+            alt.Tooltip('date:T', title='Date'),
+            alt.Tooltip('Strategy:N'),
+            alt.Tooltip('Value:Q', format=',.0f'),
+        ]
+    ).properties(height=280)
+    st.altair_chart(compare_chart, width='stretch')
+
+    final_drip  = porto_df['mkt_value'].iloc[-1]
+    final_cash  = porto_df['cum_cost'].iloc[-1]
+    final_hold  = porto_df['hold_only_value'].iloc[-1]
+    st.markdown(f"""
+| Strategy | Final Value | Gap vs DRIP |
+|---|---|---|
+| 🟢 DRIP (Reinvest Dividends) | **Rp {final_drip/1e6:,.1f}M** | — |
+| 🔵 Cash (Pocket Dividends) | Rp {final_cash/1e6:,.1f}M | **Rp {(final_drip-final_cash)/1e6:,.1f}M less** |
+| ⚪ Hold Only (No Dividend Stock) | Rp {final_hold/1e6:,.1f}M | **Rp {(final_drip-final_hold)/1e6:,.1f}M less** |
+    """)
+
+    with st.expander('📋 Raw Transaction Log', expanded=False):
+        st.dataframe(pd.DataFrame({'Activity': activities}), hide_index=True)
 
 def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl):
     with st.expander('Company Profile', expanded=False):    
@@ -1089,7 +1246,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     with st.expander(f'Dividend Discount Model Valuation: {stock_name}', expanded=True):
         render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
 
-    with st.expander(f'Compounding Simulation: {stock_name}'):
+    with st.expander(f'Compounding Simulation: {stock_name}', expanded=True):
         render_compounding_simulation(stock_name, price_df, sdf)
 
 
