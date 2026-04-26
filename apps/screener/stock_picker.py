@@ -629,7 +629,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
     st.markdown('---')
 
     # ── Period selector ─────────────────────────────────────────────────── #
-    ctrl_cols = st.columns([1, 2, 3])
+    ctrl_cols = st.columns([1, 2])
     period = ctrl_cols[0].radio('Period', ['Annual', 'Quarterly'], horizontal=True,
                                 index=0, key=f"period_{stock_name}")
 
