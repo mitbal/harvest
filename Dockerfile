@@ -1,20 +1,18 @@
 # Stage 1: Build stage
 FROM python:3.12-slim AS builder
 
-# Install uv for extremely fast dependency installation
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/uv
-
 WORKDIR /app
 
-# Install build dependencies (needed for some python wheels)
+# Install build dependencies + uv via pip (more reliable than ghcr.io in Railway)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
 
-# Install python dependencies into a temporary directory
+# Install python dependencies into a virtual env
 COPY requirements.txt .
-RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
-    /uv/bin/uv pip install --system --prefix=/install -r requirements.txt
+RUN uv venv /opt/venv && \
+    uv pip install --python /opt/venv/bin/python -r requirements.txt
 
 # Stage 2: Final stage
 FROM python:3.12-slim
@@ -26,8 +24,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy the installed python packages from the builder stage
-COPY --from=builder /install /usr/local
+# Copy the virtual env from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Make sure the venv is on PATH
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application files
 COPY apps ./apps
@@ -48,6 +49,4 @@ COPY data ./data
 
 EXPOSE 8501
 
-# Now 'make' will be available at runtime
 ENTRYPOINT [ "make", "serve-app" ]
-
