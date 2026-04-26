@@ -1222,11 +1222,42 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             st.info('No dividend history available to compute ex-date trajectory.')
 
 
-def render_compounding_simulation(stock_name, price_df, sdf):
+def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
 
     this_year = datetime.now().year
+    
+    # Determine minimum start year based on data availability and IPO
+    price_min_year = 2010
+    if not price_df.empty:
+        try:
+            price_min_year = pd.to_datetime(price_df['date']).min().year
+        except:
+            pass
+            
+    ipo_year = 0
+    if cp_df is not None and stock_name in cp_df.index:
+        ipo_date = cp_df.loc[stock_name, 'ipoDate']
+        if pd.notna(ipo_date) and ipo_date:
+            try:
+                ipo_year = int(str(ipo_date).split('-')[0])
+            except:
+                pass
+                
+    min_start_year = max(price_min_year, ipo_year)
+    max_start_year = this_year - 2
+
+    if min_start_year > max_start_year:
+        st.warning(f"Stock {stock_name} does not have enough historical data (needs to exist since {max_start_year} or earlier) for a compounding simulation.")
+        return
+
     cols = st.columns(4)
-    start_year = cols[0].number_input(label='Start Year', value=2021, min_value=2010, max_value=this_year-2, key=f"sim_start_{stock_name}")
+    start_year = cols[0].number_input(
+        label='Start Year', 
+        value=max(2011, min_start_year), 
+        min_value=min_start_year, 
+        max_value=max_start_year, 
+        key=f"sim_start_{stock_name}"
+    )
     end_year = cols[1].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1, key=f"sim_end_{stock_name}")
     initial_value = cols[2].number_input(label='Initial investment (million)', value=10, min_value=1, max_value=1000, key=f"sim_init_{stock_name}")
     monthly_topup = cols[3].number_input(label='Monthly Top-up (million)', value=1, min_value=0, max_value=100, key=f"sim_monthly_{stock_name}")
@@ -1415,7 +1446,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
         render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
 
     with st.expander(f'Compounding Simulation: {stock_name}', expanded=True):
-        render_compounding_simulation(stock_name, price_df, sdf)
+        render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df)
 
 
 
