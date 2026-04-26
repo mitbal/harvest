@@ -778,9 +778,9 @@ def cached_calc_fin_stats(fin_json, target_currency):
     return hd.calc_fin_stats(fin, target_currency=target_currency)
 
 def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=None, sdf=None):
-    cols = st.columns(3, gap='large')
+    cols = st.columns(2, gap='large')
     year = cols[0].slider('Select Number of Year', min_value=1, max_value=15, key=f"val_year_{stock_name}")
-    val_metric = cols[1].radio('Valuation Metric', ['Price-to-Earnings', 'Price-to-Sales/Revenue'], index=0, horizontal=True, key=f"val_metric_{stock_name}")
+    val_metric = cols[1].radio('Valuation Metric', ['Price-to-Earnings (P/E) Ratio', 'Price-to-Sales (P/S) Ratio'], index=0, horizontal=True, key=f"val_metric_{stock_name}")
 
     start_date = datetime.now() - timedelta(days=365*year)
     last_year_df = price_df[price_df['date']>= str(start_date)]
@@ -791,7 +791,7 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     last_year_json = last_year_df.to_json()
     fin_json_val   = fin.to_json()
 
-    if val_metric == 'Price-to-Earnings':
+    if val_metric == 'Price-to-Earnings (P/E) Ratio':
         ratio = 'P/E'; pratio = 'peRatio'
         pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'pe', fin_currency, target_currency)
     else:
@@ -876,27 +876,6 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     # ── Row 1: Price vs Fair Value chart (wide) + Distribution ──────────── #
     chart_cols = st.columns([3, 2], gap='large')
     with chart_cols[0]:
-        st.markdown(f"#### 📈 Price vs Historical Fair Value ({ratio})")
-        st.caption(
-            f"**Blue line** = actual price &nbsp;·&nbsp; **Orange dashed** = median-{ratio}-implied fair value &nbsp;·&nbsp; "
-            f"**Shaded band** = p10–p90 fair value range. "
-            f"When the price is **below** the orange line / band, the stock is historically **cheap**."
-        )
-        price_fv_chart = hp.plot_price_vs_fair_value(pe_df, ratio_label=ratio)
-        if price_fv_chart is not None:
-            st.altair_chart(price_fv_chart, width='stretch')
-        else:
-            st.info('Not enough data to render the price vs fair value chart.')
-
-    with chart_cols[1]:
-        st.markdown(f"#### 📊 {ratio} Distribution")
-        st.caption(f"**Red line** = current {ratio}. Left tail = historically cheap zone.")
-        pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
-        st.altair_chart(pe_dist_chart, width='stretch')
-
-    # ── Row 2: Time-series + multi-period summary table ─────────────────── #
-    ts_cols = st.columns([3, 2], gap='large')
-    with ts_cols[0]:
         st.markdown(f"#### 📉 {ratio} Over Time")
         st.caption(
             f"**Orange** = median &nbsp;·&nbsp; **Green dashed** = p10 (cheap) &nbsp;·&nbsp; "
@@ -906,43 +885,61 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
         st.altair_chart(pe_ts_chart, width='stretch')
 
-    with ts_cols[1]:
-        st.markdown(f"#### 📋 Multi-Period Comparison")
+    with chart_cols[1]:
+        st.markdown(f"#### 📊 {ratio} Distribution")
+        st.caption(f"**Red line** = current {ratio}. Left tail = historically cheap zone.")
+        pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
+        st.altair_chart(pe_dist_chart, width='stretch')
 
-        now_ts = pe_df['date'].max()
-        period_rows = []
-        for p_yr, p_label in [(1, '1 Year'), (3, '3 Years'), (5, '5 Years'), (year, f'{year}Y (selected)')]:
-            cutoff = pd.Timestamp(now_ts) - pd.Timedelta(days=365 * p_yr)
-            sub = pe_df[pe_df['date'] >= cutoff]['pe'].replace(
-                [float('inf'), -float('inf')], float('nan')
-            ).dropna()
-            if len(sub) >= 20:
-                med      = float(sub.median())
-                p10_v    = float(sub.quantile(0.10))
-                p90_v    = float(sub.quantile(0.90))
-                imp_fair = (med / pe_ttm) * current_price if pe_ttm > 0 else current_price
-                pct_rank = float((sub < pe_ttm).mean() * 100)
-                arrow    = '🟢' if pe_ttm <= med else '🔴'
-                period_rows.append({
-                    'Period':                  p_label,
-                    f'Median {ratio}':         f'{med:.2f}',
-                    'P10 / P90':               f'{p10_v:.2f} / {p90_v:.2f}',
-                    'Implied Fair Price':       f'{int(imp_fair):,}',
-                    'Pct Rank':                f'{arrow} {pct_rank:.0f}th',
-                })
+    # # ── Row 2: Time-series + multi-period summary table ─────────────────── #
+    # ts_cols = st.columns([3, 2], gap='large')
+    # with ts_cols[0]:
+    #     st.markdown(f"#### 📉 {ratio} Over Time")
+    #     st.caption(
+    #         f"**Orange** = median &nbsp;·&nbsp; **Green dashed** = p10 (cheap) &nbsp;·&nbsp; "
+    #         f"**Red dashed** = p90 (expensive). "
+    #         f"When the line is near or below the green dashed line, the stock is attractively priced."
+    #     )
+    #     pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
+    #     st.altair_chart(pe_ts_chart, width='stretch')
 
-        if period_rows:
-            st.dataframe(pd.DataFrame(period_rows), hide_index=True, use_container_width=True)
+    # with ts_cols[1]:
+    #     st.markdown(f"#### 📋 Multi-Period Comparison")
 
-        # Sector / Industry peer comparison
-        sector_color   = 'green' if pe_ttm <= sector_pe   else 'red'
-        industry_color = 'green' if pe_ttm <= industry_pe else 'red'
-        st.markdown(f"**Current {ratio}:** **:{highlight_color}[{pe_ttm:,.2f}]**")
-        if industry_pe != -1 and sector_pe != -1:
-            st.markdown(
-                f"**Industry ({industry_name}):** **:{industry_color}[{industry_pe:,.2f}]**  \n"
-                f"**Sector ({sector_name}):** **:{sector_color}[{sector_pe:,.2f}]**"
-            )
+    #     now_ts = pe_df['date'].max()
+    #     period_rows = []
+    #     for p_yr, p_label in [(1, '1 Year'), (3, '3 Years'), (5, '5 Years'), (year, f'{year}Y (selected)')]:
+    #         cutoff = pd.Timestamp(now_ts) - pd.Timedelta(days=365 * p_yr)
+    #         sub = pe_df[pe_df['date'] >= cutoff]['pe'].replace(
+    #             [float('inf'), -float('inf')], float('nan')
+    #         ).dropna()
+    #         if len(sub) >= 20:
+    #             med      = float(sub.median())
+    #             p10_v    = float(sub.quantile(0.10))
+    #             p90_v    = float(sub.quantile(0.90))
+    #             imp_fair = (med / pe_ttm) * current_price if pe_ttm > 0 else current_price
+    #             pct_rank = float((sub < pe_ttm).mean() * 100)
+    #             arrow    = '🟢' if pe_ttm <= med else '🔴'
+    #             period_rows.append({
+    #                 'Period':                  p_label,
+    #                 f'Median {ratio}':         f'{med:.2f}',
+    #                 'P10 / P90':               f'{p10_v:.2f} / {p90_v:.2f}',
+    #                 'Implied Fair Price':       f'{int(imp_fair):,}',
+    #                 'Pct Rank':                f'{arrow} {pct_rank:.0f}th',
+    #             })
+
+    #     if period_rows:
+    #         st.dataframe(pd.DataFrame(period_rows), hide_index=True, use_container_width=True)
+
+    #     # Sector / Industry peer comparison
+    #     sector_color   = 'green' if pe_ttm <= sector_pe   else 'red'
+    #     industry_color = 'green' if pe_ttm <= industry_pe else 'red'
+    #     st.markdown(f"**Current {ratio}:** **:{highlight_color}[{pe_ttm:,.2f}]**")
+    #     if industry_pe != -1 and sector_pe != -1:
+    #         st.markdown(
+    #             f"**Industry ({industry_name}):** **:{industry_color}[{industry_pe:,.2f}]**  \n"
+    #             f"**Sector ({sector_name}):** **:{sector_color}[{sector_pe:,.2f}]**"
+    #         )
 
 
 def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, price_df=None, n_share=None):

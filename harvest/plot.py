@@ -69,6 +69,174 @@ def plot_fin_chart(fin_df, currency='idr'):
     return (combined_chart+margin_chart).resolve_scale(y='independent')
 
 
+def plot_fin_chart_enhanced(fin_df, currency='idr', height=320):
+    """
+    Polished annual financial chart:
+      - Grouped bars: Revenue (blue) + Net Income (teal), side-by-side, shared y scale
+      - Overlay line: Net Profit Margin % on an independent right axis
+    """
+    df = fin_df.groupby('calendarYear').agg(
+        revenue=('revenue', 'sum'),
+        netIncome=('netIncome', 'sum'),
+    ).reset_index()
+    df['netProfitMargin'] = (df['netIncome'] / df['revenue'] * 100).round(2)
+    df['year_str']        = df['calendarYear'].astype(str)
+
+    # ── Grouped bars (shared y scale, no overlap) ────────────────────────── #
+    bars = alt.Chart(df).transform_fold(
+        ['revenue', 'netIncome'],
+        as_=['metric', 'value'],
+    ).transform_calculate(
+        value_fmt=format_tooltip_currency_expr(currency)
+    ).mark_bar(
+        cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
+    ).encode(
+        x=alt.X('year_str:O', title='', axis=alt.Axis(labelAngle=0)),
+        xOffset=alt.XOffset('metric:N'),
+        y=alt.Y('value:Q', title='Value', axis=alt.Axis(labelExpr=format_currency())),
+        color=alt.Color('metric:N', scale=alt.Scale(
+            domain=['revenue', 'netIncome'],
+            range=['#42a5f5', '#26a69a'],
+        ), legend=alt.Legend(
+            title='',
+            labelExpr="datum.label === 'revenue' ? 'Revenue' : 'Net Income'",
+        )),
+        tooltip=[
+            alt.Tooltip('year_str:O',  title='Year'),
+            alt.Tooltip('metric:N',    title='Metric'),
+            alt.Tooltip('value_fmt:N', title='Value'),
+        ]
+    )
+
+    # ── Net profit margin overlay line (independent right axis) ──────────── #
+    margin_line = alt.Chart(df).mark_line(
+        point=alt.OverlayMarkDef(filled=True, size=60),
+        color='#ffa726',
+        strokeWidth=2.5,
+    ).encode(
+        x=alt.X('year_str:O'),
+        y=alt.Y('netProfitMargin:Q', title='Net Profit Margin (%)',
+                axis=alt.Axis(format='.0f', titleColor='#ffa726', labelColor='#ffa726')),
+        tooltip=[
+            alt.Tooltip('year_str:O',        title='Year'),
+            alt.Tooltip('netProfitMargin:Q', title='Net Margin %', format='.1f'),
+        ]
+    )
+
+    return (
+        alt.layer(bars, margin_line)
+        .resolve_scale(y='independent')
+        .properties(height=height)
+    )
+
+
+
+def plot_profit_margin_trend(fin_df, currency='idr', height=220):
+    """
+    Rolling 4-quarter (TTM) net profit margin trend line with coloured area.
+    Useful for spotting structural margin expansion or compression.
+    """
+    df = fin_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+
+    rolling = df[['date', 'revenue', 'netIncome']].rolling(window=4, on='date').sum()
+    rolling['date']             = df['date'].values
+    rolling['netProfitMargin']  = (rolling['netIncome'] / rolling['revenue'] * 100).clip(-50, 100)
+    rolling = rolling.dropna(subset=['netProfitMargin'])
+
+    # Zero reference line
+    zero_line = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(
+        strokeDash=[4, 3], color='#aaaaaa', strokeWidth=1
+    ).encode(y='y:Q')
+
+    # Median reference
+    med = float(rolling['netProfitMargin'].median())
+    med_line = alt.Chart(pd.DataFrame({'y': [med]})).mark_rule(
+        strokeDash=[5, 3], color='#ffa726', strokeWidth=1.5, opacity=0.8
+    ).encode(y='y:Q')
+
+    # Area fill — green above 0, red below
+    area = alt.Chart(rolling).mark_area(
+        interpolate='monotone',
+        opacity=0.25,
+        color='#26a69a',
+    ).encode(
+        x=alt.X('date:T', title=''),
+        y=alt.Y('netProfitMargin:Q', title='TTM Net Margin (%)', scale=alt.Scale(zero=False)),
+    )
+
+    line = alt.Chart(rolling).mark_line(
+        interpolate='monotone',
+        color='#26a69a',
+        strokeWidth=2.5,
+    ).encode(
+        x=alt.X('date:T'),
+        y=alt.Y('netProfitMargin:Q', scale=alt.Scale(zero=False)),
+        tooltip=[
+            alt.Tooltip('date:T',              title='Date'),
+            alt.Tooltip('netProfitMargin:Q',   title='TTM Net Margin %', format='.1f'),
+        ]
+    )
+
+    return alt.layer(area, zero_line, med_line, line).properties(height=height)
+
+
+def plot_quarterly_breakdown(fin_df, metric='netIncome', currency='idr', height=280):
+    """
+    Clean quarterly bar chart for a single financial metric.
+    Each bar is coloured by QoQ growth (green = improvement, red = decline).
+    A thin YoY comparison line is overlaid to show structural trends.
+    """
+    df = fin_df.copy()
+    df = df.sort_values('date', ascending=True).reset_index(drop=True)
+    df['period_label'] = df['calendarYear'].astype(str) + ' ' + df['period']
+    df['value_fmt']    = df[metric].apply(lambda x: format_tooltip_currency(x, currency))
+    df['qoq_growth']   = df[metric].pct_change() * 100
+    df['yoy_val']      = df[metric].shift(4)   # same quarter last year
+
+    label_map = {'revenue': 'Revenue', 'netIncome': 'Net Income'}
+    title = label_map.get(metric, metric)
+
+    bars = alt.Chart(df).mark_bar(
+        cornerRadiusTopLeft=3, cornerRadiusTopRight=3
+    ).encode(
+        x=alt.X('calendarYear:O', title='Year', axis=alt.Axis(labelAngle=0)),
+        xOffset=alt.XOffset('period:O', sort=['Q1', 'Q2', 'Q3', 'Q4']),
+        y=alt.Y(f'{metric}:Q', title=title, axis=alt.Axis(labelExpr=format_currency())),
+        color=alt.condition(
+            alt.datum['qoq_growth'] < 0,
+            alt.value('#ef5350'),
+            alt.value('#42a5f5') if metric == 'revenue' else alt.value('#26a69a'),
+        ),
+        tooltip=[
+            alt.Tooltip('calendarYear:O', title='Year'),
+            alt.Tooltip('period:O',        title='Quarter'),
+            alt.Tooltip('value_fmt:N',    title=title),
+            alt.Tooltip('qoq_growth:Q',   title='QoQ Growth %', format='.1f'),
+        ]
+    )
+
+    yoy_line = alt.Chart(df).mark_line(
+        point=alt.OverlayMarkDef(filled=True, size=30, opacity=0.6),
+        color='#ffa726',
+        strokeDash=[4, 2],
+        strokeWidth=1.8,
+        opacity=0.8,
+    ).encode(
+        x=alt.X('calendarYear:O'),
+        xOffset=alt.XOffset('period:O', sort=['Q1', 'Q2', 'Q3', 'Q4']),
+        y=alt.Y('yoy_val:Q'),
+        tooltip=[
+            alt.Tooltip('calendarYear:O', title='Year'),
+            alt.Tooltip('period:O',        title='Quarter'),
+            alt.Tooltip('yoy_val:Q',       title='Same Q Last Year', format=',.0f'),
+        ]
+    )
+
+    return (bars + yoy_line).resolve_scale(y='shared').properties(height=height)
+
+
 def plot_financial(fin_df, period='quarter', metric='netIncome', currency='idr'):
     
     if period == 'quarter':
@@ -345,7 +513,7 @@ def plot_pe_timeseries(pe_df, axis_label=None):
             alt.Tooltip('pe:Q', format='.2f', title=axis_label)
         )
     )
-    return (line + med_rule + p10_rule + p90_rule).properties(height=220)
+    return (line + med_rule + p10_rule + p90_rule).properties(height=300)
 
 
 def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
