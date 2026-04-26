@@ -355,6 +355,10 @@ def get_rating_color(score):
     else:
         return '#c62828' # Dark Red
 
+def add_anchor(name):
+    """Adds an invisible HTML anchor for direct URL linking."""
+    st.markdown(f"<div id='{name}'></div>", unsafe_allow_html=True)
+
 def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=None):
     if color is None:
         color = get_rating_color(score)
@@ -1420,25 +1424,32 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     
     currency = cp_df.loc[stock_name, 'currency']
 
+    add_anchor('dividend')
     with st.expander(f'Dividend History: {stock_name}', expanded=True):
         render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
 
+    add_anchor('best-time')
     with st.expander(f'Best Time to Buy: {stock_name}', expanded=True):
         render_best_buy_timing(price_df, sdf, stock_name)
         
+    add_anchor('financial')
     with st.expander(f'Financial Information: {stock_name}', expanded=True):
         render_financial_info(fin, currency, stock_name, filtered_df)
         
+    add_anchor('price-movement')
     with st.expander(f'Price Movement: {stock_name}', expanded=True):
         _stock_row = filtered_df.loc[stock_name] if stock_name in filtered_df.index else None
         render_price_movement(price_df, stock_name=stock_name, stock_row=_stock_row)
         
+    add_anchor('valuation')
     with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
         render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
 
+    add_anchor('ddm')
     with st.expander(f'Dividend Discount Model Valuation: {stock_name}', expanded=True):
         render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
 
+    add_anchor('simulation')
     with st.expander(f'Compounding Simulation: {stock_name}', expanded=True):
         render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df)
 
