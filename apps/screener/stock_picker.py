@@ -658,9 +658,6 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
         st.altair_chart(q_chart, width='stretch')
 
 
-
-
-
 def render_price_movement(price_df, stock_name='', stock_row=None):
     """
     Enhanced Price Movement section with:
@@ -752,7 +749,7 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
         ma_windows=ma_windows if ma_windows else None,
         show_rsi=show_rsi,
     )
-    st.altair_chart(candlestick_chart, width='stretch')
+    st.altair_chart(candlestick_chart, width='content')
 
     # ── MA legend caption ──────────────────────────────────────────────── #
     if ma_windows:
@@ -1432,7 +1429,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     with st.expander(f'Financial Information: {stock_name}', expanded=True):
         render_financial_info(fin, currency, stock_name, filtered_df)
         
-    with st.expander('Price Movement', expanded=True):
+    with st.expander(f'Price Movement: {stock_name}', expanded=True):
         _stock_row = filtered_df.loc[stock_name] if stock_name in filtered_df.index else None
         render_price_movement(price_df, stock_name=stock_name, stock_row=_stock_row)
         
