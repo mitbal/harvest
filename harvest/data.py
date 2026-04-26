@@ -21,7 +21,14 @@ import PIL.Image as Image
 def get_all_idx_stocks(api_key=None):
     
     if api_key is None:
-        api_key = os.environ['FMP_API_KEY']
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("FMP_API_KEY") or os.environ.get('FMP_API_KEY')
+        except Exception:
+            api_key = os.environ.get('FMP_API_KEY')
+
+    if not api_key:
+        raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}'
     r = requests.get(url)
@@ -35,7 +42,14 @@ def get_all_idx_stocks(api_key=None):
 
 def get_all_sp500_stocks(api_key=None):
     if api_key is None:
-        api_key = os.environ['FMP_API_KEY']
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("FMP_API_KEY") or os.environ.get('FMP_API_KEY')
+        except Exception:
+            api_key = os.environ.get('FMP_API_KEY')
+            
+    if not api_key:
+        raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/sp500_constituent?apikey={api_key}'
     r = requests.get(url)
@@ -47,7 +61,14 @@ def get_all_sp500_stocks(api_key=None):
 def get_company_profile(stocks, api_key=None):
     
     if api_key is None:
-        api_key = os.environ['FMP_API_KEY']
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("FMP_API_KEY") or os.environ.get('FMP_API_KEY')
+        except Exception:
+            api_key = os.environ.get('FMP_API_KEY')
+            
+    if not api_key:
+        raise ValueError("FMP_API_KEY not found in environment or st.secrets")
     
     stock_param = ','.join(stocks)
     url = f'https://financialmodelingprep.com/api/v3/profile/{stock_param}?apikey={api_key}'
@@ -430,7 +451,7 @@ def calc_pe_stats(pe_df):
     stats = {}
 
     last_date = pe_df['date'].max()
-    periods = [2, 3, 10]
+    periods = [1, 2, 3, 5, 10]
 
     for p in periods:
         start_date = last_date - datetime.timedelta(days=p*365)
@@ -907,6 +928,211 @@ def calc_price_changes(
         result[date_str] = pd.DataFrame(data_list)
         
     return result
+
+def calc_best_buy_timing(price_df, sdf, pre_ex_days=180, post_ex_days=30):
+    """
+    Compute two datasets that reveal the best time to buy a dividend stock:
+
+    1. **Monthly seasonality** — for each calendar month, what is the average
+       stock price relative to that year's annual mean?  A value < 100 means
+       the month is historically cheaper than the yearly average.
+
+    2. **Pre-ex-date trajectory** — for every historical dividend ex-date,
+       normalise the price series so that the price on ex-date = 100, then
+       aggregate the price path from ``pre_ex_days`` before to ``post_ex_days``
+       after.  The result shows whether and when prices tend to dip ahead of
+       a dividend payment.
+
+    Args:
+        price_df (pd.DataFrame): Daily OHLCV with at least ``date`` and
+            ``close`` columns.  Rows should be sorted newest-first (as
+            returned by FMP) but the function handles either direction.
+        sdf (pd.DataFrame | None): Dividend history with at least ``date``
+            (str ``YYYY-MM-DD``) and ``adjDividend`` columns.
+        pre_ex_days (int): Days before ex-date included in the trajectory
+            (default 90).
+        post_ex_days (int): Days after ex-date included in the trajectory
+            (default 30).
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]:
+            - ``seasonality_df``: columns ``month`` (1–12), ``month_name``,
+              ``mean``, ``median``, ``std``, ``q25``, ``q75``
+              (all expressed as % relative to annual mean price).
+            - ``pre_ex_df``: columns ``days_to_ex``, ``mean``, ``median``,
+              ``std``, ``q25``, ``q75``
+              (price normalised so that ex-date = 100).
+            Returns ``(None, None)`` if inputs are insufficient.
+    """
+    import calendar as _cal
+
+    if price_df is None or price_df.empty:
+        return None, None
+
+    # ------------------------------------------------------------------ #
+    # Prepare price series                                                 #
+    # ------------------------------------------------------------------ #
+    pdf = price_df[['date', 'close']].copy()
+    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf = pdf.sort_values('date').reset_index(drop=True)
+
+    # ------------------------------------------------------------------ #
+    # 1. Monthly seasonality                                               #
+    # ------------------------------------------------------------------ #
+    pdf['year'] = pdf['date'].dt.year
+    pdf['month'] = pdf['date'].dt.month
+
+    # Use monthly median price to reduce intra-month noise
+    monthly = pdf.groupby(['year', 'month'])['close'].median().reset_index(name='monthly_price')
+    annual_mean = pdf.groupby('year')['close'].mean().reset_index(name='annual_mean')
+    monthly = monthly.merge(annual_mean, on='year')
+    monthly['rel_price'] = monthly['monthly_price'] / monthly['annual_mean'] * 100
+
+    # Need at least 2 years of data to be meaningful
+    if monthly['year'].nunique() < 2:
+        seasonality_df = None
+    else:
+        agg = monthly.groupby('month')['rel_price'].agg(
+            mean='mean', median='median', std='std',
+            q25=lambda x: x.quantile(0.25),
+            q75=lambda x: x.quantile(0.75),
+        ).reset_index()
+        agg['month_name'] = agg['month'].apply(lambda m: _cal.month_abbr[m])
+        seasonality_df = agg[['month', 'month_name', 'mean', 'median', 'std', 'q25', 'q75']]
+
+    # ------------------------------------------------------------------ #
+    # 2. Pre-ex-date price trajectory                                     #
+    # ------------------------------------------------------------------ #
+    if sdf is None or sdf.empty:
+        pre_ex_df = None
+    else:
+        trajectories = []
+        ex_dates = pd.to_datetime(sdf['date']).sort_values().unique()
+
+        for ex_date in ex_dates:
+            window_start = ex_date - datetime.timedelta(days=pre_ex_days)
+            window_end   = ex_date + datetime.timedelta(days=post_ex_days)
+            window = pdf[(pdf['date'] >= window_start) & (pdf['date'] <= window_end)].copy()
+
+            if window.empty:
+                continue
+
+            # Price on or nearest to ex-date
+            on_ex = pdf[pdf['date'] <= ex_date]
+            if on_ex.empty:
+                continue
+            ex_price = on_ex.iloc[-1]['close']
+            if ex_price == 0:
+                continue
+
+            window['days_to_ex'] = (window['date'] - ex_date).dt.days
+            window['rel_price'] = window['close'] / ex_price * 100
+            trajectories.append(window[['days_to_ex', 'rel_price']])
+
+        if not trajectories:
+            pre_ex_df = None
+        else:
+            all_traj = pd.concat(trajectories, ignore_index=True)
+            pre_ex_df = (
+                all_traj.groupby('days_to_ex')['rel_price']
+                .agg(mean='mean', median='median', std='std',
+                     q25=lambda x: x.quantile(0.25),
+                     q75=lambda x: x.quantile(0.75))
+                .reset_index()
+            )
+
+    return seasonality_df, pre_ex_df
+
+
+def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180):
+    """
+    For each historical dividend ex-date, find how many calendar days before
+    the ex-date the stock price reached its lowest point within the look-back
+    window.
+
+    Args:
+        price_df (pd.DataFrame): Daily prices with ``date`` and ``close``.
+        sdf (pd.DataFrame): Dividend history with a ``date`` column
+            (str ``YYYY-MM-DD``).
+        pre_ex_days (int): Look-back window in calendar days (default 90).
+
+    Returns:
+        list[int]: One value per dividend event — the number of calendar days
+            before ex-date when the price was cheapest.  Only events where a
+            clear pre-ex low exists are included.
+    """
+    if price_df is None or price_df.empty or sdf is None or sdf.empty:
+        return []
+
+    pdf = price_df[['date', 'close']].copy()
+    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf = pdf.sort_values('date').reset_index(drop=True)
+
+    best_days = []
+    ex_dates = pd.to_datetime(sdf['date']).sort_values().unique()
+
+    for ex_date in ex_dates:
+        window_start = ex_date - datetime.timedelta(days=pre_ex_days)
+        window = pdf[(pdf['date'] >= window_start) & (pdf['date'] < ex_date)].copy()
+
+        if window.empty:
+            continue
+
+        min_idx = window['close'].idxmin()
+        min_date = window.loc[min_idx, 'date']
+        days_before = (ex_date - min_date).days
+
+        if 0 < days_before <= pre_ex_days:
+            best_days.append(days_before)
+
+    return best_days
+
+
+def calc_aggregate_seasonality(price_records):
+
+    """
+    Compute aggregate monthly price seasonality across multiple stocks.
+
+    Args:
+        price_records (list[dict]): Each dict has keys ``symbol`` and
+            ``price_df`` (a DataFrame with ``date`` and ``close`` columns,
+            sorted newest-first).
+
+    Returns:
+        pd.DataFrame: columns ``month``, ``month_name``, ``mean``,
+            ``median``, ``std``, ``q25``, ``q75`` — the pooled relative
+            price distribution for each calendar month across all stocks.
+            Returns an empty DataFrame if no usable data is found.
+    """
+    import calendar as _cal
+
+    all_monthly = []
+    for rec in price_records:
+        pdf = rec['price_df'][['date', 'close']].copy()
+        pdf['date'] = pd.to_datetime(pdf['date'])
+        pdf = pdf.sort_values('date')
+        pdf['year'] = pdf['date'].dt.year
+        pdf['month'] = pdf['date'].dt.month
+
+        monthly = pdf.groupby(['year', 'month'])['close'].median().reset_index(name='monthly_price')
+        annual_mean = pdf.groupby('year')['close'].mean().reset_index(name='annual_mean')
+        monthly = monthly.merge(annual_mean, on='year')
+        monthly['rel_price'] = monthly['monthly_price'] / monthly['annual_mean'] * 100
+        monthly['symbol'] = rec['symbol']
+        all_monthly.append(monthly)
+
+    if not all_monthly:
+        return pd.DataFrame()
+
+    combined = pd.concat(all_monthly, ignore_index=True)
+    agg = combined.groupby('month')['rel_price'].agg(
+        mean='mean', median='median', std='std',
+        q25=lambda x: x.quantile(0.25),
+        q75=lambda x: x.quantile(0.75),
+    ).reset_index()
+    agg['month_name'] = agg['month'].apply(lambda m: _cal.month_abbr[m])
+    return agg[['month', 'month_name', 'mean', 'median', 'std', 'q25', 'q75']]
+
 
 def calculate_returns(df):
     """
