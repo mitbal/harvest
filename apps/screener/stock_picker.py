@@ -1250,6 +1250,13 @@ def render_compounding_simulation(stock_name, price_df, sdf):
     porto_df['cum_cost']  = porto_df['cost'].cumsum()
     porto_df['mkt_value'] = porto_df['price'] * porto_df['cum_stock'] * 100
 
+    # Calculate cumulative top-up (Out-of-pocket investment)
+    init_val = initial_value * 1_000_000
+    topup_val = monthly_topup * 1_000_000
+    start_date = porto_df['date'].min()
+    porto_df['months_passed'] = (porto_df['date'].dt.year - start_date.year) * 12 + (porto_df['date'].dt.month - start_date.month)
+    porto_df['cum_topup'] = init_val + porto_df['months_passed'] * topup_val
+
     # ── Parse dividend income from activity log ─────────────────────────── #
     div_rows = []
     for act in activities:
@@ -1265,8 +1272,8 @@ def render_compounding_simulation(stock_name, price_df, sdf):
     div_income_df = pd.DataFrame(div_rows) if div_rows else pd.DataFrame(columns=['date', 'dividend_income'])
 
     # ── Key metrics ────────────────────────────────────────────────────── #
-    n_years         = max(end_year - start_year, 1)
-    total_invested  = initial_value * 1_000_000 + monthly_topup * 1_000_000 * n_years * 12
+    n_years         = end_year - start_year + 1
+    total_invested  = porto_df['cum_topup'].iloc[-1]
     final_mkt_value = porto_df['mkt_value'].iloc[-1]
     total_dividends = div_income_df['dividend_income'].sum() if not div_income_df.empty else 0
     final_lots      = int(porto_df['cum_stock'].iloc[-1])
@@ -1278,7 +1285,7 @@ def render_compounding_simulation(stock_name, price_df, sdf):
     # ── Hero KPI row ───────────────────────────────────────────────────── #
     st.markdown('---')
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric('💰 Total Invested',          f'Rp {total_invested/1e6:,.1f}M')
+    k1.metric('💰 Total Invested',          f'Rp {total_invested/1e6:,.1f}M', help='Total out-of-pocket cash invested (Initial + Monthly Top-ups)')
     delta_color = 'normal' if final_mkt_value >= total_invested else 'inverse'
     k2.metric('📈 Portfolio Value',          f'Rp {final_mkt_value/1e6:,.1f}M',
               delta=f'{total_return_pct:+.1f}%', delta_color=delta_color)
@@ -1302,20 +1309,23 @@ def render_compounding_simulation(stock_name, price_df, sdf):
     # ── Chart 1: Stacked area — cost basis vs gains ─────────────────────── #
     with chart_col1:
         st.markdown('#### 📈 Portfolio Growth Over Time')
-        st.caption('Blue = cash you invested. Green = total portfolio value (incl. dividend compounding gains).')
+        st.caption('Grey dashed = out-of-pocket investment. Blue dashed = total cost (incl. reinvested dividends). Green = portfolio market value.')
+
+        topup_area = alt.Chart(porto_df).mark_area(
+            opacity=0.2, color='#95a5a6', interpolate='monotone'
+        ).encode(
+            x=alt.X('date:T', title='Date'),
+            y=alt.Y('cum_topup:Q', stack=None),
+        )
 
         cost_area = alt.Chart(porto_df).mark_area(
-            opacity=0.55, color='#5b8dee', interpolate='monotone'
+            opacity=0.45, color='#5b8dee', interpolate='monotone'
         ).encode(
             x=alt.X('date:T', title='Date'),
             y=alt.Y('cum_cost:Q', title='Value (Rp)', stack=None),
-            tooltip=[
-                alt.Tooltip('date:T', title='Date'),
-                alt.Tooltip('cum_cost:Q', title='Total Invested', format=',.0f'),
-            ]
         )
         mkt_area = alt.Chart(porto_df).mark_area(
-            opacity=0.40, color='#27ae60', interpolate='monotone'
+            opacity=0.35, color='#27ae60', interpolate='monotone'
         ).encode(
             x=alt.X('date:T'),
             y=alt.Y('mkt_value:Q', stack=None),
@@ -1328,7 +1338,8 @@ def render_compounding_simulation(stock_name, price_df, sdf):
             tooltip=[
                 alt.Tooltip('date:T', title='Date'),
                 alt.Tooltip('mkt_value:Q', title='Portfolio Value', format=',.0f'),
-                alt.Tooltip('cum_cost:Q', title='Total Invested', format=',.0f'),
+                alt.Tooltip('cum_cost:Q', title='Total Cost (incl. Div)', format=',.0f'),
+                alt.Tooltip('cum_topup:Q', title='Out-of-pocket Investment', format=',.0f'),
             ]
         )
         cost_line = alt.Chart(porto_df).mark_line(
@@ -1337,7 +1348,13 @@ def render_compounding_simulation(stock_name, price_df, sdf):
             x=alt.X('date:T'),
             y=alt.Y('cum_cost:Q'),
         )
-        st.altair_chart((cost_area + mkt_area + mkt_line + cost_line).properties(height=300), width='stretch')
+        topup_line = alt.Chart(porto_df).mark_line(
+            color='#7f8c8d', strokeWidth=1.5, strokeDash=[2, 2], interpolate='monotone'
+        ).encode(
+            x=alt.X('date:T'),
+            y=alt.Y('cum_topup:Q'),
+        )
+        st.altair_chart((topup_area + cost_area + mkt_area + mkt_line + cost_line + topup_line).properties(height=300), width='stretch')
 
     # ── Chart 2: Annual dividend income snowball ─────────────────────────── #
     with chart_col2:
@@ -1368,47 +1385,6 @@ def render_compounding_simulation(stock_name, price_df, sdf):
             st.altair_chart((bar + trend).properties(height=280), width='stretch')
         else:
             st.info('No dividend events recorded in this period.')
-
-    # ── Chart 3: Strategy Comparison ────────────────────────────────────── #
-    st.markdown('#### ⚖️ Strategy Comparison: Reinvest vs. Pocket Dividends vs. Buy-and-Hold Only')
-    st.caption('What if you had not reinvested dividends, or had bought a non-dividend stock instead?')
-
-    start_price     = porto_df['price'].iloc[0]
-    start_lots      = int((initial_value * 1_000_000) / (start_price * 100)) if start_price > 0 else 0
-    porto_df['hold_only_value'] = start_lots * porto_df['price'] * 100
-
-    compare_df = pd.DataFrame({
-        'date':                          porto_df['date'],
-        'DRIP (Reinvest Dividends)':     porto_df['mkt_value'],
-        'Cash (Pocket Dividends)':       porto_df['cum_cost'],
-        'Hold Only (No Dividend Stock)': porto_df['hold_only_value'],
-    }).melt(id_vars='date', var_name='Strategy', value_name='Value')
-
-    compare_chart = alt.Chart(compare_df).mark_line(strokeWidth=2.5, interpolate='monotone').encode(
-        x=alt.X('date:T', title='Date'),
-        y=alt.Y('Value:Q', title='Portfolio Value (Rp)', scale=alt.Scale(zero=False)),
-        color=alt.Color('Strategy:N', scale=alt.Scale(
-            domain=['DRIP (Reinvest Dividends)', 'Cash (Pocket Dividends)', 'Hold Only (No Dividend Stock)'],
-            range=['#27ae60', '#2980b9', '#95a5a6']
-        )),
-        tooltip=[
-            alt.Tooltip('date:T', title='Date'),
-            alt.Tooltip('Strategy:N'),
-            alt.Tooltip('Value:Q', format=',.0f'),
-        ]
-    ).properties(height=280)
-    st.altair_chart(compare_chart, width='stretch')
-
-    final_drip  = porto_df['mkt_value'].iloc[-1]
-    final_cash  = porto_df['cum_cost'].iloc[-1]
-    final_hold  = porto_df['hold_only_value'].iloc[-1]
-    st.markdown(f"""
-| Strategy | Final Value | Gap vs DRIP |
-|---|---|---|
-| 🟢 DRIP (Reinvest Dividends) | **Rp {final_drip/1e6:,.1f}M** | — |
-| 🔵 Cash (Pocket Dividends) | Rp {final_cash/1e6:,.1f}M | **Rp {(final_drip-final_cash)/1e6:,.1f}M less** |
-| ⚪ Hold Only (No Dividend Stock) | Rp {final_hold/1e6:,.1f}M | **Rp {(final_drip-final_hold)/1e6:,.1f}M less** |
-    """)
 
     with st.expander('📋 Raw Transaction Log', expanded=False):
         st.dataframe(pd.DataFrame({'Activity': activities}), hide_index=True)
