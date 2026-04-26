@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install python dependencies into a temporary directory
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
     /uv/bin/uv pip install --system --prefix=/install -r requirements.txt
 
 # Stage 2: Final stage
