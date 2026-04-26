@@ -571,10 +571,11 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
         st.write('No dividend history available')
 
 def render_financial_info(fin, currency, stock_name, filtered_df):
+    """Redesigned financial section with Hero KPI row, polished charts, and rich context."""
 
-    # Only copy the columns we might mutate — avoids a full 60-row × 50-col copy
+    # ── Column selection & currency conversion ──────────────────────────── #
     cols_needed = [c for c in ['date', 'calendarYear', 'revenue', 'netIncome', 'reportedCurrency',
-                                'period', 'eps'] if c in fin.columns]
+                               'period', 'eps'] if c in fin.columns]
     fin = fin[cols_needed].copy()
     if not fin.empty and 'reportedCurrency' in fin.columns:
         reported_currency = fin.loc[0, 'reportedCurrency']
@@ -585,64 +586,79 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
             if 'netIncome' in fin.columns:
                 fin['netIncome'] = fin['netIncome'] * exchange_rate
 
-    fin_cols = st.columns([0.3, 0.4, 0.3])
-    period = fin_cols[0].radio('Select Period', ['quarter', 'annual'], horizontal=True, index=1, key=f"period_{stock_name}")
-    
-    if period == 'quarter':
-        metric = fin_cols[1].radio('Select Metrics', ['revenue', 'netIncome'], horizontal=True, key=f"metric_{stock_name}")
-        fin_chart = hp.plot_financial(fin, period=period, metric=metric, currency=currency)
-        with st.container(height=500):
-            st.altair_chart(fin_chart, width='content')
+    fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
+
+    if stock_name in filtered_df.index:
+        stock_data = filtered_df.loc[stock_name]
     else:
-        fin_view = fin_cols[1].radio('Select View', ['Separate', 'Combined'], horizontal=True, index=1, key=f"view_{stock_name}")
-        if fin_view == 'Separate':
-            annual_cols = st.columns([40,40,20])
-            annual_cols[0].write('Annual Revenue Chart')
-            revenue_chart = hp.plot_financial(fin, period=period, metric='revenue', currency=currency)
-            annual_cols[0].altair_chart(revenue_chart, width='stretch')
-            annual_cols[1].write('Annual Net Income Chart')
-            income_chart = hp.plot_financial(fin, period=period, metric='netIncome', currency=currency)
-            annual_cols[1].altair_chart(income_chart, width='stretch')
-            with annual_cols[2]:
-                if stock_name in filtered_df.index:
-                    stock_data = filtered_df.loc[stock_name]
-                else:
-                    stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
-                fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
-                _render_fin_summary(fin_stats, stock_data)
-        else:
-            annual_cols = st.columns([80, 20])
-            annual_cols[0].write('Annual Financial Chart')
-            fin_chart = hp.plot_fin_chart(fin, currency=currency)
-            annual_cols[0].altair_chart(fin_chart, width='stretch')
-            with annual_cols[1]:
-                if stock_name in filtered_df.index:
-                    stock_data = filtered_df.loc[stock_name]
-                else:
-                    stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0) # Minimal call
-                fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
-                _render_fin_summary(fin_stats, stock_data)
+        stock_data = calculate_missing_stats(stock_name, fin, pd.DataFrame(), pd.DataFrame(), None, 0)
 
-def _render_fin_metric(label, val, avg):
-    """Colour-coded financial metric line: green if better than avg, red if clearly worse."""
-    if val > avg:
-        st.markdown(f'{label}: **:green[{val:.2f}%]**')
-    elif val < avg * 0.9:
-        st.markdown(f'{label}: **:red[{val:.2f}%]**')
+    # ── Hero KPI row ────────────────────────────────────────────────────── #
+    def _fmt_currency(val):
+        """Format large numbers as T / B / M."""
+        return hp.format_tooltip_currency(val, currency)
+
+    rev_ttm  = fin_stats.get('revenueTTM', 0)
+    inc_ttm  = fin_stats.get('earningTTM', 0)
+    mar_ttm  = fin_stats.get('marginTTM', 0)
+    rev_g    = fin_stats.get('revenue_growth_TTM', 0)
+    inc_g    = fin_stats.get('netIncome_growth_TTM', 0)
+    avg_rev  = stock_data.get('revenueGrowth', 0)
+    avg_inc  = stock_data.get('netIncomeGrowth', 0)
+    avg_mar  = stock_data.get('medianProfitMargin', 0)
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric('💰 Revenue (TTM)',    _fmt_currency(rev_ttm))
+    k2.metric('💵 Net Income (TTM)', _fmt_currency(inc_ttm),
+              delta=f'{inc_g:+.1f}% YoY',
+              delta_color='normal' if inc_g >= 0 else 'inverse')
+    k3.metric('📊 Net Margin (TTM)', f'{mar_ttm:.1f}%',
+              delta=f'{mar_ttm - avg_mar:+.1f}pp vs hist. median',
+              delta_color='normal' if mar_ttm >= avg_mar else 'inverse')
+    k4.metric('📈 Revenue Growth (TTM)', f'{rev_g:+.1f}%',
+              delta=f'{rev_g - avg_rev:+.1f}pp vs 5Y avg',
+              delta_color='normal' if rev_g >= avg_rev else 'inverse')
+    k5.metric('📉 Income Growth (TTM)', f'{inc_g:+.1f}%',
+              delta=f'{inc_g - avg_inc:+.1f}pp vs 5Y avg',
+              delta_color='normal' if inc_g >= avg_inc else 'inverse')
+
+    st.markdown('---')
+
+    # ── Period selector ─────────────────────────────────────────────────── #
+    ctrl_cols = st.columns([1, 2, 3])
+    period = ctrl_cols[0].radio('Period', ['Annual', 'Quarterly'], horizontal=True,
+                                index=0, key=f"period_{stock_name}")
+
+    if period == 'Annual':
+        # ── Annual view ─────────────────────────────────────────────────── #
+        st.markdown('#### 📊 Annual Revenue & Net Income')
+        st.caption(
+            '**Blue** = Revenue (growth yr) &nbsp;·&nbsp; **Teal** = Net Income &nbsp;·&nbsp; '
+            '**Orange line** = Net Profit Margin %  '
+            '*(red bars = YoY decline)*'
+        )
+        fin_chart = hp.plot_fin_chart_enhanced(fin, currency=currency, height=350)
+        st.altair_chart(fin_chart, width='stretch')
+
+
     else:
-        st.write(f'{label}: **{val:.2f}%**')
+        # ── Quarterly view ──────────────────────────────────────────────── #
+        metric_choice = ctrl_cols[1].radio(
+            'Metric', ['Revenue', 'Net Income'], horizontal=True,
+            key=f"qmetric_{stock_name}"
+        )
+        metric_col = 'revenue' if metric_choice == 'Revenue' else 'netIncome'
+
+        st.markdown(f'#### 📊 Quarterly {metric_choice}')
+        st.caption(
+            '**Bars** coloured by QoQ growth (blue/teal = growth, red = decline). '
+            '**Orange dashed line** = same quarter last year (YoY reference).'
+        )
+        q_chart = hp.plot_quarterly_breakdown(fin, metric=metric_col, currency=currency, height=300)
+        st.altair_chart(q_chart, width='stretch')
 
 
-def _render_fin_summary(fin_stats, stock_data):
-    """Render the TTM vs historical financial metrics summary panel."""
-    st.write('**Financial Metrics Summary**')
-    _render_fin_metric('TTM Revenue Growth',   fin_stats['revenue_growth_TTM'], stock_data['revenueGrowth'])
-    _render_fin_metric('TTM Net Income Growth', fin_stats['netIncome_growth_TTM'], stock_data['netIncomeGrowth'])
-    _render_fin_metric('TTM Net Profit Margin', fin_stats['marginTTM'],           stock_data['medianProfitMargin'])
-    st.write(f'Average Revenue Growth: {stock_data["revenueGrowth"]:.2f}%')
-    st.write(f'Average Net Income Growth: {stock_data["netIncomeGrowth"]:.2f}%')
-    st.write(f'Median Net Profit Margin: {stock_data["medianProfitMargin"]:.2f}%')
-    st.write('---')
+
 
 
 def render_price_movement(price_df, stock_name='', stock_row=None):
