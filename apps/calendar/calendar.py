@@ -1,8 +1,10 @@
 import os
+import io
 import json
 import time
 import logging
 import calendar
+import concurrent.futures
 from datetime import datetime
 
 import redis
@@ -11,6 +13,7 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 
+import harvest.data as hd
 import harvest.plot as hp
 from harvest.utils import setup_logging
 
@@ -326,3 +329,202 @@ else:
             'stocks': st.column_config.TextColumn('Stocks')
         }
     )
+
+# =========================================================================== #
+# Aggregate Seasonality — Best Month to Buy Across All Dividend Stocks         #
+# =========================================================================== #
+
+st.divider()
+st.subheader('📅 Best Month to Buy — Aggregate Seasonality')
+st.write(
+    'Pools historical price data across all dividend stocks in this calendar year '
+    'to reveal which calendar months are consistently cheaper than the annual average. '
+    'A relative price **< 100** means stocks are trading below their yearly average during that month.'
+)
+
+MONTH_ORDER = list(calendar.month_abbr[1:])
+
+
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
+    """Download 10 years of daily closes for a single stock. Cached for 6 h."""
+    try:
+        pdf = hd.get_daily_stock_price(symbol, start_from=start_from)
+        if pdf is not None and not pdf.empty and 'close' in pdf.columns:
+            return {'symbol': symbol, 'price_df': pdf[['date', 'close']]}
+    except Exception:
+        pass
+    return None
+
+
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def _compute_agg_seasonality(symbols_tuple, div_cal_df_json):
+    """Parallel-fetch prices then compute aggregate monthly seasonality + best-days KDE. Cached 6 h."""
+    symbols = list(symbols_tuple)
+    div_cal_df = pd.read_json(io.StringIO(div_cal_df_json))
+    div_cal_df['date'] = pd.to_datetime(div_cal_df['date'])
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(_fetch_price_for_stock, s): s for s in symbols}
+        for fut in concurrent.futures.as_completed(futures):
+            rec = fut.result()
+            if rec is not None:
+                results.append(rec)
+
+    if not results:
+        return pd.DataFrame(), pd.DataFrame()
+
+    agg_df = hd.calc_aggregate_seasonality(results)
+
+    # Best-days KDE — for each stock × dividend event, find how many days before
+    # ex-date the price was cheapest, then pool across all stocks and events.
+    all_best_days = []
+    for rec in results:
+        sym = rec['symbol']
+        sdf_sym = div_cal_df[div_cal_df['symbol'] == sym][['date']].copy()
+        sdf_sym['date'] = sdf_sym['date'].dt.strftime('%Y-%m-%d')
+        best = hd.calc_pre_ex_best_days(rec['price_df'], sdf_sym, pre_ex_days=180)
+        all_best_days.extend(best)
+
+    best_days_df = pd.DataFrame({'days_before': all_best_days}) if all_best_days else pd.DataFrame()
+    return agg_df, best_days_df
+
+
+# Only compute when the user explicitly asks — price fetch can be slow for many stocks
+_all_symbols = sorted(stats_df['symbol'].unique().tolist()) if not stats_df.empty else []
+_n_stocks = len(_all_symbols)
+
+if _n_stocks == 0:
+    st.info('No stocks available for seasonality analysis.')
+else:
+    _col_info, _col_btn = st.columns([3, 1])
+    _col_info.caption(
+        f'Will fetch 10+ years of price history for up to **{_n_stocks} stocks**. '
+        'This may take 30–60 seconds on first load; results are cached for 6 hours.'
+    )
+
+    if _col_btn.button('🔍 Calculate Seasonality', width='stretch'):
+        st.session_state['cal_show_seasonality'] = True
+
+    if st.session_state.get('cal_show_seasonality'):
+        with st.spinner(f'Fetching price data for {_n_stocks} stocks…'):
+            _symbols_tuple = tuple(_all_symbols)
+            # Pass all available dividend events so we can match each stock's sdf
+            _div_cal_json = df[['symbol', 'date']].to_json()
+            _agg_df, _best_days_df = _compute_agg_seasonality(_symbols_tuple, _div_cal_json)
+
+        if _agg_df.empty:
+            st.warning('Could not compute seasonality — price data unavailable.')
+        else:
+            _chart_cols = st.columns(2)
+
+            # ---------------------------------------------------------------- #
+            # Chart A — Aggregate monthly bar + IQR band                       #
+            # ---------------------------------------------------------------- #
+            with _chart_cols[0]:
+                st.markdown('#### Aggregate Monthly Relative Price')
+                st.caption('Median ± IQR across all stocks. Green highlight = historically cheapest month.')
+
+                _best_row = _agg_df.loc[_agg_df['mean'].idxmin()]
+                _best_month_name = _best_row['month_name']
+
+                _base = alt.Chart(_agg_df)
+
+                _band = _base.mark_area(opacity=0.18, color='#2ecc71').encode(
+                    x=alt.X('month_name:O', sort=MONTH_ORDER, title='Month'),
+                    y=alt.Y('q25:Q', title='Relative Price (%)'),
+                    y2=alt.Y2('q75:Q'),
+                )
+                _line = _base.mark_line(point=True, color='#27ae60', strokeWidth=2.5).encode(
+                    x=alt.X('month_name:O', sort=MONTH_ORDER),
+                    y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
+                    tooltip=[
+                        alt.Tooltip('month_name:O', title='Month'),
+                        alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
+                        alt.Tooltip('median:Q', title='Median', format='.2f'),
+                        alt.Tooltip('q25:Q', title='Q25', format='.2f'),
+                        alt.Tooltip('q75:Q', title='Q75', format='.2f'),
+                    ]
+                )
+                _ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                    color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+                ).encode(y='y:Q')
+
+                _best_data = _agg_df[_agg_df['month_name'] == _best_month_name]
+                _best_bar = alt.Chart(_best_data).mark_bar(color='#1abc9c', opacity=0.4, width=40).encode(
+                    x=alt.X('month_name:O', sort=MONTH_ORDER),
+                    y=alt.Y('q25:Q'),
+                    y2=alt.Y2('q75:Q'),
+                )
+
+                _agg_chart = (_band + _best_bar + _line + _ref).properties(height=320)
+                st.altair_chart(_agg_chart, width='stretch')
+
+                _best_val = _best_row['mean']
+                st.success(
+                    f'🏆 **{_best_month_name}** is historically the cheapest month across these dividend stocks '
+                    f'(avg relative price: **{_best_val:.1f}%** of annual mean)'
+                )
+
+            # ---------------------------------------------------------------- #
+            # Chart B — KDE of best days before ex-date                        #
+            # ---------------------------------------------------------------- #
+            with _chart_cols[1]:
+                st.markdown('#### Distribution: Days Before Ex-Date to Buy')
+                st.caption(
+                    'For each historical dividend event across all stocks, shows how many '
+                    'calendar days before ex-date the price hit its lowest within a 180-day window.'
+                )
+
+                if not _best_days_df.empty:
+                    _median_days = int(_best_days_df['days_before'].median())
+                    _mean_days = int(_best_days_df['days_before'].mean())
+
+                    _kde_chart = alt.Chart(_best_days_df).transform_density(
+                        'days_before',
+                        as_=['Days Before Ex-Date', 'Density'],
+                        bandwidth=3,
+                    ).mark_area(
+                        color=alt.Gradient(
+                            gradient='linear',
+                            stops=[
+                                alt.GradientStop(color='#1a5276', offset=0),
+                                alt.GradientStop(color='#3498db', offset=1),
+                            ],
+                            x1=1, x2=1, y1=1, y2=0
+                        ),
+                        line={'color': '#2e86c1'},
+                        opacity=0.75,
+                    ).encode(
+                        x=alt.X('Days Before Ex-Date:Q', title='Calendar Days Before Ex-Date',
+                                scale=alt.Scale(domain=[0, 180])),
+                        y=alt.Y('Density:Q', title='',
+                                axis=alt.Axis(tickSize=0, domain=False, labelFontSize=0)),
+                        tooltip=[alt.Tooltip('Days Before Ex-Date:Q', format='.0f', title='Days Before')]
+                    )
+
+                    _median_rule = alt.Chart(
+                        pd.DataFrame({'x': [_median_days], 'label': [f'Median: {_median_days}d']})
+                    ).mark_rule(color='#f39c12', strokeWidth=2, strokeDash=[5, 3]).encode(
+                        x='x:Q'
+                    )
+                    _median_text = alt.Chart(
+                        pd.DataFrame({'x': [_median_days + 1.5], 'y': [0], 'label': [f'Median: {_median_days}d']})
+                    ).mark_text(
+                        align='left', color='#f39c12', fontSize=11, fontWeight='bold', dy=-8
+                    ).encode(x='x:Q', y=alt.Y('y:Q', impute=alt.ImputeParams(value=0)), text='label:N')
+
+                    _kde_full = (_kde_chart + _median_rule + _median_text).properties(height=320)
+                    st.altair_chart(_kde_full, width='stretch')
+
+                    _n_events = len(_best_days_df)
+                    _p25 = int(_best_days_df['days_before'].quantile(0.25))
+                    _p75 = int(_best_days_df['days_before'].quantile(0.75))
+                    st.success(
+                        f'🎯 Buy **{_median_days} days** before ex-date (median across {_n_events} events). '
+                        f'Middle 50% range: **{_p25}–{_p75} days** before.'
+                    )
+                else:
+                    st.info('No pre-ex timing data available for these stocks.')
+
