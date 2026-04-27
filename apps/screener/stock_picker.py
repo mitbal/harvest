@@ -469,16 +469,7 @@ def render_company_profile(cp_df, stock_name):
     st.write(cp_df.loc[stock_name, 'description'])
     
 def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_share=None, currency='IDR', cp_df=None, price_df=None):
-    if sdf is not None:
-        dividend_history_cols = st.columns([3, 10, 4])
-        dividend_history_cols[0].dataframe(
-            sdf[['date', 'adjDividend']],
-            column_config={
-                'date': st.column_config.DateColumn('Ex-Date'),
-                'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f'),
-            },
-            hide_index=True)
-
+    if sdf is not None and not sdf.empty:
         try:
             last_val = final_df.loc[stock_name, 'lastDiv']
             inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
@@ -502,7 +493,7 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
             f['eps'] = f['netIncome'] * exchange_rate / n_share
             annual_eps_df = f[['year', 'eps']]
 
-        avg_payout_str = "N/A"
+        avg_pr = None
         if annual_eps_df is not None:
             sdf_yr = sdf.copy()
             sdf_yr['year'] = sdf_yr['date'].apply(lambda x: int(x.split('-')[0]))
@@ -516,63 +507,90 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
                     payout_ratios.append(pr)
             if payout_ratios:
                 avg_pr = sum(payout_ratios) / len(payout_ratios)
-                avg_payout_str = f"**:green[{avg_pr:.2f}%]**" if avg_pr <= 100 else f"**:red[{avg_pr:.2f}%]**"
 
-        yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_val, inc_val=inc_val)
-        dividend_history_cols[1].altair_chart(yearly_dividend_chart, width='stretch')
-
-        with dividend_history_cols[2]:
-            if stock_name in filtered_df.index:
-                stock_data = filtered_df.loc[stock_name]
-            else:
-                stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
-                
-            last_div = stock_data['lastDiv']
-            inc_val = stock_data['avgFlatAnnualDivIncrease']
-            curr_price = stock_data['price']
-            pe_ratio = stock_data['peRatio']
+        if stock_name in filtered_df.index:
+            stock_data = filtered_df.loc[stock_name]
+        else:
+            stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
             
-            next_div = last_div + inc_val
-            next_yield = next_div / curr_price * 100 if curr_price > 0 else 0
+        last_div = stock_data['lastDiv']
+        inc_val = stock_data['avgFlatAnnualDivIncrease']
+        curr_price = stock_data['price']
+        pe_ratio = stock_data['peRatio']
+        
+        next_div = last_div + inc_val
+        next_yield = next_div / curr_price * 100 if curr_price > 0 else 0
 
-            if pe_ratio and pe_ratio > 0:
-                eps = curr_price / pe_ratio if pe_ratio > 0 else 0
-                payout_ratio = (last_div / eps) * 100 if eps > 0 else 0
-                payout_str = f"**:green[{payout_ratio:.2f}%]**" if payout_ratio <= 100 else f"**:red[{payout_ratio:.2f}%]**"
-            else:
-                payout_str = "N/A"
+        payout_ratio = None
+        if pe_ratio and pe_ratio > 0:
+            eps = curr_price / pe_ratio if pe_ratio > 0 else 0
+            if eps > 0:
+                payout_ratio = (last_div / eps) * 100
 
-            stats = hd.calc_div_stats(hd.preprocess_div(sdf))
+        stats = hd.calc_div_stats(hd.preprocess_div(sdf))
+        
+        div_years = stats['num_dividend_year']
+        pos_years = stats['num_positive_year']
+        consistency = pos_years/div_years*100 if div_years > 0 else 0
+
+        cagr_5y = stats.get('cagr_5y')
+        cagr_10y = stats.get('cagr_10y')
+
+        # ── Hero KPI row ────────────────────────────────────────────────────── #
+        # st.markdown('#### 💸 Dividend Performance Summary')
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        
+        k1.metric('Est. Next Div', f"{next_div:,.1f}", 
+                  delta=f"{inc_val:+.1f} YoY" if inc_val != 0 else None,
+                  delta_color='normal' if inc_val >= 0 else 'inverse')
+                  
+        k2.metric('Dividend Yield', f"{next_yield:.2f}%")
+        
+        pr_str = f"{payout_ratio:.1f}%" if payout_ratio is not None else "N/A"
+        if payout_ratio is not None and avg_pr is not None:
+            # Lower payout ratio is generally safer/better, so inverse color
+            delta_pr = payout_ratio - avg_pr
+            k3.metric('Payout Ratio', pr_str, 
+                      delta=f"{delta_pr:+.1f}% vs Avg",
+                      delta_color='inverse')
+        else:
+            avg_pr_str = f"Avg: {avg_pr:.1f}%" if avg_pr is not None else "N/A"
+            k3.metric('Payout Ratio', pr_str, delta=avg_pr_str, delta_color='off')
             
-            div_years = stats['num_dividend_year']
-            pos_years = stats['num_positive_year']
-            consistency = pos_years/div_years*100 if div_years > 0 else 0
+        k4.metric('Years Paid', f"{div_years:,}", 
+                  delta=f"{pos_years:,} Years Raised",
+                  delta_color='normal')
+                  
+        k5.metric('Consistency Rate', f"{consistency:.1f}%")
+        
+        cagr_str = f"{cagr_5y:.1f}%" if cagr_5y is not None else "N/A"
+        cagr_10y_str = f"10Y: {cagr_10y:.1f}%" if cagr_10y is not None else ""
+        k6.metric('5Y CAGR', cagr_str, 
+                  delta=cagr_10y_str,
+                  delta_color='off')
 
-            cagr_5y = stats.get('cagr_5y')
-            cagr_10y = stats.get('cagr_10y')
+        # st.markdown('---')
+
+        # ── Chart & Table Layout ────────────────────────────────────────────── #
+        col_chart, col_table = st.columns([3, 1])
+        
+        with col_chart:
+            # st.caption('**Blue bars** = Historical Dividends &nbsp;·&nbsp; **Orange line** = Trend &nbsp;·&nbsp; **Green dashed** = 5Y Projection')
+            yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_val, inc_val=inc_val)
+            st.altair_chart(yearly_dividend_chart, width='stretch')
             
-            cagr_5y_str = f"**:green[{cagr_5y:.2f}%]**" if cagr_5y is not None and cagr_5y >= 0 else (f"**:red[{cagr_5y:.2f}%]**" if cagr_5y is not None else "N/A")
-            cagr_10y_str = f"**:green[{cagr_10y:.2f}%]**" if cagr_10y is not None and cagr_10y >= 0 else (f"**:red[{cagr_10y:.2f}%]**" if cagr_10y is not None else "N/A")
-
-            dividend_markdown = f'''
-            Estimated next year dividend payment: **:green[{next_div:,.2f}]**\n
-            Yield on current price: **:green[{next_yield:,.2f}%]**\n
-            Payout Ratio (Current): {payout_str}\n
-            Payout Ratio (Average): {avg_payout_str}
-
-            Number of years paying dividend: **{div_years:,}**
-
-            Number of years increasing dividend: **{pos_years:,}**
-
-            Positive consistency rate: **:green[{consistency:,.2f}%]**
-
-            5-Year CAGR: {cagr_5y_str}
-
-            10-Year CAGR: {cagr_10y_str}
-            '''
-            st.markdown(dividend_markdown)
+        with col_table:
+            st.dataframe(
+                sdf[['date', 'adjDividend']],
+                column_config={
+                    'date': st.column_config.DateColumn('Ex-Date'),
+                    'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f'),
+                },
+                hide_index=True,
+                height=400
+            )
     else:
-        st.write('No dividend history available')
+        st.warning('No dividend history available for this stock.')
 
 def render_financial_info(fin, currency, stock_name, filtered_df):
     """Redesigned financial section with Hero KPI row, polished charts, and rich context."""
@@ -891,56 +909,6 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         st.caption(f"**Red line** = current {ratio}. Left tail = historically cheap zone.")
         pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
         st.altair_chart(pe_dist_chart, width='stretch')
-
-    # # ── Row 2: Time-series + multi-period summary table ─────────────────── #
-    # ts_cols = st.columns([3, 2], gap='large')
-    # with ts_cols[0]:
-    #     st.markdown(f"#### 📉 {ratio} Over Time")
-    #     st.caption(
-    #         f"**Orange** = median &nbsp;·&nbsp; **Green dashed** = p10 (cheap) &nbsp;·&nbsp; "
-    #         f"**Red dashed** = p90 (expensive). "
-    #         f"When the line is near or below the green dashed line, the stock is attractively priced."
-    #     )
-    #     pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
-    #     st.altair_chart(pe_ts_chart, width='stretch')
-
-    # with ts_cols[1]:
-    #     st.markdown(f"#### 📋 Multi-Period Comparison")
-
-    #     now_ts = pe_df['date'].max()
-    #     period_rows = []
-    #     for p_yr, p_label in [(1, '1 Year'), (3, '3 Years'), (5, '5 Years'), (year, f'{year}Y (selected)')]:
-    #         cutoff = pd.Timestamp(now_ts) - pd.Timedelta(days=365 * p_yr)
-    #         sub = pe_df[pe_df['date'] >= cutoff]['pe'].replace(
-    #             [float('inf'), -float('inf')], float('nan')
-    #         ).dropna()
-    #         if len(sub) >= 20:
-    #             med      = float(sub.median())
-    #             p10_v    = float(sub.quantile(0.10))
-    #             p90_v    = float(sub.quantile(0.90))
-    #             imp_fair = (med / pe_ttm) * current_price if pe_ttm > 0 else current_price
-    #             pct_rank = float((sub < pe_ttm).mean() * 100)
-    #             arrow    = '🟢' if pe_ttm <= med else '🔴'
-    #             period_rows.append({
-    #                 'Period':                  p_label,
-    #                 f'Median {ratio}':         f'{med:.2f}',
-    #                 'P10 / P90':               f'{p10_v:.2f} / {p90_v:.2f}',
-    #                 'Implied Fair Price':       f'{int(imp_fair):,}',
-    #                 'Pct Rank':                f'{arrow} {pct_rank:.0f}th',
-    #             })
-
-    #     if period_rows:
-    #         st.dataframe(pd.DataFrame(period_rows), hide_index=True, use_container_width=True)
-
-    #     # Sector / Industry peer comparison
-    #     sector_color   = 'green' if pe_ttm <= sector_pe   else 'red'
-    #     industry_color = 'green' if pe_ttm <= industry_pe else 'red'
-    #     st.markdown(f"**Current {ratio}:** **:{highlight_color}[{pe_ttm:,.2f}]**")
-    #     if industry_pe != -1 and sector_pe != -1:
-    #         st.markdown(
-    #             f"**Industry ({industry_name}):** **:{industry_color}[{industry_pe:,.2f}]**  \n"
-    #             f"**Sector ({sector_name}):** **:{sector_color}[{sector_pe:,.2f}]**"
-    #         )
 
 
 def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, price_df=None, n_share=None):
