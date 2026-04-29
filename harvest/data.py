@@ -955,19 +955,21 @@ def calc_best_buy_timing(price_df, sdf, pre_ex_days=180, post_ex_days=30):
             (default 30).
 
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame]:
+        tuple[pd.DataFrame, pd.DataFrame, dict]:
             - ``seasonality_df``: columns ``month`` (1–12), ``month_name``,
               ``mean``, ``median``, ``std``, ``q25``, ``q75``
               (all expressed as % relative to annual mean price).
             - ``pre_ex_df``: columns ``days_to_ex``, ``mean``, ``median``,
               ``std``, ``q25``, ``q75``
               (price normalised so that ex-date = 100).
-            Returns ``(None, None)`` if inputs are insufficient.
+            - ``ex_drop_stats``: dict with keys ``median``, ``mean``, ``count``
+              representing the price drop on ex-date relative to cum-date.
+            Returns ``(None, None, None)`` if inputs are insufficient.
     """
     import calendar as _cal
 
     if price_df is None or price_df.empty:
-        return None, None
+        return None, None, None
 
     # ------------------------------------------------------------------ #
     # Prepare price series                                                 #
@@ -1005,25 +1007,38 @@ def calc_best_buy_timing(price_df, sdf, pre_ex_days=180, post_ex_days=30):
     # ------------------------------------------------------------------ #
     if sdf is None or sdf.empty:
         pre_ex_df = None
+        ex_drop_stats = None
     else:
+        # Reindex pdf to calendar days and forward-fill to prevent weekend gaps from causing sawtooth patterns
+        cal_pdf = pdf.set_index('date').resample('D').ffill().reset_index()
+
         trajectories = []
+        drop_pcts = []
         ex_dates = pd.to_datetime(sdf['date']).sort_values().unique()
 
         for ex_date in ex_dates:
             window_start = ex_date - datetime.timedelta(days=pre_ex_days)
             window_end   = ex_date + datetime.timedelta(days=post_ex_days)
-            window = pdf[(pdf['date'] >= window_start) & (pdf['date'] <= window_end)].copy()
+            window = cal_pdf[(cal_pdf['date'] >= window_start) & (cal_pdf['date'] <= window_end)].copy()
 
             if window.empty:
                 continue
 
             # Price on or nearest to ex-date
-            on_ex = pdf[pdf['date'] <= ex_date]
+            on_ex = cal_pdf[cal_pdf['date'] <= ex_date]
             if on_ex.empty:
                 continue
             ex_price = on_ex.iloc[-1]['close']
             if ex_price == 0:
                 continue
+                
+            # Cum-date price (using the trading days pdf to get the exact last trading day before ex_date)
+            on_cum = pdf[pdf['date'] < ex_date]
+            if not on_cum.empty:
+                cum_price = on_cum.iloc[-1]['close']
+                if cum_price > 0:
+                    drop_pct = (ex_price / cum_price - 1) * 100
+                    drop_pcts.append(drop_pct)
 
             window['days_to_ex'] = (window['date'] - ex_date).dt.days
             window['rel_price'] = window['close'] / ex_price * 100
@@ -1040,8 +1055,17 @@ def calc_best_buy_timing(price_df, sdf, pre_ex_days=180, post_ex_days=30):
                      q75=lambda x: x.quantile(0.75))
                 .reset_index()
             )
+            
+        if drop_pcts:
+            ex_drop_stats = {
+                'median': float(np.median(drop_pcts)),
+                'mean': float(np.mean(drop_pcts)),
+                'count': len(drop_pcts)
+            }
+        else:
+            ex_drop_stats = None
 
-    return seasonality_df, pre_ex_df
+    return seasonality_df, pre_ex_df, ex_drop_stats
 
 
 def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180):

@@ -1059,7 +1059,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
 
     try:
         sdf_json = sdf.to_json() if sdf is not None and not sdf.empty else None
-        seasonality_df, pre_ex_df = _calc_best_buy_cached(price_df.to_json(), sdf_json)
+        seasonality_df, pre_ex_df, ex_drop_stats = _calc_best_buy_cached(price_df.to_json(), sdf_json)
     except Exception as e:
         st.warning(f'Could not compute buy-timing analysis: {e}')
         return
@@ -1180,10 +1180,13 @@ def render_best_buy_timing(price_df, sdf, stock_name):
                 best_dip = pre_only.loc[pre_only['mean'].idxmin()]
                 dip_day = int(best_dip['days_to_ex'])
                 dip_val = best_dip['mean']
-                st.success(
+                msg = (
                     f'🎯 **Best buy window**: ~**{abs(dip_day)} days before** ex-date '
                     f'(avg {100 - dip_val:.1f}% cheaper than ex-date price)'
                 )
+                if ex_drop_stats:
+                    msg += f"  |  📉 **Median Ex-Date Drop**: **{ex_drop_stats['median']:.1f}%**"
+                st.success(msg)
         else:
             st.info('No dividend history available to compute ex-date trajectory.')
 
