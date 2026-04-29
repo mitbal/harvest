@@ -644,7 +644,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
               delta=f'{inc_g - avg_inc:+.1f}pp vs 5Y avg',
               delta_color='normal' if inc_g >= avg_inc else 'inverse')
 
-    st.markdown('---')
+    # st.markdown('---')
 
     # ── Period selector ─────────────────────────────────────────────────── #
     ctrl_cols = st.columns([1, 2])
@@ -890,7 +890,7 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
               delta_color='normal')
     k5.metric('Fair Value Range (p10–p90)', f'{int(fair_price_p10):,} – {int(fair_price_p90):,}',
               help=f'Implied price range based on historical 10th–90th percentile {ratio}.')
-    st.markdown('---')
+    # st.markdown('---')
 
     # ── Row 1: Price vs Fair Value chart (wide) + Distribution ──────────── #
     chart_cols = st.columns([3, 2], gap='large')
@@ -1280,7 +1280,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
     total_return_pct = (final_mkt_value / total_invested - 1) * 100 if total_invested > 0 else 0
 
     # ── Hero KPI row ───────────────────────────────────────────────────── #
-    st.markdown('---')
+    # st.markdown('---')
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric('💰 Total Invested',          f'Rp {total_invested/1e6:,.1f}M', help='Total out-of-pocket cash invested (Initial + Monthly Top-ups)')
     delta_color = 'normal' if final_mkt_value >= total_invested else 'inverse'
@@ -1290,7 +1290,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
     k4.metric('📊 CAGR',                     f'{cagr:.1f}%/yr')
     k5.metric('🎯 Bonus Lots from Dividends', f'~{div_lots_approx:,} lots',
               help='Approximate lots purchased using reinvested dividends')
-    st.markdown('---')
+    # st.markdown('---')
 
     if div_lots_approx > 0:
         pct_from_div = div_lots_approx / final_lots * 100 if final_lots > 0 else 0
@@ -1797,7 +1797,7 @@ with full_table_section:
         color_threshold = None
         if color_var in ['1D Price Return', '7D Price Return', '1M Price Return', '1Y Price Return', '10Y Price Return', 'Total 1Y Return', 'Total 10Y Return']:
             color_map = 'red_green'
-            color_threshold = [-3, -1, 0, 1, 3]
+            color_threshold = [-10, -5, -0.001, 0.001, 5, 10]
         elif color_var == 'PE Ratio':
             color_map = 'red_shade'
             color_threshold = [-100, 0, 5, 15]
@@ -1810,7 +1810,7 @@ with full_table_section:
         tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label, group_secs=group_secs)
         option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map, group_secs=group_secs)
         
-        click_event_js = """function(params){console.log('Clicked item:',params.name);return params.name;}"""
+        click_event_js = """function(params){if(!params.data.children){return params.name;} return null;}"""
         
         clicked_item_name = st_echarts(
             option,
@@ -1833,39 +1833,42 @@ with full_table_section:
             'Num Dividend Year': 'numDividendYear'
         }
 
-        sp_cols = st.columns(3)
+        color_options = {
+            'Sector': 'sector',
+            'Industry': 'industry',
+            'PE Ratio': 'peRatio',
+            'Dividend Yield': 'yield',
+            'Revenue Growth': 'revenueGrowth',
+            'Profit Margin': 'medianProfitMargin',
+        }
+
+        sp_cols = st.columns([2, 2, 2, 2, 1, 1])
         x_metric = sp_cols[0].selectbox('X Axis', options=list(sp_options.keys()), index=0)
         y_metric = sp_cols[1].selectbox('Y Axis', options=list(sp_options.keys()), index=2)
         size_metric = sp_cols[2].selectbox('Size', options=list(sp_options.keys()), index=3)
+        color_metric = sp_cols[3].selectbox('Color', options=list(color_options.keys()), index=0)
+        
+        remove_outliers = sp_cols[4].toggle('Remove Outliers (5%)', value=True)
+        show_median = sp_cols[5].toggle('Show Quadrants', value=True, help='Show median lines')
 
         x_col = sp_options[x_metric]
         y_col = sp_options[y_metric]
         size_col = sp_options[size_metric]
+        color_col = color_options[color_metric]
 
-        # Handle outliers for better visualization: remove top and bottom 5%
-        # This ensures the distribution isn't squashed by extreme values
-        q95_x = filtered_df[x_col].quantile(0.95)
-        q05_x = filtered_df[x_col].quantile(0.05)
-        q95_y = filtered_df[y_col].quantile(0.95)
-        q05_y = filtered_df[y_col].quantile(0.05)
-
-        plot_df = filtered_df[
-            (filtered_df[x_col] <= q95_x) & (filtered_df[x_col] >= q05_x) &
-            (filtered_df[y_col] <= q95_y) & (filtered_df[y_col] >= q05_y)
-        ]
-
-        sp = alt.Chart(plot_df.reset_index()).mark_circle().encode(
-            x=alt.X(x_col, title=x_metric),
-            y=alt.Y(y_col, title=y_metric),
-            size=alt.Size(size_col, title=size_metric),
-            color='sector',
-            tooltip=[
-                'stock', 
-                alt.Tooltip(x_col, title=x_metric, format='.2f'), 
-                alt.Tooltip(y_col, title=y_metric, format='.2f'),
-                alt.Tooltip(size_col, title=size_metric, format='.2f')
-            ]
-        ).interactive()
+        sp = hp.plot_scatter(
+            filtered_df, 
+            x_col=x_col, 
+            y_col=y_col, 
+            size_col=size_col, 
+            color_col=color_col,
+            x_title=x_metric,
+            y_title=y_metric,
+            size_title=size_metric,
+            remove_outliers=remove_outliers,
+            show_median_lines=show_median,
+            height=600
+        )
         st.altair_chart(sp, width='stretch')
 
     elif view == 'Distribution':
@@ -1881,61 +1884,88 @@ with full_table_section:
             'Num Dividend Year': 'numDividendYear'
         }
         
-        col1, col2, col3 = st.columns([1, 2, 1])
-        selected_dist = col1.selectbox('Select Metric', options=list(dist_options.keys()))
-        exclude_zero = col1.toggle('Exclude 0% Yield Stocks', value=False)
+        # ── Controls ────────────────────────────────────────────────────────
+        ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
+        selected_dist = ctrl1.selectbox('Select Metric', options=list(dist_options.keys()))
         col_name = dist_options[selected_dist]
-
+        
+        sector_options = ['All'] + sorted(filtered_df['sector'].dropna().unique().tolist())
+        selected_sector = ctrl2.selectbox('Filter by Sector', options=sector_options)
+        
+        exclude_zero = ctrl3.toggle('Exclude 0% Yield Stocks', value=False)
+        show_median = ctrl4.toggle('Show Mean & Median', value=True, help="Overlay mean and median lines on the distribution")
+        
         if exclude_zero:
             filtered_df = filtered_df[filtered_df['yield'] > 0]
-
-        # Add comparison stocks multiselect
-        comparison_stocks = col2.multiselect('Compare with specific stocks', options=filtered_df.index.tolist())
-        
+        if selected_sector != 'All':
+            filtered_df = filtered_df[filtered_df['sector'] == selected_sector]
+            
+        comp_col, chart_settings_col = st.columns([3, 1])
+        with comp_col:
+            comparison_stocks = st.multiselect('Compare with specific stocks', options=filtered_df.index.tolist(), placeholder='Select stocks to highlight on the curve...')
+            
         comparison_vals = {}
         if comparison_stocks:
             for s in comparison_stocks:
                 val = filtered_df.loc[s, col_name]
                 comparison_vals[s] = val
-        
-        color_map = {
-            'PE Ratio': 'green',
-            'PS Ratio': 'green',
-            'Dividend Yield': 'green',
-            'Revenue Growth': 'green',
-            'Net Income Growth': 'green',
-            'Profit Margin': 'green',
-            'Num Dividend Year': 'green',
-            'Market Cap': 'green'
-        }
-        
-        # Add range number inputs in col3
-        min_data = float(filtered_df[col_name].min())
-        max_data = float(filtered_df[col_name].max())
-        q05 = float(filtered_df[col_name].quantile(0.05))
-        q95 = float(filtered_df[col_name].quantile(0.95))
-        
-        with col3:
-            st.write("Zoom Range")
-            z_col1, z_col2 = st.columns(2)
-            z_min = z_col1.number_input("Min", value=q05, min_value=min_data, max_value=max_data, key=f"z_min_{col_name}")
-            z_max = z_col2.number_input("Max", value=q95, min_value=min_data, max_value=max_data, key=f"z_max_{col_name}")
-            x_range = (z_min, z_max)
-            fill_opacity = st.slider("Fill Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key=f"fill_opacity_{col_name}",
-                                     help="Set to 0 to disable the area fill (useful when many stock labels overlap the curve)")
 
-        dist_chart = hp.plot_card_distribution(
-            filtered_df, 
-            col_name, 
-            current_val=None, 
-            color=color_map.get(selected_dist, 'green'), 
-            height=400, 
-            show_axis=True,
-            comparison_vals=comparison_vals if comparison_vals else None,
-            x_range=x_range,
-            fill_opacity=fill_opacity
-        )
-        st.altair_chart(dist_chart, width="stretch")
+        # ── KPIs ────────────────────────────────────────────────────────────
+        if not filtered_df.empty:
+            mean_val = filtered_df[col_name].mean()
+            median_val = filtered_df[col_name].median()
+            q25 = filtered_df[col_name].quantile(0.25)
+            q75 = filtered_df[col_name].quantile(0.75)
+            
+            st.markdown(f"#### 📊 {selected_dist} Analysis")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric(f"Mean", f"{mean_val:,.2f}")
+            k2.metric(f"Median", f"{median_val:,.2f}")
+            k3.metric("25th Percentile", f"{q25:,.2f}")
+            k4.metric("75th Percentile", f"{q75:,.2f}")
+
+            # ── Chart Settings & Plot ───────────────────────────────────────────
+            min_data = float(filtered_df[col_name].min())
+            max_data = float(filtered_df[col_name].max())
+            q05 = float(filtered_df[col_name].quantile(0.05))
+            q95 = float(filtered_df[col_name].quantile(0.95))
+            
+            with chart_settings_col:
+                with st.popover("⚙️ Chart Settings"):
+                    st.write("Zoom Range")
+                    z_col1, z_col2 = st.columns(2)
+                    z_min = z_col1.number_input("Min", value=q05, min_value=min_data, max_value=max_data, key=f"z_min_{col_name}")
+                    z_max = z_col2.number_input("Max", value=q95, min_value=min_data, max_value=max_data, key=f"z_max_{col_name}")
+                    x_range = (z_min, z_max)
+                    fill_opacity = st.slider("Fill Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key=f"fill_opacity_{col_name}",
+                                             help="Set to 0 to disable the area fill")
+
+            color_map = {
+                'PE Ratio': 'green',
+                'PS Ratio': 'green',
+                'Dividend Yield': 'green',
+                'Revenue Growth': 'green',
+                'Net Income Growth': 'green',
+                'Profit Margin': 'green',
+                'Num Dividend Year': 'green',
+                'Market Cap': 'green'
+            }
+
+            dist_chart = hp.plot_card_distribution(
+                filtered_df, 
+                col_name, 
+                current_val=None, 
+                color=color_map.get(selected_dist, 'green'), 
+                height=450, 
+                show_axis=True,
+                comparison_vals=comparison_vals if comparison_vals else None,
+                x_range=x_range,
+                fill_opacity=fill_opacity,
+                show_median=show_median
+            )
+            st.altair_chart(dist_chart, width="stretch")
+        else:
+            st.info("No data available for the selected filters.")
 
 
 if view == 'Table' and len(event.selection['rows']) > 0:

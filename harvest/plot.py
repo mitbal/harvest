@@ -742,7 +742,7 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
 def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade', group_secs=True):
 
     cmap_options = {
-        'red_green': ['#A30000', '#9f6e73', '#aaa', '#79ab78', '#08701b'],
+        'red_green': ['#620000', '#a30000', '#d32f2f', '#434651', '#4caf50', '#388e3c', '#1b5e20'],
         'green_shade' : ["#79ab78", "#08701b"],
         'red_shade': ['#000000', '#9f6e73', '#A30000']
     }
@@ -923,7 +923,7 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
         },
         "tooltip": {
             "formatter": JsCode(
-                f"function(info){{var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){{treePath.push(treePathInfo[i].name)}}return['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','{size_var}: '+ value[0] +''].join('')}};"
+                f"function(info){{var value=info.value;var treePathInfo=info.treePathInfo;var treePath=[];for(var i=1;i<treePathInfo.length;i+=1){{treePath.push(treePathInfo[i].name)}}; var res = ['<div class=\"tooltip-title\">'+treePath.join('/')+'</div>','{size_var}: '+ (value[0] !== undefined ? (typeof value[0] === 'number' ? value[0].toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}}) : value[0]) : 'N/A')]; if ({str(show_gradient).lower()} && value.length > 1) {{ res.push('{color_var}: '+ (value[1] !== undefined ? (typeof value[1] === 'number' ? value[1].toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}}) : value[1]) : 'N/A')); }} return res.join('<br>');}};"
             ).js_code,
         },
         "series": series,
@@ -984,7 +984,7 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None, x_range=None, fill_opacity=0.3):
+def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None, x_range=None, fill_opacity=0.3, show_median=False):
 
     # Handle outliers for better visualization: remove top and bottom 5%
     # This ensures the distribution isn't squashed by extreme values
@@ -1047,6 +1047,43 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         )
     
     layers = [kde]
+
+    if show_median:
+        median_val = df[column].median()
+        mean_val = df[column].mean()
+        
+        median_df = pd.DataFrame({column: [median_val], 'label': ['Median']})
+        mean_df = pd.DataFrame({column: [mean_val], 'label': ['Mean']})
+        
+        median_rule = alt.Chart(median_df).mark_rule(
+            color='#f39c12', strokeWidth=2, strokeDash=[4, 4]
+        ).encode(
+            x=column,
+            tooltip=[alt.Tooltip(column, format='.2f', title='Median')]
+        )
+        mean_rule = alt.Chart(mean_df).mark_rule(
+            color='#e74c3c', strokeWidth=2, strokeDash=[4, 4]
+        ).encode(
+            x=column,
+            tooltip=[alt.Tooltip(column, format='.2f', title='Mean')]
+        )
+        
+        median_text = alt.Chart(median_df).mark_text(
+            align='left', baseline='bottom', dy=-5, dx=2, color='#f39c12', fontSize=10, fontWeight='bold'
+        ).encode(
+            x=column,
+            y=alt.value(10),
+            text='label'
+        )
+        mean_text = alt.Chart(mean_df).mark_text(
+            align='right', baseline='bottom', dy=-5, dx=-2, color='#e74c3c', fontSize=10, fontWeight='bold'
+        ).encode(
+            x=column,
+            y=alt.value(10),
+            text='label'
+        )
+
+        layers.extend([median_rule, mean_rule, median_text, mean_text])
 
     if current_val is not None:
         # We create a dataframe for the rule. 
@@ -1151,3 +1188,77 @@ def plot_card_histogram(df, column, current_val, color='green', height=180):
     )
 
     return base.properties(height=height)
+
+
+def plot_scatter(
+    df, 
+    x_col, 
+    y_col, 
+    size_col, 
+    color_col='sector', 
+    x_title=None, 
+    y_title=None, 
+    size_title=None,
+    remove_outliers=True,
+    show_median_lines=True,
+    height=500
+):
+    plot_df = df.copy()
+    if remove_outliers:
+        q95_x = plot_df[x_col].quantile(0.95)
+        q05_x = plot_df[x_col].quantile(0.05)
+        q95_y = plot_df[y_col].quantile(0.95)
+        q05_y = plot_df[y_col].quantile(0.05)
+        plot_df = plot_df[
+            (plot_df[x_col] <= q95_x) & (plot_df[x_col] >= q05_x) &
+            (plot_df[y_col] <= q95_y) & (plot_df[y_col] >= q05_y)
+        ]
+        
+    x_title = x_title or x_col
+    y_title = y_title or y_col
+    size_title = size_title or size_col
+
+    # Determine if color is nominal or quantitative based on dtype
+    is_numeric_color = pd.api.types.is_numeric_dtype(plot_df[color_col])
+    color_type = "Q" if is_numeric_color else "N"
+    color_scale = alt.Scale(scheme='viridis') if is_numeric_color else alt.Scale(scheme='category20')
+
+    # Base chart
+    base = alt.Chart(plot_df.reset_index()).encode(
+        x=alt.X(f"{x_col}:Q", title=x_title, scale=alt.Scale(zero=False)),
+        y=alt.Y(f"{y_col}:Q", title=y_title, scale=alt.Scale(zero=False))
+    )
+
+    # Scatter points
+    scatter = base.mark_circle(opacity=0.7, stroke='white', strokeWidth=0.5).encode(
+        size=alt.Size(f"{size_col}:Q", title=size_title, scale=alt.Scale(range=[30, 800])),
+        color=alt.Color(f"{color_col}:{color_type}", title=color_col.capitalize(), scale=color_scale, legend=alt.Legend(orient='right')),
+        tooltip=[
+            alt.Tooltip('stock:N', title='Stock'),
+            alt.Tooltip('sector:N', title='Sector'),
+            alt.Tooltip(f"{x_col}:Q", title=x_title, format='.2f'), 
+            alt.Tooltip(f"{y_col}:Q", title=y_title, format='.2f'),
+            alt.Tooltip(f"{size_col}:Q", title=size_title, format='.2f')
+        ]
+    )
+
+    layers = [scatter]
+
+    if show_median_lines:
+        x_median = plot_df[x_col].median()
+        y_median = plot_df[y_col].median()
+        
+        # Add vertical line for x median
+        vline = alt.Chart(pd.DataFrame({x_col: [x_median]})).mark_rule(
+            color='gray', strokeDash=[5, 5], opacity=0.7, strokeWidth=1.5
+        ).encode(x=f"{x_col}:Q")
+        
+        # Add horizontal line for y median
+        hline = alt.Chart(pd.DataFrame({y_col: [y_median]})).mark_rule(
+            color='gray', strokeDash=[5, 5], opacity=0.7, strokeWidth=1.5
+        ).encode(y=f"{y_col}:Q")
+        
+        layers.extend([vline, hline])
+
+    return alt.layer(*layers).properties(height=height).interactive()
+

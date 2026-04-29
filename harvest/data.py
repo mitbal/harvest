@@ -597,7 +597,7 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
             threshold = color_threshold
 
         bins = [-float('inf'), *threshold, float('inf')]
-        labels = list(range(0, 101, int(100/len(threshold))))
+        labels = np.linspace(0, 100, len(threshold) + 1).tolist()
         df['color_grad'] = pd.cut(df[color_var],
                                     bins=bins,
                                     labels=labels).astype(float)
