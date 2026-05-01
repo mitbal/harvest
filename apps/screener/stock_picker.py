@@ -607,6 +607,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                 fin['revenue'] = fin['revenue'] * exchange_rate
             if 'netIncome' in fin.columns:
                 fin['netIncome'] = fin['netIncome'] * exchange_rate
+            fin['reportedCurrency'] = currency
 
     fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
 
