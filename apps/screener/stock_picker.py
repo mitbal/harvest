@@ -672,10 +672,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
         metric_col = 'revenue' if metric_choice == 'Revenue' else 'netIncome'
 
         st.markdown(f'#### 📊 Quarterly {metric_choice}')
-        st.caption(
-            '**Bars** coloured by QoQ growth (blue/teal = growth, red = decline). '
-            '**Orange dashed line** = same quarter last year (YoY reference).'
-        )
+        st.caption('**Bars** coloured by quarter.')
         q_chart = hp.plot_quarterly_breakdown(fin, metric=metric_col, currency=currency, height=300)
         st.altair_chart(q_chart, width='stretch')
 

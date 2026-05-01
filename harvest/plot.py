@@ -204,11 +204,7 @@ def plot_quarterly_breakdown(fin_df, metric='netIncome', currency='idr', height=
         x=alt.X('calendarYear:O', title='Year', axis=alt.Axis(labelAngle=0)),
         xOffset=alt.XOffset('period:O', sort=['Q1', 'Q2', 'Q3', 'Q4']),
         y=alt.Y(f'{metric}:Q', title=title, axis=alt.Axis(labelExpr=format_currency())),
-        color=alt.condition(
-            alt.datum['qoq_growth'] < 0,
-            alt.value('#ef5350'),
-            alt.value('#42a5f5') if metric == 'revenue' else alt.value('#26a69a'),
-        ),
+        color=alt.Color('period:N', title='Quarter'),
         tooltip=[
             alt.Tooltip('calendarYear:O', title='Year'),
             alt.Tooltip('period:O',        title='Quarter'),
@@ -217,24 +213,7 @@ def plot_quarterly_breakdown(fin_df, metric='netIncome', currency='idr', height=
         ]
     )
 
-    yoy_line = alt.Chart(df).mark_line(
-        point=alt.OverlayMarkDef(filled=True, size=30, opacity=0.6),
-        color='#ffa726',
-        strokeDash=[4, 2],
-        strokeWidth=1.8,
-        opacity=0.8,
-    ).encode(
-        x=alt.X('calendarYear:O'),
-        xOffset=alt.XOffset('period:O', sort=['Q1', 'Q2', 'Q3', 'Q4']),
-        y=alt.Y('yoy_val:Q'),
-        tooltip=[
-            alt.Tooltip('calendarYear:O', title='Year'),
-            alt.Tooltip('period:O',        title='Quarter'),
-            alt.Tooltip('yoy_val:Q',       title='Same Q Last Year', format=',.0f'),
-        ]
-    )
-
-    return (bars + yoy_line).resolve_scale(y='shared').properties(height=height)
+    return bars.properties(height=height)
 
 
 def plot_financial(fin_df, period='quarter', metric='netIncome', currency='idr'):
