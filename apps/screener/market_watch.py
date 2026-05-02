@@ -509,6 +509,88 @@ else:
                 icon='ℹ️'
             )
 
+    # ── Distribution chart ────────────────────────────────────────────────── #
+
+    with st.expander('📊 Return Distribution', expanded=True):
+        import altair as alt
+
+        dist_df = returns_df.reset_index(names='stock')[['return_1d_pct']].dropna()
+        dist_df = dist_df.rename(columns={'return_1d_pct': 'return'})
+
+        if dist_df.empty:
+            st.info('No return data to plot.')
+        else:
+            # Pre-filter to p2–p98 range so Altair bins only visible data.
+            # Using scale domain alone clips the display but bins are still
+            # computed on the full range, causing bars to fall outside the view.
+            p2  = float(dist_df['return'].quantile(0.02))
+            p98 = float(dist_df['return'].quantile(0.98))
+            if p2 >= p98:   # all values identical (e.g. 0% on a non-trading day)
+                p2  = float(dist_df['return'].min()) - 0.01
+                p98 = float(dist_df['return'].max()) + 0.01
+
+            clipped_df = dist_df[(dist_df['return'] >= p2) & (dist_df['return'] <= p98)].copy()
+
+            zero_line = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
+                color='white', strokeWidth=1.5, strokeDash=[4, 3], opacity=0.7
+            ).encode(x=alt.X('x:Q', scale=alt.Scale(domain=[p2, p98])))
+
+            hist = alt.Chart(clipped_df).mark_bar(
+                cornerRadiusTopLeft=3, cornerRadiusTopRight=3
+            ).encode(
+                x=alt.X('return:Q', bin=alt.Bin(maxbins=50), title='1D Return (%)'),
+                y=alt.Y('count()', title='# Stocks'),
+                color=alt.condition(
+                    alt.datum['return'] >= 0,
+                    alt.value('#4caf50'),
+                    alt.value('#d32f2f')
+                ),
+                tooltip=[
+                    alt.Tooltip('return:Q', bin=True, title='Return range', format='.2f'),
+                    alt.Tooltip('count()', title='# Stocks'),
+                ]
+            ).properties(height=260)
+
+            st.altair_chart((hist + zero_line), width='stretch')
+
+    # ── Top gainers / losers table ────────────────────────────────────────── #
+
+    with st.expander('🏆 Top Gainers & Losers', expanded=True):
+        merged_tbl = filtered_uni[['sector', 'industry', 'mktCap_B']].join(
+            returns_df[['close', 'prev_close', 'return_1d_pct']], how='inner'
+        ).dropna(subset=['return_1d_pct'])
+
+        col_g, col_l = st.columns(2)
+
+        top_gainers = merged_tbl.nlargest(20, 'return_1d_pct').reset_index(names='stock')
+        top_losers  = merged_tbl.nsmallest(20, 'return_1d_pct').reset_index(names='stock')
+
+        cfig_g = {
+            'stock': st.column_config.TextColumn('Stock'),
+            'sector': st.column_config.TextColumn('Sector'),
+            'close': st.column_config.NumberColumn('Close', format='%,.2f'),
+            'prev_close': st.column_config.NumberColumn('Prev Close', format='%,.2f'),
+            'return_1d_pct': st.column_config.NumberColumn('1D Return %', format='%+.2f%%'),
+            'mktCap_B': st.column_config.NumberColumn('MCap (B)', format='%,.1f'),
+            'industry': None,
+        }
+
+        with col_g:
+            st.markdown('#### 🟢 Top 20 Gainers')
+            st.dataframe(
+                top_gainers[['stock', 'sector', 'close', 'prev_close', 'return_1d_pct', 'mktCap_B']],
+                column_config=cfig_g,
+                hide_index=True,
+            )
+
+        with col_l:
+            st.markdown('#### 🔴 Top 20 Losers')
+            st.dataframe(
+                top_losers[['stock', 'sector', 'close', 'prev_close', 'return_1d_pct', 'mktCap_B']],
+                column_config=cfig_g,
+                hide_index=True,
+            )
+
     # ── Global Index Comparison ───────────────────────────────────────────── #
 
     st.divider()
@@ -894,84 +976,4 @@ else:
                         help=f'IDR per 1 unit of foreign currency — period return over **{fx_period_label}** | 1-day return on {date_to_str}',
                     )
 
-    # ── Distribution chart ────────────────────────────────────────────────── #
 
-    with st.expander('📊 Return Distribution', expanded=False):
-        import altair as alt
-
-        dist_df = returns_df.reset_index(names='stock')[['return_1d_pct']].dropna()
-        dist_df = dist_df.rename(columns={'return_1d_pct': 'return'})
-
-        if dist_df.empty:
-            st.info('No return data to plot.')
-        else:
-            # Pre-filter to p2–p98 range so Altair bins only visible data.
-            # Using scale domain alone clips the display but bins are still
-            # computed on the full range, causing bars to fall outside the view.
-            p2  = float(dist_df['return'].quantile(0.02))
-            p98 = float(dist_df['return'].quantile(0.98))
-            if p2 >= p98:   # all values identical (e.g. 0% on a non-trading day)
-                p2  = float(dist_df['return'].min()) - 0.01
-                p98 = float(dist_df['return'].max()) + 0.01
-
-            clipped_df = dist_df[(dist_df['return'] >= p2) & (dist_df['return'] <= p98)].copy()
-
-            zero_line = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
-                color='white', strokeWidth=1.5, strokeDash=[4, 3], opacity=0.7
-            ).encode(x=alt.X('x:Q', scale=alt.Scale(domain=[p2, p98])))
-
-            hist = alt.Chart(clipped_df).mark_bar(
-                cornerRadiusTopLeft=3, cornerRadiusTopRight=3
-            ).encode(
-                x=alt.X('return:Q', bin=alt.Bin(maxbins=50), title='1D Return (%)'),
-                y=alt.Y('count()', title='# Stocks'),
-                color=alt.condition(
-                    alt.datum['return'] >= 0,
-                    alt.value('#4caf50'),
-                    alt.value('#d32f2f')
-                ),
-                tooltip=[
-                    alt.Tooltip('return:Q', bin=True, title='Return range', format='.2f'),
-                    alt.Tooltip('count()', title='# Stocks'),
-                ]
-            ).properties(height=260)
-
-            st.altair_chart((hist + zero_line), width='stretch')
-
-    # ── Top gainers / losers table ────────────────────────────────────────── #
-
-    with st.expander('🏆 Top Gainers & Losers', expanded=False):
-        merged_tbl = filtered_uni[['sector', 'industry', 'mktCap_B']].join(
-            returns_df[['close', 'prev_close', 'return_1d_pct']], how='inner'
-        ).dropna(subset=['return_1d_pct'])
-
-        col_g, col_l = st.columns(2)
-
-        top_gainers = merged_tbl.nlargest(20, 'return_1d_pct').reset_index(names='stock')
-        top_losers  = merged_tbl.nsmallest(20, 'return_1d_pct').reset_index(names='stock')
-
-        cfig_g = {
-            'stock': st.column_config.TextColumn('Stock'),
-            'sector': st.column_config.TextColumn('Sector'),
-            'close': st.column_config.NumberColumn('Close', format='%,.2f'),
-            'prev_close': st.column_config.NumberColumn('Prev Close', format='%,.2f'),
-            'return_1d_pct': st.column_config.NumberColumn('1D Return %', format='%+.2f%%'),
-            'mktCap_B': st.column_config.NumberColumn('MCap (B)', format='%,.1f'),
-            'industry': None,
-        }
-
-        with col_g:
-            st.markdown('#### 🟢 Top 20 Gainers')
-            st.dataframe(
-                top_gainers[['stock', 'sector', 'close', 'prev_close', 'return_1d_pct', 'mktCap_B']],
-                column_config=cfig_g,
-                hide_index=True,
-            )
-
-        with col_l:
-            st.markdown('#### 🔴 Top 20 Losers')
-            st.dataframe(
-                top_losers[['stock', 'sector', 'close', 'prev_close', 'return_1d_pct', 'mktCap_B']],
-                column_config=cfig_g,
-                hide_index=True,
-            )
