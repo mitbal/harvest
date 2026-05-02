@@ -209,6 +209,66 @@ def get_index_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame
     return df.sort_values('date')
 
 
+# ── Currency (Forex vs IDR) definitions ──────────────────────────────────── #
+
+# FMP forex pair symbols: {pair_symbol: (label, flag, color)}
+_FX_SYMBOLS = {
+    'USDIDR': ('USD/IDR', '🇺🇸', '#3b82f6'),
+    'EURIDR': ('EUR/IDR', '🇪🇺', '#8b5cf6'),
+    'JPYIDR': ('JPY/IDR', '🇯🇵', '#ef4444'),
+    'GBPIDR': ('GBP/IDR', '🇬🇧', '#ec4899'),
+    'AUDIDR': ('AUD/IDR', '🇦🇺', '#0ea5e9'),
+    'SGDIDR': ('SGD/IDR', '🇸🇬', '#10b981'),
+    'CNYIDR': ('CNY/IDR', '🇨🇳', '#f97316'),
+    'HKDIDR': ('HKD/IDR', '🇭🇰', '#f59e0b'),
+    'MYRIDR': ('MYR/IDR', '🇲🇾', '#a78bfa'),
+    'KRWIDR': ('KRW/IDR', '🇰🇷', '#fb7185'),
+}
+
+_FX_LABELS  = {sym: v[0] for sym, v in _FX_SYMBOLS.items()}
+_FX_FLAGS   = {sym: v[1] for sym, v in _FX_SYMBOLS.items()}
+_FX_COLORS  = {sym: v[2] for sym, v in _FX_SYMBOLS.items()}
+
+# Label → symbol reverse map (for lookups)
+_FX_LABEL_TO_SYM = {v[0]: sym for sym, v in _FX_SYMBOLS.items()}
+
+
+@st.cache_data(ttl=60 * 60 * 4, show_spinner='Fetching currency rates…')
+def get_fx_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
+    """
+    Fetches daily close rates for all tracked FX pairs (vs IDR) from FMP.
+    Returns a long-format DataFrame: [date, pair, close].
+    """
+    import requests as _req
+
+    all_rows = []
+    for sym, (label, _flag, _color) in _FX_SYMBOLS.items():
+        try:
+            url = (
+                f'https://financialmodelingprep.com/api/v3/historical-price-full/{sym}'
+                f'?from={date_from}&to={date_to}&apikey={fmp_key}'
+            )
+            resp = _req.get(url, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            hist = data.get('historical', [])
+            for row in hist:
+                all_rows.append({
+                    'date':  row['date'],
+                    'pair':  label,
+                    'close': row['close'],
+                })
+        except Exception as e:
+            logger.warning(f'Could not fetch FX pair {sym} ({label}): {e}')
+
+    if not all_rows:
+        return pd.DataFrame(columns=['date', 'pair', 'close'])
+
+    df = pd.DataFrame(all_rows)
+    df['date'] = pd.to_datetime(df['date'])
+    return df.sort_values('date')
+
+
 def calc_daily_return_for_date(prices_df: pd.DataFrame, target_date: pd.Timestamp) -> pd.DataFrame:
     """
     Given a long-format price DataFrame, compute the 1-day return for
@@ -437,13 +497,16 @@ else:
     st.caption('Normalized performance (rebased to 100) vs IHSG — select a time window to compare.')
 
     _PERIOD_OPTIONS = {
-        '1W':  7,
-        '1M':  30,
-        '3M':  90,
-        '6M':  180,
-        'YTD': None,   # handled specially
-        '1Y':  365,
-        '2Y':  730,
+        '1W':   7,
+        '1M':   30,
+        '3M':   90,
+        '6M':   180,
+        'YTD':  None,   # handled specially
+        '1Y':   365,
+        '2Y':   730,
+        '3Y':   1095,
+        '5Y':   1825,
+        '10Y':  3650,
     }
 
     idx_col1, idx_col2 = st.columns([3, 1])
@@ -641,6 +704,175 @@ else:
                         delta=f'1D {d_str}',
                         delta_color=d_color,
                         help=f'Period return over **{period_label}** | 1-day return on {date_to_str}',
+                    )
+
+    # ── Currency Watch (Forex vs IDR) ─────────────────────────────────────── #
+
+    st.divider()
+    st.subheader('💱 Currency Watch — vs Indonesian Rupiah (IDR)')
+    st.caption('Exchange rates of major currencies against IDR — normalized to 100 at the start of the selected period.')
+
+    fx_col1, fx_col2 = st.columns([3, 1])
+    with fx_col2:
+        fx_period_label = st.selectbox(
+            'Period',
+            options=list(_PERIOD_OPTIONS.keys()),
+            index=2,          # default 3M
+            key='mw_fx_period',
+        )
+        all_fx_labels = [v[0] for v in _FX_SYMBOLS.values()]
+        visible_pairs = st.multiselect(
+            'Show pairs',
+            options=all_fx_labels,
+            default=all_fx_labels,
+            key='mw_fx_visible',
+        )
+
+    # Compute date range for FX fetch
+    fx_to = selected_date
+    if fx_period_label == 'YTD':
+        fx_from = date(selected_date.year, 1, 1)
+    else:
+        fx_from = fx_to - timedelta(days=_PERIOD_OPTIONS[fx_period_label])
+
+    fx_from_str = fx_from.strftime('%Y-%m-%d')
+    fx_to_str   = fx_to.strftime('%Y-%m-%d')
+
+    fx_prices_df = get_fx_prices(api_key, fx_from_str, fx_to_str)
+
+    with fx_col1:
+        if fx_prices_df.empty:
+            st.warning('Could not load currency rate data. Check FMP API key or network.', icon='⚠️')
+        else:
+            fx_filtered = fx_prices_df[fx_prices_df['pair'].isin(visible_pairs)]
+
+            if fx_filtered.empty:
+                st.info('Select at least one currency pair to display.')
+            else:
+                import altair as alt
+
+                # Normalize each pair to 100 at first available date
+                def _normalize_fx(g):
+                    g = g.sort_values('date')
+                    base = g['close'].iloc[0]
+                    g['normalized'] = g['close'] / base * 100 if base and base != 0 else g['close']
+                    return g
+
+                fx_norm_df = (
+                    fx_filtered
+                    .groupby('pair', group_keys=False)
+                    .apply(_normalize_fx)
+                    .reset_index(drop=True)
+                )
+
+                # Build color scale from label → color
+                fx_domain = [v[0] for v in _FX_SYMBOLS.values()]
+                fx_range  = [v[2] for v in _FX_SYMBOLS.values()]
+
+                fx_sel = alt.selection_point(fields=['pair'], bind='legend')
+
+                fx_line = alt.Chart(fx_norm_df).mark_line(
+                    strokeWidth=2.0,
+                    interpolate='monotone',
+                ).encode(
+                    x=alt.X('date:T', title=''),
+                    y=alt.Y('normalized:Q', title='Indexed (100 = period start)',
+                            scale=alt.Scale(zero=False)),
+                    color=alt.Color(
+                        'pair:N',
+                        scale=alt.Scale(domain=fx_domain, range=fx_range),
+                        legend=alt.Legend(title='Currency Pair', orient='right'),
+                    ),
+                    opacity=alt.condition(fx_sel, alt.value(0.9), alt.value(0.15)),
+                    tooltip=[
+                        alt.Tooltip('date:T',       title='Date'),
+                        alt.Tooltip('pair:N',       title='Pair'),
+                        alt.Tooltip('normalized:Q', title='Indexed',      format='.2f'),
+                        alt.Tooltip('close:Q',      title='Rate (IDR)',   format=',.2f'),
+                    ],
+                ).add_params(fx_sel)
+
+                fx_baseline = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                    strokeDash=[4, 3], color='#888888', strokeWidth=1, opacity=0.6
+                ).encode(y='y:Q')
+
+                fx_chart = (
+                    alt.layer(fx_baseline, fx_line)
+                    .properties(height=360)
+                    .resolve_scale(color='shared')
+                )
+                st.altair_chart(fx_chart, width='stretch')
+
+    # ── FX metric cards (1D return + period return) ──────────────────────── #
+
+    if not fx_prices_df.empty and visible_pairs:
+        # Fetch a short window around selected_date for 1D return calculation
+        fx_full = get_fx_prices(
+            api_key,
+            (selected_date - timedelta(days=7)).strftime('%Y-%m-%d'),
+            fx_to_str,
+        )
+
+        if not fx_full.empty:
+            fx_full = fx_full[fx_full['pair'].isin(visible_pairs)]
+            target_ts_fx = pd.Timestamp(selected_date)
+
+            def _fx_period_return(g):
+                g = g.sort_values('date')
+                if len(g) < 2:
+                    return None
+                return (g['close'].iloc[-1] / g['close'].iloc[0] - 1) * 100
+
+            fx_period_df = fx_prices_df[fx_prices_df['pair'].isin(visible_pairs)]
+            fx_period_rets = (
+                fx_period_df
+                .groupby('pair')
+                .apply(_fx_period_return)
+                .dropna()
+            )
+
+            def _fx_1d_return(g):
+                g = g.sort_values('date')
+                today_row = g[g['date'] == target_ts_fx]
+                prev_rows = g[g['date'] < target_ts_fx]
+                if today_row.empty or prev_rows.empty:
+                    return None
+                close     = float(today_row['close'].iloc[0])
+                prev_close = float(prev_rows.iloc[-1]['close'])
+                return (close / prev_close - 1) * 100 if prev_close else None
+
+            fx_daily_rets = (
+                fx_full
+                .groupby('pair')
+                .apply(_fx_1d_return)
+                .dropna()
+            )
+
+            # Sort by period return descending
+            sorted_pairs = sorted(
+                visible_pairs,
+                key=lambda lbl: -(fx_period_rets.get(lbl, float('-inf'))),
+            )
+
+            st.markdown(f'**💱 Currency Returns — 1D vs {fx_period_label} period**')
+            fx_cards_per_row = 5
+            for row_start in range(0, len(sorted_pairs), fx_cards_per_row):
+                row_pairs = sorted_pairs[row_start: row_start + fx_cards_per_row]
+                fx_cols = st.columns(len(row_pairs))
+                for col, lbl in zip(fx_cols, row_pairs):
+                    sym = _FX_LABEL_TO_SYM.get(lbl, '')
+                    flag   = _FX_FLAGS.get(sym, '')
+                    d_ret  = fx_daily_rets.get(lbl)
+                    p_ret  = fx_period_rets.get(lbl)
+                    d_str  = f'{d_ret:+.2f}%' if d_ret is not None else 'N/A'
+                    p_str  = f'{p_ret:+.2f}%' if p_ret is not None else 'N/A'
+                    d_color = 'normal' if (d_ret or 0) >= 0 else 'inverse'
+                    col.metric(
+                        label=f'{flag} {lbl}',
+                        value=p_str,
+                        delta=f'1D {d_str}',
+                        delta_color=d_color,
+                        help=f'IDR per 1 unit of foreign currency — period return over **{fx_period_label}** | 1-day return on {date_to_str}',
                     )
 
     # ── Distribution chart ────────────────────────────────────────────────── #
