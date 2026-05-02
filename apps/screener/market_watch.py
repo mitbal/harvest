@@ -384,13 +384,32 @@ symbols_tuple = tuple(sorted(filtered_uni.index.tolist()))
 # ── Fetch prices for target date + a few days back ────────────────────────── #
 
 date_to_str   = selected_date.strftime('%Y-%m-%d')
-date_from_str = (selected_date - timedelta(days=7)).strftime('%Y-%m-%d')
+date_from_str = (selected_date - timedelta(days=14)).strftime('%Y-%m-%d')
 
 with st.spinner(f'Fetching price data for {date_to_str}…'):
     prices_df = get_prices_for_date_range(symbols_tuple, date_from_str, date_to_str)
 
 target_ts = pd.Timestamp(selected_date)
 returns_df = calc_daily_return_for_date(prices_df, target_ts)
+
+# ── Fall back to latest available date if selected date has no data ────────── #
+
+_effective_date = selected_date
+if returns_df.empty and not prices_df.empty:
+    available_dates = prices_df['date'].unique()
+    if len(available_dates) > 0:
+        latest_available = pd.Timestamp(max(available_dates)).date()
+        if latest_available != selected_date:
+            st.info(
+                f'No price data available for **{date_to_str}** '
+                f'(weekend, holiday, or data not yet loaded). '
+                f'Showing data for the most recent available date: **{latest_available}**.',
+                icon='ℹ️'
+            )
+            _effective_date = latest_available
+            target_ts = pd.Timestamp(latest_available)
+            date_to_str = latest_available.strftime('%Y-%m-%d')
+            returns_df = calc_daily_return_for_date(prices_df, target_ts)
 
 # ── KPI row ───────────────────────────────────────────────────────────────── #
 
@@ -525,7 +544,7 @@ else:
         )
 
     # Compute date range for index fetch
-    idx_to   = selected_date
+    idx_to   = _effective_date
     if period_label == 'YTD':
         idx_from = date(selected_date.year, 1, 1)
     else:
@@ -729,7 +748,7 @@ else:
         )
 
     # Compute date range for FX fetch
-    fx_to = selected_date
+    fx_to = _effective_date
     if fx_period_label == 'YTD':
         fx_from = date(selected_date.year, 1, 1)
     else:
