@@ -1189,7 +1189,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             st.info('No dividend history available to compute ex-date trajectory.')
 
 
-def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
+def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currency='IDR'):
 
     this_year = datetime.now().year
     
@@ -1217,6 +1217,28 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
         st.warning(f"Stock {stock_name} does not have enough historical data (needs to exist since {max_start_year} or earlier) for a compounding simulation.")
         return
 
+    # ── Currency display config ────────────────────────────────────────── #
+    if currency == 'IDR':
+        curr_symbol   = 'Rp'
+        unit_label    = 'million'
+        unit_divisor  = 1_000_000
+        unit_suffix   = 'M'
+        invest_mult   = 1_000_000
+        init_default  = 10
+        topup_default = 1
+        init_max      = 1000
+        topup_max     = 100
+    else:
+        curr_symbol   = '$'
+        unit_label    = 'thousand'
+        unit_divisor  = 1_000
+        unit_suffix   = 'K'
+        invest_mult   = 1_000
+        init_default  = 10
+        topup_default = 1
+        init_max      = 1_000_000
+        topup_max     = 100_000
+
     cols = st.columns(4)
     start_year = cols[0].number_input(
         label='Start Year', 
@@ -1226,14 +1248,14 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
         key=f"sim_start_{stock_name}"
     )
     end_year = cols[1].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1, key=f"sim_end_{stock_name}")
-    initial_value = cols[2].number_input(label='Initial investment (million)', value=10, min_value=1, max_value=1000, key=f"sim_init_{stock_name}")
-    monthly_topup = cols[3].number_input(label='Monthly Top-up (million)', value=1, min_value=0, max_value=100, key=f"sim_monthly_{stock_name}")
+    initial_value = cols[2].number_input(label=f'Initial investment ({unit_label})', value=init_default, min_value=1, max_value=init_max, key=f"sim_init_{stock_name}")
+    monthly_topup = cols[3].number_input(label=f'Monthly Top-up ({unit_label})', value=topup_default, min_value=0, max_value=topup_max, key=f"sim_monthly_{stock_name}")
 
     porto, activities = hd.simulate_dividend_compounding(
         stock_name, price_df, sdf,
         start_year, end_year,
-        initial_value * 1_000_000,
-        monthly_topup * 1_000_000,
+        initial_value * invest_mult,
+        monthly_topup * invest_mult,
     )
 
     if not porto:
@@ -1249,8 +1271,8 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
     porto_df['mkt_value'] = porto_df['price'] * porto_df['cum_stock'] * 100
 
     # Calculate cumulative top-up (Out-of-pocket investment)
-    init_val = initial_value * 1_000_000
-    topup_val = monthly_topup * 1_000_000
+    init_val = initial_value * invest_mult
+    topup_val = monthly_topup * invest_mult
     start_date = porto_df['date'].min()
     porto_df['months_passed'] = (porto_df['date'].dt.year - start_date.year) * 12 + (porto_df['date'].dt.month - start_date.month)
     porto_df['cum_topup'] = init_val + porto_df['months_passed'] * topup_val
@@ -1281,13 +1303,16 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
     total_return_pct = (final_mkt_value / total_invested - 1) * 100 if total_invested > 0 else 0
 
     # ── Hero KPI row ───────────────────────────────────────────────────── #
+    def _fmt(val):
+        return f'{curr_symbol} {val/unit_divisor:,.1f}{unit_suffix}'
+
     # st.markdown('---')
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric('💰 Total Invested',          f'Rp {total_invested/1e6:,.1f}M', help='Total out-of-pocket cash invested (Initial + Monthly Top-ups)')
+    k1.metric('💰 Total Invested',          _fmt(total_invested), help='Total out-of-pocket cash invested (Initial + Monthly Top-ups)')
     delta_color = 'normal' if final_mkt_value >= total_invested else 'inverse'
-    k2.metric('📈 Portfolio Value',          f'Rp {final_mkt_value/1e6:,.1f}M',
+    k2.metric('📈 Portfolio Value',          _fmt(final_mkt_value),
               delta=f'{total_return_pct:+.1f}%', delta_color=delta_color)
-    k3.metric('🎁 Total Dividends Received', f'Rp {total_dividends/1e6:,.1f}M')
+    k3.metric('🎁 Total Dividends Received', _fmt(total_dividends))
     k4.metric('📊 CAGR',                     f'{cagr:.1f}%/yr')
     k5.metric('🎯 Bonus Lots from Dividends', f'~{div_lots_approx:,} lots',
               help='Approximate lots purchased using reinvested dividends')
@@ -1298,7 +1323,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
         st.success(
             f"🚀 **The Power of Compounding:** Over {n_years} years, reinvesting dividends bought you "
             f"approximately **{div_lots_approx:,} bonus lots** (~{pct_from_div:.0f}% of your total "
-            f"{final_lots:,} lots), contributing **Rp {total_dividends/1e6:,.1f}M** to your portfolio "
+            f"{final_lots:,} lots), contributing **{_fmt(total_dividends)}** to your portfolio "
             f"— *without any extra money from your pocket!*"
         )
 
@@ -1320,7 +1345,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
             opacity=0.45, color='#5b8dee', interpolate='monotone'
         ).encode(
             x=alt.X('date:T', title='Date'),
-            y=alt.Y('cum_cost:Q', title='Value (Rp)', stack=None),
+            y=alt.Y('cum_cost:Q', title=f'Value ({curr_symbol})', stack=None),
         )
         mkt_area = alt.Chart(porto_df).mark_area(
             opacity=0.35, color='#27ae60', interpolate='monotone'
@@ -1368,7 +1393,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None):
                 cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color='#f39c12'
             ).encode(
                 x=alt.X('year_str:O', title='Year', sort=None),
-                y=alt.Y('dividend_income:Q', title='Dividend Income (Rp)'),
+                y=alt.Y('dividend_income:Q', title=f'Dividend Income ({curr_symbol})'),
                 tooltip=[
                     alt.Tooltip('year_str:O', title='Year'),
                     alt.Tooltip('dividend_income:Q', title='Annual Dividend', format=',.0f'),
@@ -1420,7 +1445,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     add_anchor('simulation')
     with st.expander(f'Compounding Simulation: {stock_name}', expanded=True):
-        render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df)
+        render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df, currency=currency)
 
 
 
