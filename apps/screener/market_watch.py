@@ -131,6 +131,84 @@ def get_prices_for_date_range(
     return df
 
 
+# ── Fetch index prices from FMP ───────────────────────────────────────────── #
+
+_INDEX_SYMBOLS = {
+    '^JKSE':  'IHSG',
+    '^GSPC':  'S&P 500',
+    '^N225':  'Nikkei 225',
+    '^KS11':  'KOSPI',
+    '^AXJO':  'ASX 200',
+    '^TWII':  'TWSE',
+    '^HSI':   'Hang Seng',
+    '^STI':   'STI',
+    '^KLSE':  'KLCI',
+    '^BSESN': 'Sensex',
+}
+
+_INDEX_COLORS = {
+    'IHSG':       '#f97316',   # orange  – anchor
+    'S&P 500':    '#3b82f6',   # blue    – US benchmark
+    'Nikkei 225': '#ef4444',   # red     – Japan
+    'KOSPI':      '#ec4899',   # pink    – Korea
+    'ASX 200':    '#0ea5e9',   # sky     – Australia
+    'TWSE':       '#fb7185',   # rose    – Taiwan
+    'Hang Seng':  '#f59e0b',   # amber   – Hong Kong
+    'STI':        '#10b981',   # emerald – Singapore
+    'KLCI':       '#a78bfa',   # purple  – Malaysia
+    'Sensex':     '#d97706',   # saffron – India
+}
+
+_INDEX_FLAGS = {
+    'IHSG':       '🇮🇩',
+    'S&P 500':    '🇺🇸',
+    'Nikkei 225': '🇯🇵',
+    'KOSPI':      '🇰🇷',
+    'ASX 200':    '🇦🇺',
+    'TWSE':       '🇹🇼',
+    'Hang Seng':  '🇭🇰',
+    'STI':        '🇸🇬',
+    'KLCI':       '🇲🇾',
+    'Sensex':     '🇮🇳',
+}
+
+
+@st.cache_data(ttl=60 * 60 * 4, show_spinner='Fetching index prices…')
+def get_index_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
+    """
+    Fetches daily close prices for all tracked indices from FMP.
+    Returns a long-format DataFrame: [date, index, close].
+    """
+    import requests as _req
+
+    all_rows = []
+    for sym, label in _INDEX_SYMBOLS.items():
+        try:
+            url = (
+                f'https://financialmodelingprep.com/api/v3/historical-price-full/{sym}'
+                f'?from={date_from}&to={date_to}&apikey={fmp_key}'
+            )
+            resp = _req.get(url, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            hist = data.get('historical', [])
+            for row in hist:
+                all_rows.append({
+                    'date':  row['date'],
+                    'index': label,
+                    'close': row['close'],
+                })
+        except Exception as e:
+            logger.warning(f'Could not fetch index {sym} ({label}): {e}')
+
+    if not all_rows:
+        return pd.DataFrame(columns=['date', 'index', 'close'])
+
+    df = pd.DataFrame(all_rows)
+    df['date'] = pd.to_datetime(df['date'])
+    return df.sort_values('date')
+
+
 def calc_daily_return_for_date(prices_df: pd.DataFrame, target_date: pd.Timestamp) -> pd.DataFrame:
     """
     Given a long-format price DataFrame, compute the 1-day return for
@@ -351,6 +429,219 @@ else:
                 f"1D Return: **{ret:+.2f}%**",
                 icon='ℹ️'
             )
+
+    # ── Global Index Comparison ───────────────────────────────────────────── #
+
+    st.divider()
+    st.subheader('🌐 Global Index Comparison')
+    st.caption('Normalized performance (rebased to 100) vs IHSG — select a time window to compare.')
+
+    _PERIOD_OPTIONS = {
+        '1W':  7,
+        '1M':  30,
+        '3M':  90,
+        '6M':  180,
+        'YTD': None,   # handled specially
+        '1Y':  365,
+        '2Y':  730,
+    }
+
+    idx_col1, idx_col2 = st.columns([3, 1])
+    with idx_col2:
+        period_label = st.selectbox(
+            'Period',
+            options=list(_PERIOD_OPTIONS.keys()),
+            index=2,          # default 3M
+            key='mw_idx_period',
+        )
+        visible_indices = st.multiselect(
+            'Show indices',
+            options=list(_INDEX_SYMBOLS.values()),
+            default=list(_INDEX_SYMBOLS.values()),
+            key='mw_idx_visible',
+        )
+
+    # Compute date range for index fetch
+    idx_to   = selected_date
+    if period_label == 'YTD':
+        idx_from = date(selected_date.year, 1, 1)
+    else:
+        idx_from = idx_to - timedelta(days=_PERIOD_OPTIONS[period_label])
+
+    idx_from_str = idx_from.strftime('%Y-%m-%d')
+    idx_to_str   = idx_to.strftime('%Y-%m-%d')
+
+    idx_prices_df = get_index_prices(api_key, idx_from_str, idx_to_str)
+
+    with idx_col1:
+        if idx_prices_df.empty:
+            st.warning('Could not load index price data. Check FMP API key or network.', icon='⚠️')
+        else:
+            # Filter to selected indices
+            idx_prices_df = idx_prices_df[idx_prices_df['index'].isin(visible_indices)]
+
+            if idx_prices_df.empty:
+                st.info('Select at least one index to display.')
+            else:
+                import altair as alt
+
+                # Normalize each index to 100 at first available date
+                def _normalize(g):
+                    g = g.sort_values('date')
+                    base = g['close'].iloc[0]
+                    if base and base != 0:
+                        g['normalized'] = g['close'] / base * 100
+                    else:
+                        g['normalized'] = g['close']
+                    return g
+
+                norm_df = (
+                    idx_prices_df
+                    .groupby('index', group_keys=False)
+                    .apply(_normalize)
+                    .reset_index(drop=True)
+                )
+
+                # Colour scale
+                domain_idx    = list(_INDEX_COLORS.keys())
+                range_idx     = list(_INDEX_COLORS.values())
+
+                # Highlight IHSG with a thicker, full-opacity line
+                norm_others = norm_df[norm_df['index'] != 'IHSG']
+                norm_ihsg   = norm_df[norm_df['index'] == 'IHSG']
+
+                sel = alt.selection_point(fields=['index'], bind='legend')
+
+                base_line = alt.Chart(norm_others).mark_line(
+                    strokeWidth=1.8,
+                    opacity=0.75,
+                    interpolate='monotone',
+                ).encode(
+                    x=alt.X('date:T', title=''),
+                    y=alt.Y('normalized:Q', title='Indexed (100 = period start)',
+                            scale=alt.Scale(zero=False)),
+                    color=alt.Color(
+                        'index:N',
+                        scale=alt.Scale(domain=domain_idx, range=range_idx),
+                        legend=alt.Legend(title='Index', orient='right'),
+                    ),
+                    opacity=alt.condition(sel, alt.value(0.85), alt.value(0.15)),
+                    tooltip=[
+                        alt.Tooltip('date:T',         title='Date'),
+                        alt.Tooltip('index:N',        title='Index'),
+                        alt.Tooltip('normalized:Q',   title='Indexed',  format='.2f'),
+                        alt.Tooltip('close:Q',        title='Close',    format=',.2f'),
+                    ],
+                ).add_params(sel)
+
+                ihsg_line = alt.Chart(norm_ihsg).mark_line(
+                    strokeWidth=3.5,
+                    opacity=1.0,
+                    interpolate='monotone',
+                    strokeDash=[],
+                ).encode(
+                    x=alt.X('date:T'),
+                    y=alt.Y('normalized:Q', scale=alt.Scale(zero=False)),
+                    color=alt.Color(
+                        'index:N',
+                        scale=alt.Scale(domain=domain_idx, range=range_idx),
+                    ),
+                    tooltip=[
+                        alt.Tooltip('date:T',         title='Date'),
+                        alt.Tooltip('index:N',        title='Index'),
+                        alt.Tooltip('normalized:Q',   title='Indexed',  format='.2f'),
+                        alt.Tooltip('close:Q',        title='Close',    format=',.2f'),
+                    ],
+                )
+
+                baseline_rule = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                    strokeDash=[4, 3], color='#888888', strokeWidth=1, opacity=0.6
+                ).encode(y='y:Q')
+
+                perf_chart = (
+                    alt.layer(baseline_rule, base_line, ihsg_line)
+                    .properties(height=360)
+                    .resolve_scale(color='shared')
+                )
+                st.altair_chart(perf_chart, width='stretch')
+
+    # ── Index metric cards (1D return + period return) ───────────────────────#
+
+    if not idx_prices_df.empty:
+        # Fetch a 1-week window around selected_date to compute the 1D return
+        all_idx_full = get_index_prices(
+            api_key,
+            (selected_date - timedelta(days=7)).strftime('%Y-%m-%d'),
+            idx_to_str,
+        )
+
+        if not all_idx_full.empty:
+            all_idx_full   = all_idx_full[all_idx_full['index'].isin(visible_indices)]
+            target_ts_idx  = pd.Timestamp(selected_date)
+
+            # Also compute period return from the already-fetched norm_df
+            # norm_df is in scope from the block above (inside idx_col1 `with`).
+            # Re-compute it safely here using idx_prices_df (already filtered).
+            def _period_return(g):
+                g = g.sort_values('date')
+                if len(g) < 2:
+                    return None
+                return (g['close'].iloc[-1] / g['close'].iloc[0] - 1) * 100
+
+            period_rets = (
+                idx_prices_df
+                .groupby('index')
+                .apply(_period_return)
+                .dropna()
+            )  # Series: index → period_return_pct
+
+            def _get_1d_return(g):
+                g = g.sort_values('date')
+                today_row  = g[g['date'] == target_ts_idx]
+                prev_rows  = g[g['date'] < target_ts_idx]
+                if today_row.empty or prev_rows.empty:
+                    return None
+                close      = float(today_row['close'].iloc[0])
+                prev_close = float(prev_rows.iloc[-1]['close'])
+                return (close / prev_close - 1) * 100 if prev_close else None
+
+            daily_rets = (
+                all_idx_full
+                .groupby('index')
+                .apply(_get_1d_return)
+                .dropna()
+            )  # Series: index → 1d_return_pct
+
+            # Build sorted order: IHSG first, then descending by period return
+            all_labels = [lbl for lbl in _INDEX_SYMBOLS.values() if lbl in visible_indices]
+            sorted_labels = sorted(
+                all_labels,
+                key=lambda lbl: (lbl != 'IHSG', -(period_rets.get(lbl, float('-inf')))),
+            )
+
+            st.markdown(
+                f'**📊 Index Returns — 1D vs {period_label} period**'
+            )
+            # Render cards in rows of 5
+            cards_per_row = 5
+            for row_start in range(0, len(sorted_labels), cards_per_row):
+                row_labels = sorted_labels[row_start: row_start + cards_per_row]
+                cols = st.columns(len(row_labels))
+                for col, lbl in zip(cols, row_labels):
+                    d_ret  = daily_rets.get(lbl)
+                    p_ret  = period_rets.get(lbl)
+                    d_str  = f'{d_ret:+.2f}%'  if d_ret  is not None else 'N/A'
+                    p_str  = f'{p_ret:+.2f}%'  if p_ret  is not None else 'N/A'
+                    # delta colour follows sign of 1D return
+                    d_color = 'normal' if (d_ret or 0) >= 0 else 'inverse'
+                    flag    = _INDEX_FLAGS.get(lbl, '')
+                    col.metric(
+                        label=f'{flag} {lbl}',
+                        value=p_str,
+                        delta=f'1D {d_str}',
+                        delta_color=d_color,
+                        help=f'Period return over **{period_label}** | 1-day return on {date_to_str}',
+                    )
 
     # ── Distribution chart ────────────────────────────────────────────────── #
 
