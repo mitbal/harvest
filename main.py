@@ -20,12 +20,15 @@ logging.getLogger('tornado.general').setLevel(logging.CRITICAL)
 
 page_home = st.Page('home.py', title='Home', icon='🪙')
 page_screener = st.Page('apps/screener/stock_picker.py', title='Stock Picker', icon='💸')
+page_market_watch = st.Page('apps/screener/market_watch.py', title='Market Watch', icon='📡')
 page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Overview', icon='💰')
 page_history = st.Page('apps/history/history_overview.py', title='Historical Breakdown', icon='🧭')
 page_calendar = st.Page('apps/calendar/calendar.py', title='Dividend Calendar', icon='📅')
 page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
+# page_backtester = st.Page('apps/trading/backtester.py', title='Strategy Backtester', icon='📈')
+# page_day_trading_ml = st.Page('apps/trading/day_trading_ml.py', title='Day Trading (ML)', icon='🤖')
 # page_trading = st.Page('apps/voc/copenhagen.py', title='Copenhagen Model', icon='🎮')
 # page_viz = st.Page('apps/viz/viz.py', title='Vis')
 
@@ -34,9 +37,12 @@ pages = st.navigation(
     {
         'Home': [page_home],
         'Apps': [page_screener,
+                 page_market_watch,
                  page_calendar,
                 #  page_assistant,
                  page_simulator,
+                #  page_backtester,
+                #  page_day_trading_ml,
                  page_porto,
                  page_article,
                 #  page_viz,
