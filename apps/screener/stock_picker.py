@@ -1025,7 +1025,7 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
         text = base.mark_text(baseline='middle').encode(
             text=alt.Text('Intrinsic Value:Q', format=',.0f'),
             color=alt.condition(
-                alt.datum['Intrinsic Value'] > current_price,
+                f"datum['Intrinsic Value'] > {current_price}",
                 alt.value('black'),
                 alt.value('white')
             )
