@@ -649,22 +649,12 @@ else:
             else:
                 import altair as alt
 
-                # Normalize each index to 100 at first available date
-                def _normalize(g):
-                    g = g.sort_values('date')
-                    base = g['close'].iloc[0]
-                    if base and base != 0:
-                        g['normalized'] = g['close'] / base * 100
-                    else:
-                        g['normalized'] = g['close']
-                    return g
-
-                norm_df = (
-                    idx_prices_df
-                    .groupby('index', group_keys=False)
-                    .apply(_normalize)
-                    .reset_index(drop=True)
+                # Normalize each index to 100 at its first available date
+                _idx_sorted = idx_prices_df.sort_values(['index', 'date'])
+                _idx_sorted['normalized'] = _idx_sorted.groupby('index')['close'].transform(
+                    lambda g: g / g.iloc[0] * 100 if g.iloc[0] and g.iloc[0] != 0 else g
                 )
+                norm_df = _idx_sorted
 
                 # Colour scale
                 domain_idx    = list(_INDEX_COLORS.keys())
@@ -755,7 +745,7 @@ else:
             period_rets = (
                 idx_prices_df
                 .groupby('index')
-                .apply(_period_return)
+                .apply(_period_return, include_groups=False)
                 .dropna()
             )  # Series: index → period_return_pct
 
@@ -772,7 +762,7 @@ else:
             daily_rets = (
                 all_idx_full
                 .groupby('index')
-                .apply(_get_1d_return)
+                .apply(_get_1d_return, include_groups=False)
                 .dropna()
             )  # Series: index → 1d_return_pct
 
@@ -852,19 +842,12 @@ else:
             else:
                 import altair as alt
 
-                # Normalize each pair to 100 at first available date
-                def _normalize_fx(g):
-                    g = g.sort_values('date')
-                    base = g['close'].iloc[0]
-                    g['normalized'] = g['close'] / base * 100 if base and base != 0 else g['close']
-                    return g
-
-                fx_norm_df = (
-                    fx_filtered
-                    .groupby('pair', group_keys=False)
-                    .apply(_normalize_fx)
-                    .reset_index(drop=True)
+                # Normalize each pair to 100 at its first available date
+                _fx_sorted = fx_filtered.sort_values(['pair', 'date'])
+                _fx_sorted['normalized'] = _fx_sorted.groupby('pair')['close'].transform(
+                    lambda g: g / g.iloc[0] * 100 if g.iloc[0] and g.iloc[0] != 0 else g
                 )
+                fx_norm_df = _fx_sorted
 
                 # Build color scale from label → color
                 fx_domain = [v[0] for v in _FX_SYMBOLS.values()]
@@ -928,7 +911,7 @@ else:
             fx_period_rets = (
                 fx_period_df
                 .groupby('pair')
-                .apply(_fx_period_return)
+                .apply(_fx_period_return, include_groups=False)
                 .dropna()
             )
 
@@ -945,7 +928,7 @@ else:
             fx_daily_rets = (
                 fx_full
                 .groupby('pair')
-                .apply(_fx_1d_return)
+                .apply(_fx_1d_return, include_groups=False)
                 .dropna()
             )
 
