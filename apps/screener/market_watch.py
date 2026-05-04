@@ -56,6 +56,66 @@ logger = get_logger('market_watch')
 
 # ── Load stock universe (sector / industry / mcap metadata) ──────────────── #
 
+@st.cache_data(ttl=60 * 5, show_spinner='Fetching live price changes from FMP…')
+def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
+    """
+    Fetches the latest price, absolute change, and % change for each symbol
+    from the FMP ``/profile`` endpoint.  This is used as a real-time fallback
+    when today's Supabase prices are not yet available.
+
+    Returns a DataFrame indexed by symbol with columns:
+        [close, prev_close, return_1d_pct]
+    matching the shape produced by ``calc_daily_return_for_date``.
+    """
+    import requests as _req
+
+    chunk_size = 50   # FMP accepts up to ~50 tickers per request
+    rows = []
+
+    for i in range(0, len(symbols), chunk_size):
+        chunk = list(symbols[i: i + chunk_size])
+        param = ','.join(chunk)
+        url = (
+            f'https://financialmodelingprep.com/api/v3/profile/{param}'
+            f'?apikey={api_key}'
+        )
+        try:
+            resp = _req.get(url, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list):
+                for item in data:
+                    price    = item.get('price')
+                    changes  = item.get('changes')
+                    changes_pct = item.get('changesPercentage')
+                    sym      = item.get('symbol')
+                    if price is None or sym is None:
+                        continue
+                    # Derive prev_close; fall back to computing from price + changes
+                    if changes_pct is not None and price is not None:
+                        ret = float(changes_pct)
+                    elif changes is not None and price is not None:
+                        prev = float(price) - float(changes)
+                        ret  = (float(changes) / prev * 100) if prev else 0.0
+                    else:
+                        continue
+                    prev_close = float(price) - float(changes or 0)
+                    rows.append({
+                        'symbol':        sym,
+                        'close':         float(price),
+                        'prev_close':    prev_close,
+                        'return_1d_pct': ret,
+                    })
+        except Exception as e:
+            logger.warning(f'Could not fetch company profile chunk: {e}')
+
+    if not rows:
+        return pd.DataFrame(columns=['close', 'prev_close', 'return_1d_pct'])
+
+    df = pd.DataFrame(rows).set_index('symbol')
+    return df
+
+
 @st.cache_data(ttl=60 * 10, show_spinner='Loading stock universe…')
 def get_stock_universe(key: str) -> pd.DataFrame:
     r = connect_redis(redis_url)
@@ -392,24 +452,45 @@ with st.spinner(f'Fetching price data for {date_to_str}…'):
 target_ts = pd.Timestamp(selected_date)
 returns_df = calc_daily_return_for_date(prices_df, target_ts)
 
-# ── Fall back to latest available date if selected date has no data ────────── #
+# ── Fallback logic: FMP live profile → then previous Supabase date ─────────── #
+# Priority order:
+#   1. Supabase data for the selected date  (already computed above as returns_df)
+#   2. FMP company profile live data        (when selected date is today / very recent)
+#   3. Most recent available Supabase date  (e.g. yesterday, for weekends / holidays)
 
 _effective_date = selected_date
-if returns_df.empty and not prices_df.empty:
-    available_dates = prices_df['date'].unique()
-    if len(available_dates) > 0:
-        latest_available = pd.Timestamp(max(available_dates)).date()
-        if latest_available != selected_date:
+_using_live_profile = False   # flag: returns_df came from FMP company profile
+
+if returns_df.empty:
+    # ── Try FMP live profile first for recent dates ─────────────────────── #
+    if selected_date >= (date.today() - timedelta(days=3)):
+        with st.spinner('Fetching live price data from FMP…'):
+            live_returns = get_live_returns_from_profile(symbols_tuple)
+        if not live_returns.empty:
+            returns_df = live_returns
+            _using_live_profile = True
             st.info(
-                f'No price data available for **{date_to_str}** '
-                f'(weekend, holiday, or data not yet loaded). '
-                f'Showing data for the most recent available date: **{latest_available}**.',
-                icon='ℹ️'
+                f'Supabase has no price data for **{date_to_str}** yet. '
+                'Showing **live / latest** price changes from FMP company profiles instead.',
+                icon='📡'
             )
-            _effective_date = latest_available
-            target_ts = pd.Timestamp(latest_available)
-            date_to_str = latest_available.strftime('%Y-%m-%d')
-            returns_df = calc_daily_return_for_date(prices_df, target_ts)
+
+    # ── If live profile also failed, fall back to most recent Supabase date ─ #
+    if returns_df.empty and not prices_df.empty:
+        available_dates = prices_df['date'].unique()
+        if len(available_dates) > 0:
+            latest_available = pd.Timestamp(max(available_dates)).date()
+            if latest_available != selected_date:
+                st.info(
+                    f'No price data available for **{date_to_str}** '
+                    f'(weekend, holiday, or data not yet loaded). '
+                    f'Showing data for the most recent available date: **{latest_available}**.',
+                    icon='ℹ️'
+                )
+                _effective_date = latest_available
+                target_ts = pd.Timestamp(latest_available)
+                date_to_str = latest_available.strftime('%Y-%m-%d')
+                returns_df = calc_daily_return_for_date(prices_df, target_ts)
 
 # ── KPI row ───────────────────────────────────────────────────────────────── #
 
