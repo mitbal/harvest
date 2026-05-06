@@ -1299,7 +1299,15 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
     final_lots      = int(porto_df['cum_stock'].iloc[-1])
     avg_price       = porto_df['price'].mean()
     div_lots_approx = int(total_dividends / (avg_price * 100)) if avg_price > 0 else 0
-    cagr            = ((final_mkt_value / total_invested) ** (1 / n_years) - 1) * 100 if total_invested > 0 else 0
+
+    if not div_income_df.empty:
+        div_income_df['year'] = div_income_df['date'].dt.year
+        _annual_div = div_income_df.groupby('year')['dividend_income'].sum()
+        latest_annual_div = _annual_div.iloc[-1]
+    else:
+        latest_annual_div = 0
+
+    yoc             = (latest_annual_div / total_invested) * 100 if total_invested > 0 else 0
     total_return_pct = (final_mkt_value / total_invested - 1) * 100 if total_invested > 0 else 0
 
     # ── Hero KPI row ───────────────────────────────────────────────────── #
@@ -1313,7 +1321,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
     k2.metric('📈 Portfolio Value',          _fmt(final_mkt_value),
               delta=f'{total_return_pct:+.1f}%', delta_color=delta_color)
     k3.metric('🎁 Total Dividends Received', _fmt(total_dividends))
-    k4.metric('📊 CAGR',                     f'{cagr:.1f}%/yr')
+    k4.metric('📊 Yield on Cost',            f'{yoc:.1f}%')
     k5.metric('🎯 Bonus Lots from Dividends', f'~{div_lots_approx:,} lots',
               help='Approximate lots purchased using reinvested dividends')
     # st.markdown('---')
