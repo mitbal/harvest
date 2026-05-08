@@ -164,22 +164,6 @@ def render_kpi(label, value, delta=None, delta_type="normal"):
         </div>
     """)
 
-# --- Header ---
-col_head1, col_head2 = st.columns([3, 1])
-with col_head1:
-    st.title('Portfolio Analytics')
-    if st.user.is_logged_in:
-        st.markdown(f"**Welcome back, {st.user.name.split()[0]}!** Here's your harvest overview for today.")
-    else:
-        st.markdown("Analyze your portfolio performance and dividend growth.")
-
-with col_head2:
-    if st.user.is_logged_in:
-         st.button('Log Out', icon=':material/logout:', on_click=st.logout, width='stretch')
-    else:
-         st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), width='stretch')
-
-
 conn = get_db_connection()
 
 data_input_expand_flag = True
@@ -197,6 +181,26 @@ if 'porto_df' not in st.session_state:
         st.session_state['porto_df'] = None
 else:
     data_input_expand_flag = False
+
+
+# --- Header ---
+col_head1, col_head2 = st.columns([3, 1])
+with col_head1:
+    st.title('Portfolio Analytics')
+    if st.user.is_logged_in:
+        st.markdown(f"**Welcome back, {st.user.name.split()[0]}!** Here's your harvest overview for today.")
+    else:
+        st.markdown("Analyze your portfolio performance and dividend growth.")
+
+with col_head2:
+    if st.user.is_logged_in:
+         st.button('Log Out', icon=':material/logout:', on_click=st.logout, width='stretch')
+         if st.session_state.get('porto_df') is not None:
+             if st.button('💾 Sync Portfolio to Cloud', width='stretch'):
+                 update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.user.email)
+                 st.success('Portfolio synced successfully!', icon="✅")
+    else:
+         st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), width='stretch')
 
 
 with st.expander('📥 Porto Data Input', expanded=data_input_expand_flag):
@@ -713,7 +717,4 @@ with st.expander('📈 Compounding Projection', expanded=True):
     st.altair_chart(future_chart, width="stretch")
 
 
-if st.user.is_logged_in:
-    if st.button('💾 Sync Portfolio to Cloud', width='stretch'):
-        update_user_portfolio(conn, st.session_state['porto_df'].to_dict(), st.user.email)
-        st.success('Portfolio synced successfully!', icon="✅")
+
