@@ -52,6 +52,11 @@ pages = st.navigation(
     }
 )
 
+if st.user.is_logged_in and 'has_redirected_after_login' not in st.session_state:
+    st.session_state['has_redirected_after_login'] = True
+    if pages.title == 'Home':
+        st.switch_page(page_porto)
+
 
 # --- URL Parameter Tracking ---
 # Runs on every page navigation; URL params captured once per session
