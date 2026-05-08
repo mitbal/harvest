@@ -382,7 +382,7 @@ today = date.today()
 # Default to most recent weekday
 default_date = today if today.weekday() < 5 else today - timedelta(days=today.weekday() - 4)
 
-ctrl_cols = st.columns([2, 2, 2, 2, 1])
+ctrl_cols = st.columns([2, 2, 2, 2, 2, 1])
 
 selected_date = ctrl_cols[0].date_input(
     '📅 Select Date',
@@ -400,11 +400,21 @@ if universe_df.empty:
     st.error('Could not load stock universe. Please check the data pipeline.', icon='🚨')
     st.stop()
 
-# Keep only needed columns
-_KEEP = [c for c in ['sector', 'industry', 'mktCap', 'yield', 'medianProfitMargin',
-                      'revenueTTM', 'earningTTM', 'peRatio', 'psRatio', 'revenueGrowth'] if c in universe_df.columns]
+# Keep only needed columns (include multi-period return columns for color-by feature)
+_KEEP = [c for c in [
+    'sector', 'industry', 'mktCap', 'yield', 'medianProfitMargin',
+    'revenueTTM', 'earningTTM', 'peRatio', 'psRatio', 'revenueGrowth',
+    'return_7d', 'return_1m', 'return_1y', 'return_10y',
+    'total_return_1y', 'total_return_10y',
+] if c in universe_df.columns]
 universe_df = universe_df[_KEEP].copy()
 universe_df['mktCap_B'] = universe_df['mktCap'] / 1_000_000_000
+
+# Convert fractional returns to percent (they are stored as 0-1 fractions)
+_ret_pct_cols = ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
+for _rc in _ret_pct_cols:
+    if _rc in universe_df.columns:
+        universe_df[_rc] = universe_df[_rc] * 100
 
 
 # ── Treemap controls ──────────────────────────────────────────────────────── #
@@ -415,15 +425,42 @@ size_var = ctrl_cols[1].selectbox(
     key='mw_size',
 )
 
-sector_filter = ctrl_cols[2].selectbox(
+# Build color-by options based on available columns
+_COLOR_OPTION_COL_MAP = {
+    '1D Return %':         None,   # computed from Supabase / live data
+    '7D Return %':         'return_7d',
+    '1M Return %':         'return_1m',
+    '1Y Return %':         'return_1y',
+    '10Y Return %':        'return_10y',
+    'Total 1Y Return %':   'total_return_1y',
+    'Total 10Y Return %':  'total_return_10y',
+    'Dividend Yield':      'yield',
+    'Profit Margin':       'medianProfitMargin',
+    'Revenue Growth':      'revenueGrowth',
+    'PE Ratio':            'peRatio',
+    'PS Ratio':            'psRatio',
+}
+_available_color_opts = [
+    k for k, v in _COLOR_OPTION_COL_MAP.items()
+    if v is None or v in universe_df.columns
+]
+
+color_var_label = ctrl_cols[2].selectbox(
+    'Color by',
+    options=_available_color_opts,
+    index=0,
+    key='mw_color',
+)
+
+sector_filter = ctrl_cols[3].selectbox(
     'Sector',
     options=['ALL'] + sorted(universe_df['sector'].dropna().unique().tolist()),
     key='mw_sector',
 )
 
-group_secs = ctrl_cols[3].toggle('Group by Sector', value=True, key='mw_group')
+group_secs = ctrl_cols[4].toggle('Group by Sector', value=True, key='mw_group')
 
-min_mcap_b = ctrl_cols[4].number_input(
+min_mcap_b = ctrl_cols[5].number_input(
     'Min MCap (B)',
     min_value=0,
     max_value=1_000,
@@ -535,21 +572,52 @@ else:
     # Drop rows where size column is missing or <= 0
     df_tree = df_tree[df_tree[size_col].notna() & (df_tree[size_col] > 0)]
 
+    # ── Resolve color column ───────────────────────────────────────────────── #
+    _color_src_col = _COLOR_OPTION_COL_MAP[color_var_label]
+    if _color_src_col is None:
+        # '1D Return %' — always computed from live/Supabase data
+        color_col_data = df_tree['return_1d_pct']
+    elif _color_src_col in df_tree.columns:
+        color_col_data = df_tree[_color_src_col]
+    else:
+        # Fallback: column requested but not in universe — revert to 1D
+        color_col_data = df_tree['return_1d_pct']
+        color_var_label = '1D Return %'
+
     tree_input = pd.DataFrame({
-        'sector':       df_tree['sector'],
-        'industry':     df_tree['industry'],
-        size_var:       df_tree[size_col],
-        '1D Return %':  df_tree['return_1d_pct'],
+        'sector':          df_tree['sector'],
+        'industry':        df_tree['industry'],
+        size_var:          df_tree[size_col],
+        color_var_label:   color_col_data,
     }, index=df_tree.index).dropna()
 
-    # ── Build treemap ─────────────────────────────────────────────────────── #
+    # ── Color map & threshold based on selected variable ─────────────────── #
+    _return_labels = {
+        '1D Return %', '7D Return %', '1M Return %', '1Y Return %',
+        '10Y Return %', 'Total 1Y Return %', 'Total 10Y Return %',
+    }
+    if color_var_label in _return_labels:
+        color_map = 'red_green'
+        color_threshold = [-10, -5, -2, -0.5, 0.5, 2, 5, 10]
+    elif color_var_label == 'PE Ratio':
+        color_map = 'red_shade'
+        color_threshold = [-100, 0, 5, 15]
+    elif color_var_label == 'PS Ratio':
+        color_map = 'red_shade'
+        color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
+    elif color_var_label == 'Dividend Yield':
+        color_map = 'green_shade'
+        color_threshold = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    else:
+        color_map = 'green_shade'
+        color_threshold = None
 
-    color_threshold = [-10, -5, -2, -0.5, 0.5, 2, 5, 10]
+    # ── Build treemap ─────────────────────────────────────────────────────── #
 
     tree_data = hd.prep_treemap(
         tree_input,
         size_var=size_var,
-        color_var='1D Return %',
+        color_var=color_var_label,
         color_threshold=color_threshold,
         add_label='color_var',
         group_secs=group_secs,
@@ -558,9 +626,9 @@ else:
     option = hp.plot_treemap(
         tree_data,
         size_var=size_var,
-        color_var='1D Return %',
+        color_var=color_var_label,
         show_gradient=True,
-        colormap='red_green',
+        colormap=color_map,
         group_secs=group_secs,
     )
 
