@@ -363,6 +363,40 @@ def calc_daily_return_for_date(prices_df: pd.DataFrame, target_date: pd.Timestam
     return merged
 
 
+@st.cache_data(ttl=60 * 60 * 4, show_spinner=False)
+def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> float | None:
+    """
+    Fetches USDIDR close rates for ``n_days`` before ``date_to_str`` and returns
+    the IDR-to-USD appreciation factor for that window:
+
+        fx_factor = usdidr_period_start / usdidr_period_end
+
+    A value < 1.0 means IDR weakened over the period (hurts USD returns).
+    Returns None if data is unavailable.
+    """
+    import requests as _req
+    from datetime import date as _date, timedelta as _td
+    date_from = (_date.fromisoformat(date_to_str) - _td(days=n_days + 14)).isoformat()
+    try:
+        url = (
+            f'https://financialmodelingprep.com/api/v3/historical-price-full/USDIDR'
+            f'?from={date_from}&to={date_to_str}&apikey={fmp_key}'
+        )
+        resp = _req.get(url, timeout=15)
+        resp.raise_for_status()
+        hist = resp.json().get('historical', [])  # newest-first
+        if len(hist) < 2:
+            return None
+        usdidr_end   = float(hist[0]['close'])   # most recent (period end)
+        usdidr_start = float(hist[-1]['close'])  # oldest available (period start)
+        if usdidr_end == 0:
+            return None
+        return usdidr_start / usdidr_end   # > 1 means IDR strengthened
+    except Exception as e:
+        logger.warning(f'Could not fetch USDIDR for {n_days}D window: {e}')
+        return None
+
+
 # ── Sidebar — market selector ─────────────────────────────────────────────── #
 
 stock_select = st.sidebar.radio(
@@ -425,24 +459,45 @@ size_var = ctrl_cols[1].selectbox(
     key='mw_size',
 )
 
-# Build color-by options based on available columns
+# Build color-by options based on available columns.
+# Sentinels starting with '__' are computed at render time, not from universe columns.
 _COLOR_OPTION_COL_MAP = {
-    '1D Return %':         None,   # computed from Supabase / live data
-    '7D Return %':         'return_7d',
-    '1M Return %':         'return_1m',
-    '1Y Return %':         'return_1y',
-    '10Y Return %':        'return_10y',
-    'Total 1Y Return %':   'total_return_1y',
-    'Total 10Y Return %':  'total_return_10y',
-    'Dividend Yield':      'yield',
-    'Profit Margin':       'medianProfitMargin',
-    'Revenue Growth':      'revenueGrowth',
-    'PE Ratio':            'peRatio',
-    'PS Ratio':            'psRatio',
+    '1D Return %':              None,               # % return (IDR) from Supabase / live data
+    '7D Return %':              'return_7d',
+    '7D USD Return %':          '__usd_return__',   # IDR return × FX factor, JKSE only
+    '1M Return %':              'return_1m',
+    '1M USD Return %':          '__usd_return__',
+    '1Y Return %':              'return_1y',
+    '1Y USD Return %':          '__usd_return__',
+    '10Y Return %':             'return_10y',
+    '10Y USD Return %':         '__usd_return__',
+    'Total 1Y Return %':        'total_return_1y',
+    'Total 1Y USD Return %':    '__usd_return__',
+    'Total 10Y Return %':       'total_return_10y',
+    'Total 10Y USD Return %':   '__usd_return__',
+    'Dividend Yield':           'yield',
+    'Profit Margin':            'medianProfitMargin',
+    'Revenue Growth':           'revenueGrowth',
+    'PE Ratio':                 'peRatio',
+    'PS Ratio':                 'psRatio',
 }
+
+# Maps each USD return label → (idr_column, period_in_days)
+_USD_RETURN_MAP = {
+    '7D USD Return %':          ('return_7d',        7),
+    '1M USD Return %':          ('return_1m',        30),
+    '1Y USD Return %':          ('return_1y',        365),
+    '10Y USD Return %':         ('return_10y',       3650),
+    'Total 1Y USD Return %':    ('total_return_1y',  365),
+    'Total 10Y USD Return %':   ('total_return_10y', 3650),
+}
+
 _available_color_opts = [
     k for k, v in _COLOR_OPTION_COL_MAP.items()
-    if v is None or v in universe_df.columns
+    if v is None
+    or v in universe_df.columns
+    # USD return options are only meaningful for IDR-denominated (JKSE) stocks
+    or (v == '__usd_return__' and sl == 'JKSE' and _USD_RETURN_MAP.get(k, (None,))[0] in universe_df.columns)
 ]
 
 color_var_label = ctrl_cols[2].selectbox(
@@ -558,8 +613,24 @@ else:
     # ── Merge returns into universe ───────────────────────────────────────── #
 
     df_tree = filtered_uni.copy()
-    df_tree = df_tree.join(returns_df[['return_1d_pct']], how='left')
+    _ret_cols = [c for c in ['return_1d_pct'] if c in returns_df.columns]
+    df_tree = df_tree.join(returns_df[_ret_cols], how='left')
     df_tree['return_1d_pct'] = df_tree['return_1d_pct'].fillna(0)
+
+    # ── If a USD return variant is requested, fetch the period FX factor ───── #
+    _fx_factor = None
+    if color_var_label in _USD_RETURN_MAP:
+        _idr_col, _n_days = _USD_RETURN_MAP[color_var_label]
+        with st.spinner(f'Fetching USDIDR rate for {color_var_label}…'):
+            _fx_factor = get_usdidr_period_fx_factor(api_key, date_to_str, _n_days)
+        if _fx_factor is None:
+            st.warning(
+                f'Could not fetch USDIDR exchange rate for the {color_var_label} window '
+                '— falling back to IDR return.',
+                icon='⚠️'
+            )
+            # Fall back to the corresponding IDR variant
+            color_var_label = color_var_label.replace(' USD', '')
 
     # Map size variable
     size_col_map = {
@@ -575,12 +646,19 @@ else:
     # ── Resolve color column ───────────────────────────────────────────────── #
     _color_src_col = _COLOR_OPTION_COL_MAP[color_var_label]
     if _color_src_col is None:
-        # '1D Return %' — always computed from live/Supabase data
+        # '1D Return %' — IDR % change from live/Supabase data
         color_col_data = df_tree['return_1d_pct']
+    elif _color_src_col == '__usd_return__':
+        # Multi-period USD return — apply FX factor to the stored IDR return column
+        # Formula: usd_return = (1 + idr_return/100) × (usdidr_start / usdidr_end) − 1
+        #          fx_factor   = usdidr_start / usdidr_end  (< 1 when IDR weakened)
+        _idr_col, _ = _USD_RETURN_MAP[color_var_label]
+        idr_col_data = df_tree[_idr_col] if _idr_col in df_tree.columns else df_tree['return_1d_pct']
+        color_col_data = ((1 + idr_col_data / 100) * _fx_factor - 1) * 100
     elif _color_src_col in df_tree.columns:
         color_col_data = df_tree[_color_src_col]
     else:
-        # Fallback: column requested but not in universe — revert to 1D
+        # Fallback: column not available — revert to 1D %
         color_col_data = df_tree['return_1d_pct']
         color_var_label = '1D Return %'
 
@@ -593,8 +671,13 @@ else:
 
     # ── Color map & threshold based on selected variable ─────────────────── #
     _return_labels = {
-        '1D Return %', '7D Return %', '1M Return %', '1Y Return %',
-        '10Y Return %', 'Total 1Y Return %', 'Total 10Y Return %',
+        '1D Return %',
+        '7D Return %',        '7D USD Return %',
+        '1M Return %',        '1M USD Return %',
+        '1Y Return %',        '1Y USD Return %',
+        '10Y Return %',       '10Y USD Return %',
+        'Total 1Y Return %',  'Total 1Y USD Return %',
+        'Total 10Y Return %', 'Total 10Y USD Return %',
     }
     if color_var_label in _return_labels:
         color_map = 'red_green'
