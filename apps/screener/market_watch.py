@@ -397,11 +397,31 @@ def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> 
         return None
 
 
+# ── URL query params — read once at the top ──────────────────────────────── #
+# Supported params:
+#   market  : 'JKSE' | 'SP500'
+#   date    : 'YYYY-MM-DD'
+#   size    : 'Market Cap' | 'Revenue' | 'Net Income'
+#   color   : any label from _COLOR_OPTION_COL_MAP
+#   sector  : sector name | 'ALL'
+#   group   : '1' | '0'
+#   mcap    : integer (billions)
+
+_qp = st.query_params
+
 # ── Sidebar — market selector ─────────────────────────────────────────────── #
+
+_MARKET_OPTIONS = ['Indonesian Stock (JKSE)', 'S&P 500 (US)']
+_market_qp      = _qp.get('market', '')
+_market_default = (
+    'S&P 500 (US)' if _market_qp.upper() == 'SP500'
+    else 'Indonesian Stock (JKSE)'
+)
 
 stock_select = st.sidebar.radio(
     'Market',
-    ['Indonesian Stock (JKSE)', 'S&P 500 (US)'],
+    _MARKET_OPTIONS,
+    index=_MARKET_OPTIONS.index(_market_default),
     horizontal=False,
     key='mw_sl',
 )
@@ -415,6 +435,15 @@ redis_key = 'div_score_jkse' if sl == 'JKSE' else 'div_score_sp500'
 today = date.today()
 # Default to most recent weekday
 default_date = today if today.weekday() < 5 else today - timedelta(days=today.weekday() - 4)
+
+# Parse date from URL param if present
+_date_qp = _qp.get('date', '')
+try:
+    _date_from_url = date.fromisoformat(_date_qp)
+    if date(2015, 1, 1) <= _date_from_url <= today:
+        default_date = _date_from_url
+except (ValueError, TypeError):
+    pass
 
 ctrl_cols = st.columns([2, 2, 2, 2, 2, 1])
 
@@ -453,9 +482,17 @@ for _rc in _ret_pct_cols:
 
 # ── Treemap controls ──────────────────────────────────────────────────────── #
 
+_SIZE_OPTIONS = ['Market Cap', 'Revenue', 'Net Income']
+_size_qp      = _qp.get('size', '')
+_size_default_idx = (
+    _SIZE_OPTIONS.index(_size_qp)
+    if _size_qp in _SIZE_OPTIONS else 0
+)
+
 size_var = ctrl_cols[1].selectbox(
     'Size by',
-    options=['Market Cap', 'Revenue', 'Net Income'],
+    options=_SIZE_OPTIONS,
+    index=_size_default_idx,
     key='mw_size',
 )
 
@@ -500,30 +537,61 @@ _available_color_opts = [
     or (v == '__usd_return__' and sl == 'JKSE' and _USD_RETURN_MAP.get(k, (None,))[0] in universe_df.columns)
 ]
 
+_color_qp = _qp.get('color', '')
+_color_default_idx = (
+    _available_color_opts.index(_color_qp)
+    if _color_qp in _available_color_opts else 0
+)
+
 color_var_label = ctrl_cols[2].selectbox(
     'Color by',
     options=_available_color_opts,
-    index=0,
+    index=_color_default_idx,
     key='mw_color',
 )
 
+_sector_options = ['ALL'] + sorted(universe_df['sector'].dropna().unique().tolist())
+_sector_qp      = _qp.get('sector', 'ALL')
+_sector_default = _sector_qp if _sector_qp in _sector_options else 'ALL'
+
 sector_filter = ctrl_cols[3].selectbox(
     'Sector',
-    options=['ALL'] + sorted(universe_df['sector'].dropna().unique().tolist()),
+    options=_sector_options,
+    index=_sector_options.index(_sector_default),
     key='mw_sector',
 )
 
-group_secs = ctrl_cols[4].toggle('Group by Sector', value=True, key='mw_group')
+_group_qp  = _qp.get('group', '1')
+_group_default = _group_qp != '0'
+
+group_secs = ctrl_cols[4].toggle('Group by Sector', value=_group_default, key='mw_group')
+
+_mcap_default = 1 if sl == 'SP500' else 10
+try:
+    _mcap_qp = int(_qp.get('mcap', ''))
+    if 0 <= _mcap_qp <= 1_000:
+        _mcap_default = _mcap_qp
+except (ValueError, TypeError):
+    pass
 
 min_mcap_b = ctrl_cols[5].number_input(
     'Min MCap (B)',
     min_value=0,
     max_value=1_000,
-    value=1 if sl == 'SP500' else 10,
+    value=_mcap_default,
     step=1,
     key='mw_mcap',
     help='Minimum market cap in Billions to include in the treemap'
 )
+
+# ── Sync widget state → URL query params ──────────────────────────────────── #
+_qp['market']  = sl
+_qp['date']    = selected_date.strftime('%Y-%m-%d')
+_qp['size']    = size_var
+_qp['color']   = color_var_label
+_qp['sector']  = sector_filter
+_qp['group']   = '1' if group_secs else '0'
+_qp['mcap']    = str(min_mcap_b)
 
 # ── Filter universe ───────────────────────────────────────────────────────── #
 
