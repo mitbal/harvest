@@ -110,6 +110,21 @@ with st.sidebar:
     st.html(f'Support me on<br/>'+'<a href="https://trakteer.id/mitbal" target="_blank"><img id="wse-buttons-preview" src="https://cdn.trakteer.id/images/embed/trbtn-red-1.png?date=18-11-2023" height="40" style="border:0px;height:40px;" alt="Trakteer Saya"></a> ')
     st.markdown('[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/mitbal)')
     st.html(f'Join the Community!<br/>'+'<a href="https://reddit.com/r/panendividen" target="_blank"><img id="wse-buttons-preview" src="https://images.icon-icons.com/2530/PNG/512/reddit_button_icon_151844.png" height="30" style="border:0px;height:40px;" alt="Reddit r/panendividen"></a> ')
+    st.html(
+        'Read the Blog!<br/>'
+        '<a id="blog-link" href="https://blog.panendividen.com" target="_blank" '
+        'style="display:inline-flex;align-items:center;gap:6px;background:#ffffff;'
+        'color:#14532D;padding:6px 14px;border-radius:6px;text-decoration:none;'
+        'font-weight:600;font-size:0.85rem;">✍️ blog.panendividen.com</a>'
+        '<script>'
+        'document.getElementById("blog-link").addEventListener("click", function() {'
+        '  console.log("[tracking] blog_click");'
+        '  var url = new URL(window.location.href);'
+        '  url.searchParams.set("blog_click", "1");'
+        '  fetch(url.toString(), {method: "GET", mode: "no-cors"}).catch(function(){});'
+        '});'
+        '</script>'
+    )
     st.divider()
 
 pages.run()
