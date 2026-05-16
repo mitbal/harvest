@@ -1226,7 +1226,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
         invest_mult   = 1_000_000
         init_default  = 10
         topup_default = 1
-        init_max      = 1000
+        init_max      = 10000
         topup_max     = 100
     else:
         curr_symbol   = '$'
@@ -1271,10 +1271,13 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
     porto_df['mkt_value'] = porto_df['price'] * porto_df['cum_stock'] * 100
 
     # Calculate cumulative top-up (Out-of-pocket investment)
+    # NOTE: porto_df dates can be unreliable (price_df is sorted newest-first,
+    # so buy dates recorded by buy_stock() may not reflect true chronology).
+    # Compute total invested directly from the known start/end years instead.
     init_val = initial_value * invest_mult
     topup_val = monthly_topup * invest_mult
-    start_date = porto_df['date'].min()
-    porto_df['months_passed'] = (porto_df['date'].dt.year - start_date.year) * 12 + (porto_df['date'].dt.month - start_date.month)
+    total_months = (end_year - start_year + 1) * 12 - 1  # first month = initial investment
+    porto_df['months_passed'] = range(len(porto_df))  # approximate for chart shape
     porto_df['cum_topup'] = init_val + porto_df['months_passed'] * topup_val
 
     # ── Parse dividend income from activity log ─────────────────────────── #
@@ -1293,7 +1296,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
 
     # ── Key metrics ────────────────────────────────────────────────────── #
     n_years         = end_year - start_year + 1
-    total_invested  = porto_df['cum_topup'].iloc[-1]
+    total_invested  = init_val + total_months * topup_val
     final_mkt_value = porto_df['mkt_value'].iloc[-1]
     total_dividends = div_income_df['dividend_income'].sum() if not div_income_df.empty else 0
     final_lots      = int(porto_df['cum_stock'].iloc[-1])
