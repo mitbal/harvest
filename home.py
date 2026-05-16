@@ -75,7 +75,4 @@ with open('feature.html', 'r') as f:
     feature = f.read()
 st.html(feature)
 
-with open('footer.html', 'r') as f:
-    footer = f.read()
-st.markdown(footer, unsafe_allow_html=True)
 
