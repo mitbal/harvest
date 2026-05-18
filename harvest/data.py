@@ -604,12 +604,12 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
 
         if group_secs:
             sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
-            industry_df = df.groupby('industry')[[size_var, 'color_grad']].sum()
+            industry_df = df.groupby(['sector', 'industry'])[[size_var, 'color_grad']].sum()
     
     else:
         if group_secs:
             sector_df = df.groupby('sector')[size_var].sum().to_frame()
-            industry_df = df.groupby('industry')[size_var].sum().to_frame()
+            industry_df = df.groupby(['sector', 'industry'])[size_var].sum().to_frame()
 
     tree_data = []
 
@@ -642,7 +642,7 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
         }]
 
     map_sec_ind = df.groupby('sector')['industry'].apply(list).to_frame()
-    map_ind_stock = df.reset_index().groupby('industry')['stock'].apply(list).to_frame()
+    df_reset = df.reset_index()
 
     sectors = sector_df.index.to_list()
     for sector in sectors:
@@ -650,7 +650,10 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
         industries = set(map_sec_ind.loc[sector, 'industry'])
         for industry in industries:
             gc = []
-            stocks = set(map_ind_stock.loc[industry, 'stock'])
+            stocks = set(df_reset[
+                (df_reset['sector'] == sector) &
+                (df_reset['industry'] == industry)
+            ]['stock'])
             for stock in stocks:
 
                 value = [df.loc[stock, size_var]]
@@ -672,9 +675,9 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                     'path': path
                 }]
 
-            value = [industry_df.loc[industry, size_var]]
+            value = [industry_df.loc[(sector, industry), size_var]]
             if color_var is not None:
-                value += [0, int(industry_df.loc[industry, 'color_grad'])]
+                value += [0, int(industry_df.loc[(sector, industry), 'color_grad'])]
 
             path = sector+'/'+industry
             children += [{
