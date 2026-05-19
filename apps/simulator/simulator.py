@@ -264,6 +264,10 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
 
 ### End of Function definition
 
+@st.cache_data
+def df_to_csv(df):
+    return df.to_csv(index=False).encode('utf-8')
+
 ################################################################################
 
 
@@ -323,7 +327,7 @@ with st.container(border=True):
     
     st.download_button(
         label="Download Projection Data (CSV)",
-        data=return_df.to_csv(index=False),
+        data=df_to_csv(return_df),
         file_name='basic_compounding_sim.csv',
         mime='text/csv',
     )
@@ -497,7 +501,7 @@ with st.container(border=True):
     
     st.download_button(
         label=f"Download {stock_name} Historical Data (CSV)",
-        data=return_df.to_csv(index=False),
+        data=df_to_csv(return_df),
         file_name=f'{stock_name}_historical_sim.csv',
         mime='text/csv',
     )
@@ -609,7 +613,7 @@ with st.container(border=True):
     
     st.download_button(
         label="Download Multi-Stock Sim Data (CSV)",
-        data=return_df.to_csv(index=False),
+        data=df_to_csv(return_df),
         file_name='multi_stock_historical_sim.csv',
         mime='text/csv',
     )
