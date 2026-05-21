@@ -730,9 +730,21 @@ def simulate_dividend_compounding(
     activities = []
     porto = []
     
-    def buy_stock(cash, price_df, date):
-        
-        buy_date = price_df[price_df['date'] >= date].iloc[-1]
+    # Sort a copy of price_df ascending to make closest-date queries clean and simple
+    pdf = price_df.copy()
+    pdf['date'] = pdf['date'].astype(str)
+    pdf = pdf.sort_values('date', ascending=True).reset_index(drop=True)
+    
+    def buy_stock(cash, pdf, date):
+        if pdf.empty:
+            return 0, cash
+            
+        matches = pdf[pdf['date'] >= date]
+        if matches.empty:
+            buy_date = pdf.iloc[-1]
+        else:
+            buy_date = matches.iloc[0]
+            
         price = buy_date['close']
         buy = cash / price / 100
         cash -= int(buy) * price * 100
@@ -745,7 +757,7 @@ def simulate_dividend_compounding(
     for y in range(start_year, end_year+1):
 
         if y == start_year:
-            buy_lot, cash = buy_stock(cash, price_df, f'{y}-01-01')
+            buy_lot, cash = buy_stock(cash, pdf, f'{y}-01-01')
             num_stock += buy_lot
 
         for m in range(1, 13):
@@ -755,7 +767,14 @@ def simulate_dividend_compounding(
 
             cash += monthly_topup
 
-            buy_date = price_df[price_df['date'] >= f'{y}-{m:02d}-01'].iloc[-1]
+            if pdf.empty:
+                continue
+                
+            matches = pdf[pdf['date'] >= f'{y}-{m:02d}-01']
+            if matches.empty:
+                buy_date = pdf.iloc[-1]
+            else:
+                buy_date = matches.iloc[0]
             
             if div_df is None:
                 div_date = None
@@ -764,12 +783,12 @@ def simulate_dividend_compounding(
             
             if div_df is None or len(div_date) == 0:
                 # no dividend this month
-                buy_lot, cash = buy_stock(cash, price_df, f'{y}-{m:02d}-01')
+                buy_lot, cash = buy_stock(cash, pdf, f'{y}-{m:02d}-01')
                 num_stock += buy_lot
 
-            elif buy_date['date'][0] < div_date['date'].iloc[0]:
+            elif str(buy_date['date']) < str(div_date['date'].iloc[0]):
                 # buy first and then get dividend with the new number of stock
-                buy_lot, cash = buy_stock(cash, price_df, f'{y}-{m:02d}-01')
+                buy_lot, cash = buy_stock(cash, pdf, f'{y}-{m:02d}-01')
                 num_stock += buy_lot
 
                 div_payment = div_date['adjDividend'].sum()
@@ -790,6 +809,7 @@ def simulate_dividend_compounding(
                 activities.append(f'buy {int(buy_lot)} lots of {stock_name} @ {close_price} at {buy_date["date"]}')
 
     return porto, activities
+
 
 
 def calc_price_changes(

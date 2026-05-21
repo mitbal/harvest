@@ -433,6 +433,9 @@ def plot_candlestick(
 
 
 def plot_pe_distribution(df, pe, axis_label=None):
+    valid = df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna() if 'pe' in df.columns else pd.Series()
+    if valid.empty:
+        return alt.Chart(pd.DataFrame({'x': [0], 'y': [0]})).mark_text(text="No valid historical multiple values available").properties(height=200)
 
     kde = alt.Chart(df).transform_density('pe', as_=['PE', 'DENSITY'])
     pes_dist = kde.mark_area(
@@ -453,6 +456,10 @@ def plot_pe_distribution(df, pe, axis_label=None):
             alt.Tooltip('PE:Q', format='.2f', title=axis_label),
         )
     )
+
+    if pd.isna(pe) or (isinstance(pe, float) and np.isnan(pe)):
+        return pes_dist
+
     x_zero = kde.mark_rule().encode(
         x=alt.datum(pe),
         color=alt.value('red'),
@@ -466,7 +473,10 @@ def plot_pe_distribution(df, pe, axis_label=None):
 def plot_pe_timeseries(pe_df, axis_label=None):
 
     # Compute median & band reference lines
-    valid = pe_df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna()
+    valid = pe_df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna() if 'pe' in pe_df.columns else pd.Series()
+    if valid.empty:
+        return alt.Chart(pd.DataFrame({'x': [0], 'y': [0]})).mark_text(text="No valid historical multiple values available").properties(height=300)
+
     median_pe = valid.median()
     p10 = valid.quantile(0.10)
     p90 = valid.quantile(0.90)

@@ -1193,11 +1193,14 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
 
     this_year = datetime.now().year
     
-    # Determine minimum start year based on data availability and IPO
+    # Determine minimum start year and maximum end year based on data availability and IPO
     price_min_year = 2010
+    price_max_year = this_year - 1
     if not price_df.empty:
         try:
-            price_min_year = pd.to_datetime(price_df['date']).min().year
+            price_dates = pd.to_datetime(price_df['date'])
+            price_min_year = price_dates.min().year
+            price_max_year = price_dates.max().year
         except:
             pass
             
@@ -1211,7 +1214,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
                 pass
                 
     min_start_year = max(price_min_year, ipo_year)
-    max_start_year = this_year - 2
+    max_start_year = min(this_year - 2, price_max_year - 1)
 
     if min_start_year > max_start_year:
         st.warning(f"Stock {stock_name} does not have enough historical data (needs to exist since {max_start_year} or earlier) for a compounding simulation.")
@@ -1247,7 +1250,13 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
         max_value=max_start_year, 
         key=f"sim_start_{stock_name}"
     )
-    end_year = cols[1].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1, key=f"sim_end_{stock_name}")
+    end_year = cols[1].number_input(
+        label='End Year', 
+        value=min(this_year-1, price_max_year), 
+        min_value=start_year+1, 
+        max_value=price_max_year, 
+        key=f"sim_end_{stock_name}"
+    )
     initial_value = cols[2].number_input(label=f'Initial investment ({unit_label})', value=init_default, min_value=1, max_value=init_max, key=f"sim_init_{stock_name}")
     monthly_topup = cols[3].number_input(label=f'Monthly Top-up ({unit_label})', value=topup_default, min_value=0, max_value=topup_max, key=f"sim_monthly_{stock_name}")
 
