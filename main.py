@@ -114,7 +114,7 @@ with st.sidebar:
     st.html(f'Join the Community!<br/>'+'<a href="https://reddit.com/r/panendividen" target="_blank"><img id="wse-buttons-preview" src="https://images.icon-icons.com/2530/PNG/512/reddit_button_icon_151844.png" height="30" style="border:0px;height:40px;" alt="Reddit r/panendividen"></a> ')
     st.html(
         'Read the Blog!<br/>'
-        '<a id="blog-link" href="https://blog.panendividen.com" target="_blank" '
+        '<a id="blog-link" href="https://blog.panendividen.com?utm_source=pd_web" target="_blank" '
         'style="display:inline-flex;align-items:center;gap:6px;background:#ffffff;'
         'color:#14532D;padding:6px 14px;border-radius:6px;text-decoration:none;'
         'font-weight:600;font-size:0.85rem;">✍️ blog.panendividen.com</a>'
