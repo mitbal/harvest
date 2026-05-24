@@ -144,15 +144,55 @@ if len(available_years) == 0:
     available_years = [current_year]
 default_year = current_year if current_year in available_years else max(available_years)
 
-time_param_cols = st.columns(2)
-selected_year = time_param_cols[0].selectbox('Year', available_years, index=available_years.index(default_year))
+# ── URL query-param defaults ──────────────────────────────────────────────────
+# Supported params:
+#   ?view=yearly|monthly   (default: yearly)
+#   ?year=2025             (default: current / latest available year)
+#   ?month=3               (1-12, only relevant when view=monthly)
+# Example: ?view=monthly&year=2025&month=6
+qp = st.query_params
 
-view_control = st.sidebar.radio('Calendar View', ['Full Year', 'Single Month'], index=0, horizontal=True)
+_qp_view = qp.get('view', 'yearly').lower()
+_default_view_idx = 1 if _qp_view == 'monthly' else 0
+
+_qp_year = qp.get('year', str(default_year))
+try:
+    _qp_year_int = int(_qp_year)
+    _default_year_idx = available_years.index(_qp_year_int) if _qp_year_int in available_years else available_years.index(default_year)
+except (ValueError, IndexError):
+    _default_year_idx = available_years.index(default_year)
+
+months = list(calendar.month_name)  # ['', 'January', ..., 'December']
+_qp_month = qp.get('month', str(current_month))
+try:
+    _qp_month_int = int(_qp_month)
+    _default_month_idx = (_qp_month_int - 1) if 1 <= _qp_month_int <= 12 else (current_month - 1)
+except ValueError:
+    _default_month_idx = current_month - 1
+# ─────────────────────────────────────────────────────────────────────────────
+
+view_control = st.sidebar.radio(
+    'Calendar View', ['Full Year', 'Single Month'],
+    index=_default_view_idx, horizontal=True
+)
+
+time_param_cols = st.columns(2)
+selected_year = time_param_cols[0].selectbox('Year', available_years, index=_default_year_idx)
+
 month_index = None
 if view_control == 'Single Month':
-    months = list(calendar.month_name)
-    select_month = time_param_cols[1].selectbox('Month', months[1:], index=current_month-1)
+    select_month = time_param_cols[1].selectbox('Month', months[1:], index=_default_month_idx)
     month_index = months.index(select_month)
+
+# Keep URL params in sync with the current widget state
+_new_view = 'monthly' if view_control == 'Single Month' else 'yearly'
+if _new_view == 'monthly' and month_index is not None:
+    st.query_params.update({'view': _new_view, 'year': str(selected_year), 'month': str(month_index)})
+else:
+    st.query_params.update({'view': _new_view, 'year': str(selected_year)})
+    qp_keys = list(st.query_params.keys())
+    if 'month' in qp_keys:
+        del st.query_params['month']
 
 div_cal_key = f'div_cal_{exch}_{selected_year}'
 df = get_data_from_redis(div_cal_key)
