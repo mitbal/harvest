@@ -599,6 +599,10 @@ filtered_uni = universe_df[universe_df['mktCap_B'] >= min_mcap_b].copy()
 if sector_filter != 'ALL':
     filtered_uni = filtered_uni[filtered_uni['sector'] == sector_filter]
 
+# Drop GOOGL when GOOG is present to avoid duplicate Google entries in the treemap
+if 'GOOG' in filtered_uni.index and 'GOOGL' in filtered_uni.index:
+    filtered_uni = filtered_uni.drop(index='GOOGL')
+
 symbols_tuple = tuple(sorted(filtered_uni.index.tolist()))
 
 # ── Fetch prices for target date + a few days back ────────────────────────── #
@@ -829,27 +833,38 @@ else:
                 p2  = float(dist_df['return'].min()) - 0.01
                 p98 = float(dist_df['return'].max()) + 0.01
 
-            clipped_df = dist_df[(dist_df['return'] >= p2) & (dist_df['return'] <= p98)].copy()
+            clipped = dist_df[(dist_df['return'] >= p2) & (dist_df['return'] <= p98)]['return']
+
+            import numpy as np
+
+            counts, bin_edges = np.histogram(clipped, bins=50)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+            hist_df = pd.DataFrame({
+                'return': bin_centers,
+                'count':  counts,
+                'color':  ['#26a65b' if c >= 0 else '#e53935' for c in bin_centers],
+            })
 
             zero_line = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
                 color='white', strokeWidth=1.5, strokeDash=[4, 3], opacity=0.7
             ).encode(x=alt.X('x:Q', scale=alt.Scale(domain=[p2, p98])))
 
-            hist = alt.Chart(clipped_df).mark_bar(
-                cornerRadiusTopLeft=3, cornerRadiusTopRight=3
-            ).encode(
-                x=alt.X('return:Q', bin=alt.Bin(maxbins=50), title='1D Return (%)'),
-                y=alt.Y('count()', title='# Stocks'),
-                color=alt.condition(
-                    alt.datum['return'] >= 0,
-                    alt.value('#4caf50'),
-                    alt.value('#d32f2f')
-                ),
-                tooltip=[
-                    alt.Tooltip('return:Q', bin=True, title='Return range', format='.2f'),
-                    alt.Tooltip('count()', title='# Stocks'),
-                ]
-            ).properties(height=260)
+            hist = (
+                alt.Chart(hist_df)
+                .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                .encode(
+                    x=alt.X('return:Q', title='1D Return (%)',
+                            scale=alt.Scale(domain=[p2, p98])),
+                    y=alt.Y('count:Q', title='# Stocks'),
+                    color=alt.Color('color:N', scale=None, legend=None),
+                    tooltip=[
+                        alt.Tooltip('return:Q', title='Return (%)', format='.2f'),
+                        alt.Tooltip('count:Q',  title='# Stocks'),
+                    ],
+                )
+                .properties(height=260)
+            )
 
             st.altair_chart((hist + zero_line), width='stretch')
 
