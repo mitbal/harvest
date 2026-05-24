@@ -20,6 +20,7 @@ logging.getLogger('tornado.general').setLevel(logging.CRITICAL)
 
 page_home = st.Page('home.py', title='Home', icon='🪙')
 page_screener = st.Page('apps/screener/stock_picker.py', title='Stock Picker', icon='💸')
+page_comparison = st.Page('apps/screener/stock_comparison.py', title='Stock Comparison', icon='⚖️')
 page_market_watch = st.Page('apps/screener/market_watch.py', title='Market Watch', icon='📡')
 page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Overview', icon='💰')
 page_history = st.Page('apps/history/history_overview.py', title='Historical Breakdown', icon='🧭')
@@ -38,6 +39,7 @@ pages = st.navigation(
         'Home': [page_home],
         'Apps': [page_screener,
                  page_market_watch,
+                 page_comparison,
                  page_calendar,
                 #  page_assistant,
                  page_simulator,
