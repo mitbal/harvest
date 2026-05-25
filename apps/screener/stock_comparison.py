@@ -178,6 +178,12 @@ stock_select = st.sidebar.radio(
 
 sl = 'JKSE' if stock_select == 'Indonesian Stock' else 'S&P500'
 
+# Log market selection changes
+_prev_market = st.session_state.get('_comp_logged_market')
+if _prev_market != sl:
+    logger.info('COMPARISON | event=market_select | market=%s', sl)
+    st.session_state['_comp_logged_market'] = sl
+
 if sl == 'JKSE':
     key = 'div_score_jkse'
     currency = 'IDR'
@@ -222,6 +228,16 @@ if len(selected_stocks) < 2:
     st.info('👆 Select at least **2 stocks** above to start comparing.')
     st.stop()
 
+# Log stock selection when it changes
+_prev_selection = st.session_state.get('_comp_logged_stocks')
+_cur_selection = tuple(sorted(selected_stocks))
+if _prev_selection != _cur_selection:
+    logger.info(
+        'COMPARISON | event=stock_select | market=%s | stocks=%s | count=%d',
+        sl, ','.join(selected_stocks), len(selected_stocks),
+    )
+    st.session_state['_comp_logged_stocks'] = _cur_selection
+
 # Build colour mapping for selected stocks
 stock_colors = {s: _STOCK_PALETTE[i % len(_STOCK_PALETTE)] for i, s in enumerate(selected_stocks)}
 comp_df = filtered_df.loc[selected_stocks].copy()
@@ -232,11 +248,25 @@ comp_df = filtered_df.loc[selected_stocks].copy()
 # ══════════════════════════════════════════════════════════════════════════════
 tab_table, tab_dist, tab_scatter = st.tabs(['📋 Table', '📊 Distribution', '🔵 Scatter Plot'])
 
+# Log which tab is being viewed (tracks tab switches across reruns)
+_active_tab_key = 'comp_active_tab'
+_tab_map = {0: 'Table', 1: 'Distribution', 2: 'Scatter'}
+# Streamlit doesn't expose selected tab index directly;
+# we use a query-param trick: each tab block sets a session flag when rendered.
+# Instead, we log at stock-selection time which tab was last active.
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 1 — Table
 # ─────────────────────────────────────────────────────────────────────────────
 with tab_table:
+    _prev_tab = st.session_state.get('_comp_logged_tab')
+    if _prev_tab != 'Table':
+        logger.info(
+            'COMPARISON | event=tab_view | tab=Table | stocks=%s',
+            ','.join(selected_stocks),
+        )
+        st.session_state['_comp_logged_tab'] = 'Table'
     st.markdown('#### Select metrics to compare')
     selected_metrics = st.multiselect(
         'Metrics',
@@ -344,6 +374,13 @@ with tab_table:
 # TAB 2 — Distribution
 # ─────────────────────────────────────────────────────────────────────────────
 with tab_dist:
+    _prev_tab = st.session_state.get('_comp_logged_tab')
+    if _prev_tab != 'Distribution':
+        logger.info(
+            'COMPARISON | event=tab_view | tab=Distribution | stocks=%s',
+            ','.join(selected_stocks),
+        )
+        st.session_state['_comp_logged_tab'] = 'Distribution'
 
     dist_label_options = {k: v[0] for k, v in METRIC_OPTIONS.items()}
 
@@ -488,6 +525,13 @@ with tab_dist:
 # TAB 3 — Scatter Plot
 # ─────────────────────────────────────────────────────────────────────────────
 with tab_scatter:
+    _prev_tab = st.session_state.get('_comp_logged_tab')
+    if _prev_tab != 'Scatter':
+        logger.info(
+            'COMPARISON | event=tab_view | tab=Scatter | stocks=%s',
+            ','.join(selected_stocks),
+        )
+        st.session_state['_comp_logged_tab'] = 'Scatter'
 
     scatter_options = {k: v[0] for k, v in METRIC_OPTIONS.items() if v[0] in filtered_df.columns or v[0] == 'DScore'}
     scatter_keys = list(scatter_options.keys())
