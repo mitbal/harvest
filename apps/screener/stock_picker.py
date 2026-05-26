@@ -1584,15 +1584,6 @@ def get_processed_df(df):
     return df
 
 
-default_view = 'Table'
-color_var_index = 1
-if 'view' in st.query_params:
-    if st.query_params['view'] == 'treemap':
-        default_view = 'Treemap'
-        if 'color_var' in st.query_params:
-            if st.query_params['color_var'] == 'return':
-                color_var_index = 5
-
 full_table_section = st.container(border=True)
 with full_table_section:
 
@@ -1622,17 +1613,7 @@ with full_table_section:
     display_df.insert(earning_pos + 1,  'earningTTMDisplay', display_df['earningTTM'] / divisor)
     display_df.insert(revenue_pos + 2,  'revenueTTMDisplay', display_df['revenueTTM'] / divisor)
 
-    # Measure the fully processed (cached) filtered_df
-    # (removed — measurement moved to sidebar as process RSS)
-
-    top_cols = st.columns(2)
-    view = top_cols[0].segmented_control(label='View Option', 
-                         options=['Table', 'Treemap', 'Scatter Plot', 'Distribution'],
-                         selection_mode='single',
-                         default=default_view)
-
-
-    if view == 'Table':
+    if True:
 
         cfig={  # noqa: E225
             'Rank': st.column_config.NumberColumn(
@@ -1802,7 +1783,7 @@ with full_table_section:
 
         event = st.dataframe(display_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
 
-    elif view == 'Treemap':
+    if False:  # Treemap view moved to its own page
         
         treemap_cols = st.columns([2,2,3,2])
         size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
@@ -1870,160 +1851,13 @@ with full_table_section:
         )
     
 
-    elif view == 'Scatter Plot':
-
-        sp_options = {
-            'PE Ratio': 'peRatio',
-            'PS Ratio': 'psRatio',
-            'Dividend Yield': 'yield',
-            'Market Cap': 'mktCap',
-            'Revenue Growth': 'revenueGrowth',
-            'Net Income Growth': 'netIncomeGrowth',
-            'Profit Margin': 'medianProfitMargin',
-            'Num Dividend Year': 'numDividendYear'
-        }
-
-        color_options = {
-            'Sector': 'sector',
-            'Industry': 'industry',
-            'PE Ratio': 'peRatio',
-            'Dividend Yield': 'yield',
-            'Revenue Growth': 'revenueGrowth',
-            'Profit Margin': 'medianProfitMargin',
-        }
-
-        sp_cols = st.columns([2, 2, 2, 2, 1, 1])
-        x_metric = sp_cols[0].selectbox('X Axis', options=list(sp_options.keys()), index=0)
-        y_metric = sp_cols[1].selectbox('Y Axis', options=list(sp_options.keys()), index=2)
-        size_metric = sp_cols[2].selectbox('Size', options=list(sp_options.keys()), index=3)
-        color_metric = sp_cols[3].selectbox('Color', options=list(color_options.keys()), index=0)
-        
-        remove_outliers = sp_cols[4].toggle('Remove Outliers (5%)', value=True)
-        show_median = sp_cols[5].toggle('Show Quadrants', value=True, help='Show median lines')
-
-        x_col = sp_options[x_metric]
-        y_col = sp_options[y_metric]
-        size_col = sp_options[size_metric]
-        color_col = color_options[color_metric]
-
-        sp = hp.plot_scatter(
-            filtered_df, 
-            x_col=x_col, 
-            y_col=y_col, 
-            size_col=size_col, 
-            color_col=color_col,
-            x_title=x_metric,
-            y_title=y_metric,
-            size_title=size_metric,
-            remove_outliers=remove_outliers,
-            show_median_lines=show_median,
-            height=600
-        )
-        st.altair_chart(sp, width='stretch')
-
-    elif view == 'Distribution':
-
-        dist_options = {
-            'PE Ratio': 'peRatio',
-            'PS Ratio': 'psRatio',
-            'Dividend Yield': 'yield',
-            'Market Cap': 'mktCap',
-            'Revenue Growth': 'revenueGrowth',
-            'Net Income Growth': 'netIncomeGrowth',
-            'Profit Margin': 'medianProfitMargin',
-            'Num Dividend Year': 'numDividendYear'
-        }
-        
-        # ── Controls ────────────────────────────────────────────────────────
-        ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
-        selected_dist = ctrl1.selectbox('Select Metric', options=list(dist_options.keys()))
-        col_name = dist_options[selected_dist]
-        
-        sector_options = ['All'] + sorted(filtered_df['sector'].dropna().unique().tolist())
-        selected_sector = ctrl2.selectbox('Filter by Sector', options=sector_options)
-        
-        exclude_zero = ctrl3.toggle('Exclude 0% Yield Stocks', value=False)
-        show_median = ctrl4.toggle('Show Mean & Median', value=True, help="Overlay mean and median lines on the distribution")
-        
-        if exclude_zero:
-            filtered_df = filtered_df[filtered_df['yield'] > 0]
-        if selected_sector != 'All':
-            filtered_df = filtered_df[filtered_df['sector'] == selected_sector]
-            
-        comp_col, chart_settings_col = st.columns([3, 1])
-        with comp_col:
-            comparison_stocks = st.multiselect('Compare with specific stocks', options=filtered_df.index.tolist(), placeholder='Select stocks to highlight on the curve...')
-            
-        comparison_vals = {}
-        if comparison_stocks:
-            for s in comparison_stocks:
-                val = filtered_df.loc[s, col_name]
-                comparison_vals[s] = val
-
-        # ── KPIs ────────────────────────────────────────────────────────────
-        if not filtered_df.empty:
-            mean_val = filtered_df[col_name].mean()
-            median_val = filtered_df[col_name].median()
-            q25 = filtered_df[col_name].quantile(0.25)
-            q75 = filtered_df[col_name].quantile(0.75)
-            
-            st.markdown(f"#### 📊 {selected_dist} Analysis")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric(f"Mean", f"{mean_val:,.2f}")
-            k2.metric(f"Median", f"{median_val:,.2f}")
-            k3.metric("25th Percentile", f"{q25:,.2f}")
-            k4.metric("75th Percentile", f"{q75:,.2f}")
-
-            # ── Chart Settings & Plot ───────────────────────────────────────────
-            min_data = float(filtered_df[col_name].min())
-            max_data = float(filtered_df[col_name].max())
-            q05 = float(filtered_df[col_name].quantile(0.05))
-            q95 = float(filtered_df[col_name].quantile(0.95))
-            
-            with chart_settings_col:
-                with st.popover("⚙️ Chart Settings"):
-                    st.write("Zoom Range")
-                    z_col1, z_col2 = st.columns(2)
-                    z_min = z_col1.number_input("Min", value=q05, min_value=min_data, max_value=max_data, key=f"z_min_{col_name}")
-                    z_max = z_col2.number_input("Max", value=q95, min_value=min_data, max_value=max_data, key=f"z_max_{col_name}")
-                    x_range = (z_min, z_max)
-                    fill_opacity = st.slider("Fill Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.05, key=f"fill_opacity_{col_name}",
-                                             help="Set to 0 to disable the area fill")
-
-            color_map = {
-                'PE Ratio': 'green',
-                'PS Ratio': 'green',
-                'Dividend Yield': 'green',
-                'Revenue Growth': 'green',
-                'Net Income Growth': 'green',
-                'Profit Margin': 'green',
-                'Num Dividend Year': 'green',
-                'Market Cap': 'green'
-            }
-
-            dist_chart = hp.plot_card_distribution(
-                filtered_df, 
-                col_name, 
-                current_val=None, 
-                color=color_map.get(selected_dist, 'green'), 
-                height=450, 
-                show_axis=True,
-                comparison_vals=comparison_vals if comparison_vals else None,
-                x_range=x_range,
-                fill_opacity=fill_opacity,
-                show_median=show_median
-            )
-            st.altair_chart(dist_chart, width="stretch")
-        else:
-            st.info("No data available for the selected filters.")
 
 
-if view == 'Table' and len(event.selection['rows']) > 0:
+
+if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
     stock = filtered_df.iloc[row_idx]
     stock_name = stock.name
-elif view == 'Treemap' and clicked_item_name:
-    stock_name = clicked_item_name.split()[0]
 elif 'stock' in st.query_params:
     stock_name = st.query_params['stock']
 else:
