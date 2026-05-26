@@ -714,15 +714,38 @@ with tab_scatter:
         )
 
         # ── Stock name labels ─────────────────────────────────────────────── #
+        # dx/dy are not encodable channels in this Altair version, so we
+        # pre-compute a shifted y position in data space instead.
+        #
+        # Each bubble's visual radius ≈ √(pixel_area) / 2, where Altair maps
+        # the size encoding to pixel-area in [200, 1800].
+        # We convert that pixel offset to data units using the y-axis range
+        # and chart height, then store the result as `_label_y`.
+        _sc_size = sc_comp[size_col].values
+        _sc_min, _sc_max = _sc_size.min(), _sc_size.max()
+        if _sc_max > _sc_min:
+            _sc_norm = (_sc_size - _sc_min) / (_sc_max - _sc_min)
+        else:
+            _sc_norm = np.full(len(_sc_size), 0.5)
+        _px_area   = 200 + _sc_norm * (1800 - 200)   # pixel-area in [200, 1800]
+        _px_radius = np.sqrt(_px_area) / 2            # visual radius in pixels
+
+        _y_vals   = sc_comp[y_col].values
+        _y_range  = float(_y_vals.max() - _y_vals.min()) or abs(float(_y_vals.mean())) * 0.1 or 1.0
+        # chart height is 520px; Altair adds ~5% padding each side → effective domain ≈ range * 1.1
+        _data_per_px = (_y_range * 1.1) / 520
+
+        sc_comp = sc_comp.copy()
+        sc_comp['_label_y'] = sc_comp[y_col] + (_px_radius + 6) * _data_per_px
+
         stock_labels = alt.Chart(sc_comp).mark_text(
-            align='left',
-            baseline='middle',
-            dx=14,
+            align='center',
+            baseline='bottom',
             fontSize=12,
             fontWeight='bold',
         ).encode(
             x=alt.X(f'{x_col}:Q', scale=alt.Scale(zero=False)),
-            y=alt.Y(f'{y_col}:Q', scale=alt.Scale(zero=False)),
+            y=alt.Y('_label_y:Q', scale=alt.Scale(zero=False)),
             text=alt.Text('stock:N'),
             color=alt.Color('stock:N', scale=color_scale_sel, legend=None),
         )
