@@ -167,6 +167,38 @@ CHART_METRIC_OPTIONS = {k: v[0] for k, v in METRIC_OPTIONS.items() if v[1] != 'n
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ── URL query-param helpers ───────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+_qp = st.query_params
+
+# Supported params:
+#   market       → "jkse" | "sp500"          (default: jkse)
+#   stocks       → comma-separated codes      (e.g. "BBCA,BMRI")
+#   tab          → "table" | "dist" | "scatter" (default: table)
+#   dist_metric  → label key in METRIC_OPTIONS
+#   dist_sector  → sector name or "All"
+#   sc_x         → label key in METRIC_OPTIONS
+#   sc_y         → label key in METRIC_OPTIONS
+#   sc_size      → label key in METRIC_OPTIONS
+
+_MARKET_QP_MAP = {'jkse': 'Indonesian Stock', 'sp500': 'S&P 500 (US and World Stock)'}
+_MARKET_QP_REV = {v: k for k, v in _MARKET_QP_MAP.items()}
+_TAB_QP = ['table', 'dist', 'scatter']
+
+
+def _qp_get(key, default=None):
+    return _qp.get(key, default)
+
+
+# ── Resolve initial market from URL ──────────────────────────────────────────
+_market_qp = _qp_get('market', 'jkse').lower()
+if _market_qp not in _MARKET_QP_MAP:
+    _market_qp = 'jkse'
+_market_label_default = _MARKET_QP_MAP[_market_qp]
+_market_index_default = list(_MARKET_QP_MAP.values()).index(_market_label_default)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ── Market selection sidebar (same as stock_picker.py) ───────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 stock_select = st.sidebar.radio(
@@ -174,9 +206,15 @@ stock_select = st.sidebar.radio(
     ['Indonesian Stock', 'S&P 500 (US and World Stock)'],
     horizontal=False,
     key='comp_sl',
+    index=_market_index_default,
 )
 
 sl = 'JKSE' if stock_select == 'Indonesian Stock' else 'S&P500'
+
+# Sync market → URL
+_market_qp_val = _MARKET_QP_REV.get(stock_select, 'jkse')
+if _qp_get('market') != _market_qp_val:
+    _qp['market'] = _market_qp_val
 
 # Log market selection changes
 _prev_market = st.session_state.get('_comp_logged_market')
@@ -214,15 +252,32 @@ filtered_df = get_processed_df(final_df)
 
 stock_options = sorted(filtered_df.index.tolist())
 
+# ── Resolve initial stocks from URL ──────────────────────────────────────────
+_stocks_qp_raw = _qp_get('stocks', '')
+_stocks_default = [
+    s.strip().upper()
+    for s in _stocks_qp_raw.split(',')
+    if s.strip().upper() in stock_options
+] if _stocks_qp_raw else []
+
 
 # ── Stock multiselect ────────────────────────────────────────────────────────
 st.markdown('### 🔍 Select Stocks to Compare')
 selected_stocks = st.multiselect(
     label='Choose 2 or more stocks from the universe',
     options=stock_options,
+    default=_stocks_default,
     placeholder='Type or pick stock codes…',
     key='comp_stocks',
 )
+
+# Sync stocks → URL
+_stocks_qp_val = ','.join(selected_stocks)
+if _qp_get('stocks', '') != _stocks_qp_val:
+    if _stocks_qp_val:
+        _qp['stocks'] = _stocks_qp_val
+    elif 'stocks' in _qp:
+        del _qp['stocks']
 
 if len(selected_stocks) < 2:
     st.info('👆 Select at least **2 stocks** above to start comparing.')
@@ -246,14 +301,17 @@ comp_df = filtered_df.loc[selected_stocks].copy()
 # ══════════════════════════════════════════════════════════════════════════════
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Resolve active tab from URL
+_tab_qp = _qp_get('tab', 'table').lower()
+_tab_default_idx = _TAB_QP.index(_tab_qp) if _tab_qp in _TAB_QP else 0
+
 tab_table, tab_dist, tab_scatter = st.tabs(['📋 Table', '📊 Distribution', '🔵 Scatter Plot'])
 
 # Log which tab is being viewed (tracks tab switches across reruns)
 _active_tab_key = 'comp_active_tab'
 _tab_map = {0: 'Table', 1: 'Distribution', 2: 'Scatter'}
-# Streamlit doesn't expose selected tab index directly;
-# we use a query-param trick: each tab block sets a session flag when rendered.
-# Instead, we log at stock-selection time which tab was last active.
+# Each tab block syncs `tab` URL param when it renders, enabling shareability.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -267,6 +325,9 @@ with tab_table:
             ','.join(selected_stocks),
         )
         st.session_state['_comp_logged_tab'] = 'Table'
+    # Sync tab → URL (only update when tab actually changes to avoid extra reruns)
+    if _qp_get('tab') != 'table':
+        _qp['tab'] = 'table'
     st.markdown('#### Select metrics to compare')
     selected_metrics = st.multiselect(
         'Metrics',
@@ -381,19 +442,54 @@ with tab_dist:
             ','.join(selected_stocks),
         )
         st.session_state['_comp_logged_tab'] = 'Distribution'
+    # Sync tab → URL
+    if _qp_get('tab') != 'dist':
+        _qp['tab'] = 'dist'
 
     dist_label_options = {k: v[0] for k, v in METRIC_OPTIONS.items()}
+    _dist_metric_keys = list(dist_label_options.keys())
+
+    # Resolve dist_metric from URL
+    _dist_metric_qp = _qp_get('dist_metric', 'Dividend Yield (%)')
+    _dist_metric_default_idx = (
+        _dist_metric_keys.index(_dist_metric_qp)
+        if _dist_metric_qp in _dist_metric_keys
+        else _dist_metric_keys.index('Dividend Yield (%)')
+    )
 
     ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([2, 2, 2, 2])
     selected_dist_label = ctrl1.selectbox(
-        'Metric', options=list(dist_label_options.keys()),
-        index=list(dist_label_options.keys()).index('Dividend Yield (%)'),
+        'Metric', options=_dist_metric_keys,
+        index=_dist_metric_default_idx,
         key='comp_dist_metric',
     )
     dist_col = dist_label_options[selected_dist_label]
 
+    # Sync dist_metric → URL
+    if _qp_get('dist_metric') != selected_dist_label:
+        _qp['dist_metric'] = selected_dist_label
+        if 'tab' not in _qp or _qp.get('tab') != 'dist':
+            _qp['tab'] = 'dist'
+
     sector_opts = ['All'] + sorted(filtered_df['sector'].dropna().unique().tolist())
-    selected_sector = ctrl2.selectbox('Filter by Sector', options=sector_opts, key='comp_dist_sector')
+
+    # Resolve dist_sector from URL
+    _dist_sector_qp = _qp_get('dist_sector', 'All')
+    _dist_sector_default_idx = (
+        sector_opts.index(_dist_sector_qp)
+        if _dist_sector_qp in sector_opts
+        else 0
+    )
+    selected_sector = ctrl2.selectbox(
+        'Filter by Sector', options=sector_opts,
+        index=_dist_sector_default_idx,
+        key='comp_dist_sector',
+    )
+
+    # Sync dist_sector → URL
+    if _qp_get('dist_sector') != selected_sector:
+        _qp['dist_sector'] = selected_sector
+
     show_universe = ctrl3.toggle('Show Full Universe', value=True, key='comp_dist_universe',
                                   help='Overlay the full population distribution behind the selected stocks')
 
@@ -532,20 +628,43 @@ with tab_scatter:
             ','.join(selected_stocks),
         )
         st.session_state['_comp_logged_tab'] = 'Scatter'
+    # Sync tab → URL
+    if _qp_get('tab') != 'scatter':
+        _qp['tab'] = 'scatter'
 
     scatter_options = {k: v[0] for k, v in METRIC_OPTIONS.items() if v[0] in filtered_df.columns or v[0] == 'DScore'}
     scatter_keys = list(scatter_options.keys())
 
+    # Resolve scatter axes from URL
+    _sc_x_qp    = _qp_get('sc_x',    'PE Ratio')
+    _sc_y_qp    = _qp_get('sc_y',    'Dividend Yield (%)')
+    _sc_size_qp = _qp_get('sc_size', 'Market Cap')
+
+    def _sc_idx(label, default):
+        if label in scatter_keys:
+            return scatter_keys.index(label)
+        return scatter_keys.index(default) if default in scatter_keys else 0
+
     sc1, sc2, sc3, sc4 = st.columns(4)
-    x_label    = sc1.selectbox('X Axis',  options=scatter_keys,
-                               index=scatter_keys.index('PE Ratio') if 'PE Ratio' in scatter_keys else 0,
+    x_label    = sc1.selectbox('X Axis',      options=scatter_keys,
+                               index=_sc_idx(_sc_x_qp, 'PE Ratio'),
                                key='comp_sc_x')
-    y_label    = sc2.selectbox('Y Axis',  options=scatter_keys,
-                               index=scatter_keys.index('Dividend Yield (%)') if 'Dividend Yield (%)' in scatter_keys else 1,
+    y_label    = sc2.selectbox('Y Axis',      options=scatter_keys,
+                               index=_sc_idx(_sc_y_qp, 'Dividend Yield (%)'),
                                key='comp_sc_y')
     size_label = sc3.selectbox('Bubble Size', options=scatter_keys,
-                               index=scatter_keys.index('Market Cap') if 'Market Cap' in scatter_keys else 2,
+                               index=_sc_idx(_sc_size_qp, 'Market Cap'),
                                key='comp_sc_size')
+
+    # Sync scatter axes → URL
+    _sc_updates = {}
+    if _qp_get('sc_x')    != x_label:    _sc_updates['sc_x']    = x_label
+    if _qp_get('sc_y')    != y_label:    _sc_updates['sc_y']    = y_label
+    if _qp_get('sc_size') != size_label: _sc_updates['sc_size'] = size_label
+    if _sc_updates:
+        _qp.update(_sc_updates)
+        if _qp.get('tab') != 'scatter':
+            _qp['tab'] = 'scatter'
 
     show_universe_scatter = sc4.toggle(
         'Show Universe', value=False,
