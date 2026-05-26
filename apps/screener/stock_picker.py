@@ -2073,6 +2073,48 @@ except Exception as e:
     st.stop()
 progress_bar.empty()
 
+# ── Per-stock SEO: dynamic title, meta, and JSON-LD ─────────────────────── #
+_company_name = stock_name  # fallback
+_sector = ''
+_description_text = f'Analisis saham {stock_name}'
+if cp_df is not None and not cp_df.empty and stock_name in cp_df.index:
+    _cp = cp_df.loc[stock_name]
+    _company_name = _cp.get('companyName', stock_name)
+    _sector = _cp.get('sector', '')
+    _sector_str = f' di sektor {_sector}' if _sector else ''
+    _description_text = (
+        f'Analisis lengkap saham {_company_name} ({stock_name}){_sector_str}: '
+        f'riwayat dividen, laporan keuangan, harga saham, dan valuasi. '
+        f'Temukan potensi dividen di Panen Dividen.'
+    )
+
+_stock_ticker = stock_name.replace('.JK', '').replace('.', '_')
+st.html(f"""
+<title>{_company_name} ({stock_name}) - Analisis Saham | Panen Dividen</title>
+<meta name="description" content="{_description_text}">
+<meta property="og:title" content="{_company_name} ({stock_name}) - Analisis Saham | Panen Dividen">
+<meta property="og:description" content="{_description_text}">
+<meta property="og:url" content="https://panendividen.com/stock_picker?stock={stock_name}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{_company_name} ({stock_name}) | Panen Dividen">
+<meta name="twitter:description" content="{_description_text}">
+<script type="application/ld+json">
+{{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "{_company_name} ({stock_name}) - Analisis Saham",
+  "description": "{_description_text}",
+  "url": "https://panendividen.com/stock_picker?stock={stock_name}",
+  "isPartOf": {{
+    "@type": "WebSite",
+    "name": "Panen Dividen",
+    "url": "https://panendividen.com"
+  }}
+}}
+</script>
+""")
+# ── End SEO ──────────────────────────────────────────────────────────────── #
+
 
 default_dashboard = False
 if 'overview' in st.query_params and st.query_params['overview'].lower() == 'true':
