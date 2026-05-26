@@ -1557,8 +1557,11 @@ def get_processed_df(df):
     df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
     df['max10CutPct']   = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
     df['maxDivIncrease']       = df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
-    df['maxRevGrowthDecrease'] = df.apply(lambda x: min(x['revenueGrowthTTM'], 0), axis=1)
-    df['maxIncGrowthDecrease'] = df.apply(lambda x: min(x['netIncomeGrowthTTM'], 0), axis=1)
+    # Clamp to -100 so the penalty multiplier (1 + x/100) floors at 0, not negative.
+    # Without this, extreme negative values (e.g. -18871%) combined with a negative
+    # base yield (dividend cut) would flip the score positive — a spurious result.
+    df['maxRevGrowthDecrease'] = df.apply(lambda x: max(min(x['revenueGrowthTTM'], 0), -100), axis=1)
+    df['maxIncGrowthDecrease'] = df.apply(lambda x: max(min(x['netIncomeGrowthTTM'], 0), -100), axis=1)
 
     return_cols = ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
     for col in return_cols:
@@ -1575,6 +1578,7 @@ def get_processed_df(df):
       * (1 + df['maxRevGrowthDecrease'] / 100) \
       * (1 + df['maxIncGrowthDecrease'] / 100)
 
+    df['DScore'] = df['DScore'].clip(lower=0)  # safety net: score should never be negative
     df = df.fillna(0).sort_values('DScore', ascending=False)
     df.insert(0, 'Rank', range(1, len(df) + 1))
     return df
