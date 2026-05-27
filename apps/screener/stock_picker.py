@@ -981,16 +981,104 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
     | Range Estimate | {int(ci_lower):,} - {int(ci_upper):,} |
     """
     
-    res_cols = st.columns(2)
+    # ── Gauge chart: valuation zones ────────────────────────────────────── #
+    # Map intrinsic_value / current_price to a 0-100 gauge scale.
+    # diff < 0.5  → Very Overvalued  (gauge ≈ 0-20)
+    # 0.5 - 0.95  → Overvalued       (gauge ≈ 20-40)
+    # 0.95 - 1.05 → Fair Price       (gauge ≈ 40-60)
+    # 1.05 - 1.5  → Undervalued      (gauge ≈ 60-80)
+    # > 1.5       → Very Undervalued (gauge ≈ 80-100)
+    def _diff_to_gauge(d):
+        """Map intrinsic/price ratio to a 0-100 gauge value."""
+        if d <= 0.5:
+            return max(0, d / 0.5 * 20)          # 0-20
+        elif d <= 0.95:
+            return 20 + (d - 0.5) / 0.45 * 20    # 20-40
+        elif d <= 1.05:
+            return 40 + (d - 0.95) / 0.10 * 20   # 40-60
+        elif d <= 1.5:
+            return 60 + (d - 1.05) / 0.45 * 20   # 60-80
+        else:
+            return min(100, 80 + (d - 1.5) / 1.5 * 20)  # 80-100
+
+    if diff > 1.5:
+        zone_label = 'Very Undervalued'
+        zone_color = '#27ae60'
+    elif diff > 1.05:
+        zone_label = 'Undervalued'
+        zone_color = '#2ecc71'
+    elif diff >= 0.95:
+        zone_label = 'Fair Price'
+        zone_color = '#f39c12'
+    elif diff >= 0.5:
+        zone_label = 'Overvalued'
+        zone_color = '#e74c3c'
+    else:
+        zone_label = 'Very Overvalued'
+        zone_color = '#922b21'
+
+    gauge_val = _diff_to_gauge(diff)
+
+    gauge_option = {
+        "backgroundColor": "transparent",
+        "series": [
+            {
+                "type": "gauge",
+                "startAngle": 180,
+                "endAngle": 0,
+                "min": 0,
+                "max": 100,
+                "splitNumber": 5,
+                "radius": "140%",
+                "center": ["50%", "100%"],
+                "axisLine": {
+                    "lineStyle": {
+                        "width": 22,
+                        "color": [
+                            [0.20, "#922b21"],   # Very Overvalued
+                            [0.40, "#e74c3c"],   # Overvalued
+                            [0.60, "#f39c12"],   # Fair Price
+                            [0.80, "#2ecc71"],   # Undervalued
+                            [1.00, "#27ae60"],   # Very Undervalued
+                        ],
+                    }
+                },
+                "axisTick": {"show": False},
+                "splitLine": {"show": False},
+                "axisLabel": {"show": False},
+                "pointer": {
+                    "length": "50%",
+                    "width": 4,
+                    "itemStyle": {"color": "auto"},
+                },
+                "detail": {
+                    "show": True,
+                    "offsetCenter": [0, "-45%"],
+                    "formatter": f"{zone_label}\n(IV/Price = {diff:.2f}x)",
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "color": zone_color,
+                    "lineHeight": 16,
+                },
+                "title": {"show": False},
+                "data": [{"value": gauge_val, "name": zone_label}],
+            }
+        ],
+    }
+
+    res_cols = st.columns([2, 3, 3])
     with res_cols[0]:
         st.markdown(markdown_table)
         st.write(f'Assessment: {assessment}')
 
-    # Heatmap generation
+    with res_cols[1]:
+        st_echarts(gauge_option, height="210px", key=f"ddm_gauge_{stock_name}")
+
+    # Sensitivity heatmap generation
     data = []
     g_range = [max(0.0, g_pct + i) for i in [-2, -1, 0, 1, 2]]
     r_range = [max(1.0, r_pct + i) for i in [-2, -1, 0, 1, 2]]
-    
+
     for r_val in r_range:
         for g_val in g_range:
             r_dec = r_val / 100.0
@@ -999,7 +1087,7 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
                 val = (last_div * (1 + g_dec)) / (r_dec - g_dec)
             else:
                 val = None
-                
+
             if val is not None:
                 data.append({
                     'Cost of Equity (r)': f"{r_val:.2f}%",
@@ -1008,21 +1096,21 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
                     'r_val': r_val,
                     'g_val': g_val
                 })
-                
+
     if data:
         heatmap_df = pd.DataFrame(data)
-        
+
         base = alt.Chart(heatmap_df).encode(
             x=alt.X('Growth Rate (g):O', sort=alt.EncodingSortField(field='g_val', order='ascending')),
             y=alt.Y('Cost of Equity (r):O', sort=alt.EncodingSortField(field='r_val', order='descending')),
         )
-        
+
         heatmap = base.mark_rect().encode(
             color=alt.Color('Intrinsic Value:Q', scale=alt.Scale(scheme='redyellowgreen', domainMid=current_price), legend=None),
             tooltip=['Cost of Equity (r)', 'Growth Rate (g)', alt.Tooltip('Intrinsic Value:Q', format=',.0f')]
         )
-        
-        text = base.mark_text(baseline='middle').encode(
+
+        text = base.mark_text(baseline='middle', fontSize=11).encode(
             text=alt.Text('Intrinsic Value:Q', format=',.0f'),
             color=alt.condition(
                 f"datum['Intrinsic Value'] > {current_price}",
@@ -1030,14 +1118,15 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
                 alt.value('white')
             )
         )
-        
+
         chart = (heatmap + text).properties(
             title='Sensitivity: Intrinsic Value',
-            height=300
+            height=250
         )
-        
-        with res_cols[1]:
+
+        with res_cols[2]:
             st.altair_chart(chart, width='stretch')
+
 
 @st.cache_data(show_spinner=False)
 def _calc_best_buy_cached(price_json, sdf_json):
