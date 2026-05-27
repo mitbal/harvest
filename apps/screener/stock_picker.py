@@ -55,12 +55,12 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
     rjson = r.get(key)
 
     end = time.time()
-    logger.info(f'redis get {key} took {end-start:.04f} seconds')
+    # logger.info(f'redis get {key} took {end-start:.04f} seconds')
 
     if rjson is not None:
         if isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
             final_df = pd.read_parquet(io.BytesIO(rjson))
-            logger.info("dividend table loaded from parquet")
+            # logger.info("dividend table loaded from parquet")
         else:
             div_score_json = json.loads(rjson)
             if 'date' in div_score_json:
