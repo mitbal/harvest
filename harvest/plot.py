@@ -1251,3 +1251,104 @@ def plot_scatter(
 
     return alt.layer(*layers).properties(height=height).interactive()
 
+
+def plot_ddm_gauge(diff: float) -> dict:
+    """Build an ECharts semi-circle gauge option dict for DDM valuation zones.
+
+    Parameters
+    ----------
+    diff : float
+        Ratio of DDM intrinsic value to current market price (IV / Price).
+        Values > 1 indicate undervaluation; < 1 indicate overvaluation.
+
+    Returns
+    -------
+    dict
+        ECharts option dict ready to be passed to ``st_echarts()``.
+
+    Valuation zones
+    ---------------
+    * > 1.5x  → Very Undervalued  (dark green)
+    * 1.05–1.5x → Undervalued    (light green)
+    * 0.95–1.05x → Fair Price    (amber)
+    * 0.5–0.95x → Overvalued    (red)
+    * < 0.5x  → Very Overvalued  (dark red)
+    """
+    # ── Map IV/Price ratio to a 0-100 gauge scale ─────────────────────── #
+    # Each zone occupies an equal 20-point band on the gauge.
+    def _ratio_to_gauge(d: float) -> float:
+        if d <= 0.5:
+            return max(0.0, d / 0.5 * 20)           # 0–20
+        elif d <= 0.95:
+            return 20 + (d - 0.5) / 0.45 * 20       # 20–40
+        elif d <= 1.05:
+            return 40 + (d - 0.95) / 0.10 * 20      # 40–60
+        elif d <= 1.5:
+            return 60 + (d - 1.05) / 0.45 * 20      # 60–80
+        else:
+            return min(100.0, 80 + (d - 1.5) / 1.5 * 20)  # 80–100
+
+    if diff > 1.5:
+        zone_label = "Very Undervalued"
+        zone_color = "#27ae60"
+    elif diff > 1.05:
+        zone_label = "Undervalued"
+        zone_color = "#2ecc71"
+    elif diff >= 0.95:
+        zone_label = "Fair Price"
+        zone_color = "#f39c12"
+    elif diff >= 0.5:
+        zone_label = "Overvalued"
+        zone_color = "#e74c3c"
+    else:
+        zone_label = "Very Overvalued"
+        zone_color = "#922b21"
+
+    gauge_val = _ratio_to_gauge(diff)
+
+    return {
+        "backgroundColor": "transparent",
+        "series": [
+            {
+                "type": "gauge",
+                "startAngle": 180,
+                "endAngle": 0,
+                "min": 0,
+                "max": 100,
+                "splitNumber": 5,
+                "radius": "140%",
+                "center": ["50%", "100%"],
+                "axisLine": {
+                    "lineStyle": {
+                        "width": 22,
+                        "color": [
+                            [0.20, "#922b21"],  # Very Overvalued
+                            [0.40, "#e74c3c"],  # Overvalued
+                            [0.60, "#f39c12"],  # Fair Price
+                            [0.80, "#2ecc71"],  # Undervalued
+                            [1.00, "#27ae60"],  # Very Undervalued
+                        ],
+                    }
+                },
+                "axisTick":  {"show": False},
+                "splitLine": {"show": False},
+                "axisLabel": {"show": False},
+                "pointer": {
+                    "length": "50%",
+                    "width": 4,
+                    "itemStyle": {"color": "auto"},
+                },
+                "detail": {
+                    "show": True,
+                    "offsetCenter": [0, "-45%"],
+                    "formatter": f"{zone_label}\n(IV/Price = {diff:.2f}x)",
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "color": zone_color,
+                    "lineHeight": 16,
+                },
+                "title": {"show": False},
+                "data": [{"value": gauge_val, "name": zone_label}],
+            }
+        ],
+    }
