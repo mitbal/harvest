@@ -680,6 +680,11 @@ with tab_scatter:
     missing = [c for c in [x_col, y_col, size_col] if c not in filtered_df.columns]
     if missing:
         st.warning(f'Some selected metrics are not available in the data: {missing}')
+    elif x_col == y_col:
+        st.warning(
+            f'⚠️ **X Axis** and **Y Axis** are both set to **{x_label}**. '
+            'Please choose two different metrics to plot a meaningful scatter chart.'
+        )
     else:
         # Prepare selected stocks DataFrame
         sc_comp = comp_df[[x_col, y_col, size_col, 'sector']].copy().dropna()
