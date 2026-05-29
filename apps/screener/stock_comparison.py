@@ -636,8 +636,8 @@ with tab_scatter:
     scatter_keys = list(scatter_options.keys())
 
     # Resolve scatter axes from URL
-    _sc_x_qp    = _qp_get('sc_x',    'PE Ratio')
-    _sc_y_qp    = _qp_get('sc_y',    'Dividend Yield (%)')
+    _sc_x_qp    = _qp_get('sc_x',    'Dividend Yield (%)')
+    _sc_y_qp    = _qp_get('sc_y',    'PE Ratio')
     _sc_size_qp = _qp_get('sc_size', 'Market Cap')
 
     def _sc_idx(label, default):
@@ -647,10 +647,10 @@ with tab_scatter:
 
     sc1, sc2, sc3, sc4 = st.columns(4)
     x_label    = sc1.selectbox('X Axis',      options=scatter_keys,
-                               index=_sc_idx(_sc_x_qp, 'PE Ratio'),
+                               index=_sc_idx(_sc_x_qp, 'Dividend Yield (%)'),
                                key='comp_sc_x')
     y_label    = sc2.selectbox('Y Axis',      options=scatter_keys,
-                               index=_sc_idx(_sc_y_qp, 'Dividend Yield (%)'),
+                               index=_sc_idx(_sc_y_qp, 'PE Ratio'),
                                key='comp_sc_y')
     size_label = sc3.selectbox('Bubble Size', options=scatter_keys,
                                index=_sc_idx(_sc_size_qp, 'Market Cap'),
