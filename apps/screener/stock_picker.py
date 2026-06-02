@@ -20,7 +20,8 @@ import harvest.data as hd
 from harvest.utils import setup_logging
 
 
-st.title('Jajan Saham')
+st.title('Dividend Ranking')
+st.set_page_config(page_title='Panen Dividen | Stock Ranking')
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']

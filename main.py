@@ -7,7 +7,8 @@ from harvest.utils import setup_logging
 
 
 st.set_page_config(
-    layout='wide'
+    layout='wide',
+    page_title='Panen Dividen'
 )
 
 
@@ -19,7 +20,7 @@ logging.getLogger('tornado.general').setLevel(logging.CRITICAL)
 
 
 page_home = st.Page('home.py', title='Home', icon='🪙')
-page_screener = st.Page('apps/screener/stock_picker.py', title='Stock Picker', icon='💸')
+page_screener = st.Page('apps/screener/stock_picker.py', title='Div Ranking', icon='💸')
 page_comparison = st.Page('apps/screener/stock_comparison.py', title='Stock Comparison', icon='⚖️')
 page_market_watch = st.Page('apps/screener/market_watch.py', title='Market Watch', icon='📡')
 page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Overview', icon='💰')
