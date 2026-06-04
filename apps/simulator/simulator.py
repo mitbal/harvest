@@ -10,7 +10,9 @@ import harvest.data as hd
 from harvest.utils import setup_logging
 
 
-st.set_page_config(page_title='Harvest | Simulator', page_icon='📈', layout='wide')
+# st.set_page_config(page_title='Harvest | Simulator', page_icon='📈', layout='wide')
+st.title('Compounding Simulator')
+st.set_page_config(page_title='Panen Dividen | Compounding Simulator')
 
 # Custom CSS for modern look
 st.markdown("""
@@ -41,8 +43,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<p class="main-title">📈 Investor Simulator</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Compound interest and historical dividend reinvestment modeling</p>', unsafe_allow_html=True)
+# st.markdown('<p class="main-title">📈 Investor Simulator</p>', unsafe_allow_html=True)
+# st.markdown('<p class="sub-title">Compound interest and historical dividend reinvestment modeling</p>', unsafe_allow_html=True)
 
 ### Start of Function definition
 

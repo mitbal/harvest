@@ -21,7 +21,7 @@ from harvest.utils import setup_logging
 
 
 st.title('Dividend Ranking')
-st.set_page_config(page_title='Panen Dividen | Stock Ranking')
+st.set_page_config(page_title='Dividend Ranking - Panen Dividen')
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']

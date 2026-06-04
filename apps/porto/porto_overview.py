@@ -187,6 +187,7 @@ else:
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
     st.title('Portfolio Analytics')
+    st.set_page_config(page_title='Portfolio Analytics - Panen Dividen')
     if st.user.is_logged_in:
         st.markdown(f"**Welcome back, {st.user.name.split()[0]}!** Here's your harvest overview for today.")
     else:

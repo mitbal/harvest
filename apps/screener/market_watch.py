@@ -18,6 +18,7 @@ from harvest.utils import setup_logging
 
 
 st.title('📡 Market Watch')
+st.set_page_config(page_title='Market Watch - Panen Dividen')
 st.caption('Daily price return heatmap — browse any trading day to see who moved and by how much.')
 
 api_key = os.environ['FMP_API_KEY']
