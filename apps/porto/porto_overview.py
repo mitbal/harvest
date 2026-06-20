@@ -17,6 +17,12 @@ import harvest.plot as hp
 import harvest.data as hd
 from harvest.utils import setup_logging
 
+# Must be the very first Streamlit command
+st.set_page_config(page_title='Portfolio Analytics - Panen Dividen', layout='wide')
+
+REQUIRED_COLUMNS = {'Symbol', 'Available Lot', 'Average Price'}
+PASTE_RAW_FIELDS_PER_ROW = 11  # expected tokens per stock row in raw paste format
+
 
 @st.cache_resource
 def get_logger(name, level=logging.INFO):
@@ -187,7 +193,6 @@ else:
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
     st.title('Portfolio Analytics')
-    st.set_page_config(page_title='Portfolio Analytics - Panen Dividen')
     if st.user.is_logged_in:
         st.markdown(f"**Welcome back, {st.user.name.split()[0]}!** Here's your harvest overview for today.")
     else:
@@ -256,65 +261,158 @@ with st.expander('📥 Porto Data Input', expanded=data_input_expand_flag):
             
             if submit:
                 if method == 'Upload CSV':
-                    if st.session_state['porto_file'] != 'EMPTY':
-                        st.session_state['porto_file'].seek(0)
-                        st.session_state['porto_df'] = pd.read_csv(st.session_state['porto_file'], sep=',', dtype='str')
+                    porto_file = st.session_state.get('porto_file')
+                    if porto_file is None or porto_file == 'EMPTY':
+                        st.error('⚠️ Please select a CSV file before submitting.', icon="📂")
+                    else:
+                        try:
+                            porto_file.seek(0)
+                            uploaded_df = pd.read_csv(porto_file, sep=',', dtype='str')
+                            missing_cols = REQUIRED_COLUMNS - set(uploaded_df.columns)
+                            if missing_cols:
+                                st.error(f'❌ CSV is missing required columns: **{missing_cols}**. Expected: Symbol, Available Lot, Average Price', icon="🗂️")
+                            elif uploaded_df.empty:
+                                st.error('❌ The uploaded CSV file is empty.', icon="📭")
+                            else:
+                                st.session_state['porto_df'] = uploaded_df
+                        except Exception as e:
+                            st.error(f'❌ Failed to read CSV file: {e}', icon="🚫")
+                            logger.exception('CSV upload parsing failed')
 
                 elif method == 'Paste Raw':
-                    rows = np.array(raw.split())
+                    if not raw or not raw.strip():
+                        st.error('⚠️ Please paste your portfolio data before submitting.', icon="📋")
+                    else:
+                        try:
+                            rows = np.array(raw.split())
+                            if len(rows) % PASTE_RAW_FIELDS_PER_ROW != 0:
+                                st.error(
+                                    f'❌ Pasted data has {len(rows)} tokens, which is not a multiple of {PASTE_RAW_FIELDS_PER_ROW}. '
+                                    'Please make sure you copied the full table from Stockbit.',
+                                    icon="⚠️"
+                                )
+                            else:
+                                stock = rows[range(0, len(rows), PASTE_RAW_FIELDS_PER_ROW)]
+                                lot = [x.replace(',', '') for x in rows[range(1, len(rows), PASTE_RAW_FIELDS_PER_ROW)]]
+                                price = [p.replace(',', '') for p in rows[range(3, len(rows), PASTE_RAW_FIELDS_PER_ROW)]]
 
-                    stock = rows[range(0, len(rows), 11)]
-                    lot = rows[range(1, len(rows), 11)]
-                    lot = [x.replace(',', '') for x in lot]
-                    price = rows[range(3, len(rows), 11)]
-                    price = [p.replace(',', '') for p in price]
-
-                    df = pd.DataFrame({
-                        'Symbol': stock,
-                        'Available Lot': lot,
-                        'Average Price': price
-                    })
-                    st.session_state['porto_df'] = df
+                                # Validate numeric fields
+                                bad_lots = [v for v in lot if not _is_positive_number(v)]
+                                bad_prices = [v for v in price if not _is_positive_number(v)]
+                                if bad_lots:
+                                    st.error(f'❌ Non-numeric or negative lot values detected: {bad_lots}', icon="🔢")
+                                elif bad_prices:
+                                    st.error(f'❌ Non-numeric or negative price values detected: {bad_prices}', icon="🔢")
+                                else:
+                                    df = pd.DataFrame({
+                                        'Symbol': stock,
+                                        'Available Lot': lot,
+                                        'Average Price': price
+                                    })
+                                    st.session_state['porto_df'] = df
+                        except Exception as e:
+                            st.error(f'❌ Failed to parse pasted data: {e}', icon="🚫")
+                            logger.exception('Paste Raw parsing failed')
 
                 elif method == 'Paste CSV':
-                    input_str = io.StringIO(raw)
-                    df = pd.read_csv(input_str, sep=';', dtype='str')
-                    st.session_state['porto_df'] = df
-                    
+                    if not raw or not raw.strip():
+                        st.error('⚠️ Please paste your CSV data before submitting.', icon="📋")
+                    else:
+                        try:
+                            input_str = io.StringIO(raw)
+                            pasted_df = pd.read_csv(input_str, sep=';', dtype='str')
+                            missing_cols = REQUIRED_COLUMNS - set(pasted_df.columns)
+                            if missing_cols:
+                                st.error(f'❌ Pasted CSV is missing required columns: **{missing_cols}**', icon="🗂️")
+                            elif pasted_df.empty:
+                                st.error('❌ Pasted CSV data is empty.', icon="📭")
+                            else:
+                                st.session_state['porto_df'] = pasted_df
+                        except Exception as e:
+                            st.error(f'❌ Failed to parse pasted CSV: {e}', icon="🚫")
+                            logger.exception('Paste CSV parsing failed')
+
                 elif method == 'Form':
                     df = edited_df.copy(deep=True)
-                    df['Symbol'] = df['Symbol'].str.upper()
-                    st.session_state['porto_df'] = df
+                    df.dropna(subset=['Symbol'], inplace=True)
+                    df['Symbol'] = df['Symbol'].astype(str).str.strip().str.upper()
+                    df = df[df['Symbol'] != '']
 
-                logger.info(f'Porto data submitted via {method}')
-                logger.info(f'target: {target}. baseline: {baseline}. porto: {st.session_state["porto_df"].to_records()}')
+                    if df.empty:
+                        st.error('❌ No valid rows in the form. Please add at least one stock.', icon="📭")
+                    else:
+                        # Validate numeric columns
+                        invalid_lots = df[pd.to_numeric(df['Available Lot'], errors='coerce').isna() | (pd.to_numeric(df['Available Lot'], errors='coerce') <= 0)]
+                        invalid_prices = df[pd.to_numeric(df['Average Price'], errors='coerce').isna() | (pd.to_numeric(df['Average Price'], errors='coerce') <= 0)]
+                        if not invalid_lots.empty:
+                            st.error(f'❌ Invalid or non-positive lot values in rows: {invalid_lots["Symbol"].tolist()}', icon="🔢")
+                        elif not invalid_prices.empty:
+                            st.error(f'❌ Invalid or non-positive price values in rows: {invalid_prices["Symbol"].tolist()}', icon="🔢")
+                        else:
+                            st.session_state['porto_df'] = df
+
+                if st.session_state.get('porto_df') is not None:
+                    logger.info(f'Porto data submitted via {method}')
+                    logger.info(f'target: {target}. baseline: {baseline}. porto: {st.session_state["porto_df"].to_records()}')
 
 
-api_key = os.environ['FMP_API_KEY']
+api_key = os.environ.get('FMP_API_KEY', '')
+
+
+def _is_positive_number(val: str) -> bool:
+    """Return True if val can be parsed as a positive float."""
+    try:
+        return float(val) > 0
+    except (ValueError, TypeError):
+        return False
+
 
 @st.cache_data(ttl=60*60)
 def get_company_profile_data(porto):
 
-    redis_url = os.environ['REDIS_URL']
-    r = connect_redis(redis_url)
+    redis_url = os.environ.get('REDIS_URL')
+    if not redis_url:
+        raise EnvironmentError('REDIS_URL environment variable is not set.')
 
-    rjson = r.get('div_score_jkse')
-    if isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
-        cp_df = pd.read_parquet(io.BytesIO(rjson))
-    else:
-        div_score_json = json.loads(rjson)
-        if 'content' in div_score_json:
-            cp_df = pd.DataFrame(json.loads(div_score_json['content']))
+    try:
+        r = connect_redis(redis_url)
+        rjson = r.get('div_score_jkse')
+    except Exception as e:
+        raise ConnectionError(f'Failed to connect to Redis or fetch data: {e}') from e
+
+    if rjson is None:
+        raise ValueError('No data found in Redis for key "div_score_jkse". Please ensure the data pipeline has run.')
+
+    try:
+        if isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
+            cp_df = pd.read_parquet(io.BytesIO(rjson))
         else:
-            cp_df = pd.DataFrame(div_score_json)
-            
+            div_score_json = json.loads(rjson)
+            if 'content' in div_score_json:
+                cp_df = pd.DataFrame(json.loads(div_score_json['content']))
+            else:
+                cp_df = pd.DataFrame(div_score_json)
+    except Exception as e:
+        raise ValueError(f'Failed to parse company profile data from Redis: {e}') from e
+
     cp_df.rename(columns={'symbol': 'stock'}, inplace=True)
     if 'stock' in cp_df.columns:
         cp_df.set_index('stock', inplace=True)
-    
+
+    for col in ['price', 'sector', 'lastDiv']:
+        if col not in cp_df.columns:
+            raise KeyError(f'Expected column "{col}" not found in company profile data.')
+
     cp_df['Symbol'] = [x[:-3] for x in cp_df.index.to_list()]
     df = porto.merge(cp_df[['Symbol', 'price', 'sector', 'lastDiv']])
     df.rename(columns={'lastDiv': 'div_rate', 'price': 'last_price'}, inplace=True)
+
+    if df.empty:
+        unknown = set(porto['Symbol'].tolist()) - set(cp_df['Symbol'].tolist())
+        raise ValueError(
+            f'No matching stocks found after merging with company profile data. '
+            f'Symbols not found in database: {unknown}'
+        )
 
     return df
 
@@ -333,15 +431,66 @@ def get_dividend_data(porto):
     return divs
 
 
-if st.session_state['porto_df'] is None:
+if st.session_state.get('porto_df') is None:
+    st.info('👆 Please upload or enter your portfolio data above to get started.', icon="📊")
     st.stop()
 
-st.session_state['porto_df'].dropna(inplace=True)
-df = get_company_profile_data(st.session_state['porto_df'])
-divs = get_dividend_data(st.session_state['porto_df'])
+st.session_state['porto_df'].dropna(how='all', inplace=True)
+st.session_state['porto_df'].dropna(subset=['Symbol'], inplace=True)
 
-df['current_lot'] = df['Available Lot'].astype(float)
-df['avg_price'] = df['Average Price'].astype(float)
+if st.session_state['porto_df'].empty:
+    st.error('❌ Your portfolio data has no valid rows. Please check your input.', icon="📭")
+    st.stop()
+
+try:
+    df = get_company_profile_data(st.session_state['porto_df'])
+except (ConnectionError, EnvironmentError) as e:
+    st.error(f'🔌 **Connection Error:** {e}', icon="🔌")
+    logger.exception('Failed to connect to data source')
+    st.stop()
+except ValueError as e:
+    st.error(f'📉 **Data Error:** {e}', icon="⚠️")
+    logger.exception('Data error in company profile fetch')
+    st.stop()
+except KeyError as e:
+    st.error(f'🗂️ **Schema Error:** Missing expected column {e}', icon="🗂️")
+    logger.exception('Schema mismatch in company profile data')
+    st.stop()
+except Exception as e:
+    st.error(f'❌ **Unexpected error loading company profile data:** {e}', icon="🚫")
+    logger.exception('Unexpected error in get_company_profile_data')
+    st.stop()
+
+try:
+    divs = get_dividend_data(st.session_state['porto_df'])
+except Exception as e:
+    st.warning(f'⚠️ Could not load dividend history: {e}. Some features may be limited.', icon="📅")
+    logger.exception('Failed to load dividend data')
+    divs = {}
+
+# Cast and validate numeric columns
+try:
+    df['current_lot'] = pd.to_numeric(df['Available Lot'], errors='raise').astype(float)
+except (ValueError, TypeError) as e:
+    st.error(f'❌ **Invalid lot values in portfolio:** {e}', icon="🔢")
+    st.stop()
+
+try:
+    df['avg_price'] = pd.to_numeric(df['Average Price'], errors='raise').astype(float)
+except (ValueError, TypeError) as e:
+    st.error(f'❌ **Invalid price values in portfolio:** {e}', icon="🔢")
+    st.stop()
+
+if (df['current_lot'] <= 0).any():
+    bad = df[df['current_lot'] <= 0]['Symbol'].tolist()
+    st.error(f'❌ Lot values must be positive. Check: {bad}', icon="🔢")
+    st.stop()
+
+if (df['avg_price'] <= 0).any():
+    bad = df[df['avg_price'] <= 0]['Symbol'].tolist()
+    st.error(f'❌ Average price values must be positive. Check: {bad}', icon="🔢")
+    st.stop()
+
 df['total_invested'] = df['current_lot'] * df['avg_price'] * 100
 df['yield_on_cost'] = df['div_rate'] / df['avg_price'] * 100
 df['yield_on_price'] = df['div_rate'] / df['last_price'] * 100
@@ -350,8 +499,8 @@ df['total_dividend'] = (df['div_rate'] * df['current_lot'] * 100).astype(int)
 annual_dividend = df['total_dividend'].sum()
 total_investment = df['total_invested'].sum()
 current_investment_value = (df['current_lot'] * df['last_price'] * 100).sum()
-achieve_percentage = annual_dividend / target * 100 / 1_000_000
-total_yield_on_cost = annual_dividend / total_investment * 100
+achieve_percentage = annual_dividend / target * 100 / 1_000_000 if target > 0 else 0
+total_yield_on_cost = annual_dividend / total_investment * 100 if total_investment > 0 else 0
 
 df_display = df[['Symbol', 'Available Lot', 'avg_price', 'total_invested', 'div_rate', 'last_price', 
                  'yield_on_cost', 'yield_on_price', 'total_dividend']].copy(deep=True)
@@ -497,39 +646,52 @@ with st.container(border=True):
         )
 
 
-if main_event.selection['rows']:
+if main_event.selection.get('rows'):
 
     symbol = df_display.iloc[main_event.selection['rows'][0]]['Symbol']
 
     with st.expander('Dividend History', expanded=True):
 
-        if symbol+'.JK' not in divs.keys():
-            st.write(f'No dividend history available for {symbol}')
+        if not divs:
+            st.warning('⚠️ Dividend history could not be loaded. Please check your connection.', icon="📅")
+        elif symbol+'.JK' not in divs.keys():
+            st.info(f'No dividend history available for **{symbol}**.', icon="📭")
         else:
-            div_df = pd.DataFrame(divs[symbol+'.JK'])
+            try:
+                div_df = pd.DataFrame(divs[symbol+'.JK'])
 
-            div_hist_cols = st.columns([3, 10, 5])
-            with div_hist_cols[0]:
-                st.dataframe(
-                    div_df[['date', 'adjDividend']],
-                    column_config={
-                        'date': st.column_config.DateColumn('Ex-Date'),
-                        'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f')
-                    },
-                    height=420,
-                    hide_index=True
-                )
+                if div_df.empty or 'date' not in div_df.columns or 'adjDividend' not in div_df.columns:
+                    st.info(f'Dividend history for **{symbol}** has no payable records.', icon="📭")
+                else:
+                    div_hist_cols = st.columns([3, 10, 5])
+                    with div_hist_cols[0]:
+                        st.dataframe(
+                            div_df[['date', 'adjDividend']],
+                            column_config={
+                                'date': st.column_config.DateColumn('Ex-Date'),
+                                'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f')
+                            },
+                            height=420,
+                            hide_index=True
+                        )
 
-            with div_hist_cols[1]:
-                stats = hd.calc_div_stats(hd.preprocess_div(div_df))
-
-                div_bar = hp.plot_dividend_history(div_df,
-                                                    extrapolote=True,
-                                                    n_future_years=5,
-                                                    last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
-                                                    inc_val=stats['historical_mean_flat'])
-
-                st.altair_chart(div_bar, width="stretch")
+                    with div_hist_cols[1]:
+                        try:
+                            stats = hd.calc_div_stats(hd.preprocess_div(div_df))
+                            div_bar = hp.plot_dividend_history(
+                                div_df,
+                                extrapolote=True,
+                                n_future_years=5,
+                                last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
+                                inc_val=stats['historical_mean_flat']
+                            )
+                            st.altair_chart(div_bar, width="stretch")
+                        except Exception as e:
+                            st.warning(f'⚠️ Could not render dividend history chart: {e}', icon="📊")
+                            logger.exception(f'Dividend history chart failed for {symbol}')
+            except Exception as e:
+                st.error(f'❌ Failed to display dividend history for {symbol}: {e}', icon="🚫")
+                logger.exception(f'Dividend history display error for {symbol}')
 
             # with div_hist_cols[2]:
 
@@ -594,22 +756,37 @@ with st.expander('📅 Dividend Timeline', expanded=True):
         if stock not in divs.keys():
             continue
 
-        div_df = pd.DataFrame(divs[stock])
-        div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
-        div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
+        try:
+            div_df = pd.DataFrame(divs[stock])
+            if div_df.empty or 'date' not in div_df.columns:
+                continue
 
-        end_date = pd.Timestamp('today').to_datetime64()
-        start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
+            div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
+            div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
 
-        current_year = datetime.today().year
-        last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
-        last_year_div['Symbol'] = stock
-        last_year_div['Lot'] = r['current_lot']
-        last_year_div['yield'] = last_year_div['adjDividend'] / r['last_price'] * 100
+            end_date = pd.Timestamp('today').to_datetime64()
+            start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
 
-        div_lists += [last_year_div]
+            current_year = datetime.today().year
+            last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
+            last_year_div['Symbol'] = stock
+            last_year_div['Lot'] = r['current_lot']
+            if r.get('last_price', 0) > 0:
+                last_year_div['yield'] = last_year_div['adjDividend'] / r['last_price'] * 100
+            else:
+                last_year_div['yield'] = 0.0
 
-    all_divs = pd.concat(div_lists).reset_index(drop=True)       
+            if not last_year_div.empty:
+                div_lists += [last_year_div]
+        except Exception as e:
+            logger.warning(f'Skipping dividend timeline entry for {stock}: {e}')
+            continue
+
+    if not div_lists:
+        st.info('📅 No dividend payment data found in the past 12 months for your portfolio.', icon="📭")
+        st.stop()
+
+    all_divs = pd.concat(div_lists, ignore_index=True)
     all_divs['total_dividend'] = (all_divs['Lot'] * all_divs['adjDividend'] * 100).astype('int')
     all_divs['Date'] = pd.to_datetime(all_divs['date']).dt.tz_localize(None)
     # all_divs['new_date'] = all_divs['date'].apply(lambda x: x + pd.Timedelta(days=14))
