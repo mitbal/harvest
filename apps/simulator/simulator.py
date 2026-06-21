@@ -110,7 +110,7 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
     returns = []
 
     initial_investment = 0
-    without_drip = pd.DataFrame()
+    without_drip_rows = []
 
     if f'{start_year}-12-31' < price_df['date'].min():
         st.error(f'Data for {stock_name} is not available before {price_df["date"].min()}, Please change the year or select different stocks')
@@ -144,12 +144,11 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
             div = 0
             returns += [0]
 
-        without_drip = pd.concat([without_drip, 
-                                pd.DataFrame({'year': [f'Year {y}'], 
+        without_drip_rows.append(pd.DataFrame({'year': [f'Year {y}'], 
                                                 'returns': [div_payment * initial_investment * 100],
-                                                'investment': [ initial_investment * buy_date['close'] * 100 + div]
-                                                })
-                                ])
+                                                'investment': [initial_investment * buy_date['close'] * 100 + div]
+                                                }))
+    without_drip = pd.concat(without_drip_rows, ignore_index=True) if without_drip_rows else pd.DataFrame(columns=['year', 'returns', 'investment'])
 
     with st.expander('Activity Log'):
         st.write(activities)
@@ -173,12 +172,12 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
         prices[stock] = hd.get_daily_stock_price(stock, start_from=f'{start_year}-01-01')
 
     porto = {s: {'lot': 0, 'avg_price': 0} for s in stock_list}
-    porto_df = pd.DataFrame()
+    porto_df_rows = []
     cash = initial_value
     investments = []
     returns = []
     initial_purchase = {}
-    without_drip = pd.DataFrame()
+    without_drip_rows = []
 
     transactions = {}
     for y in range(start_year, end_year+1):
@@ -248,20 +247,18 @@ def simulate_real_multistock_compounding(initial_value, investment_per_stock, st
             buy_date = price_df[price_df['date'] <= f'{y}-12-31'].iloc[0]
             val = porto[s]['lot'] * buy_date['close'] * 100
             inv += val
-            porto_df = pd.concat([porto_df,
-                                pd.DataFrame({'stock': [s], 'lot': [porto[s]['lot']], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']})
-                                ])
-            without_drip = pd.concat([without_drip,
-                                    pd.DataFrame({
-                                        'stock': [s],
-                                        'year': [f'Year {y}'],
-                                        'lot': [initial_purchase[s]],
-                                        'price': [buy_date['close']],
-                                        'value': [initial_purchase[s] * buy_date['close'] * 100]
-                                        })
-                                    ])
+            porto_df_rows.append(pd.DataFrame({'stock': [s], 'lot': [porto[s]['lot']], 'price': [buy_date['close']], 'value': [val], 'year': [f'Year {y}']}))
+            without_drip_rows.append(pd.DataFrame({
+                'stock': [s],
+                'year': [f'Year {y}'],
+                'lot': [initial_purchase[s]],
+                'price': [buy_date['close']],
+                'value': [initial_purchase[s] * buy_date['close'] * 100]
+            }))
 
         investments += [inv]
+    porto_df = pd.concat(porto_df_rows, ignore_index=True) if porto_df_rows else pd.DataFrame(columns=['stock', 'lot', 'price', 'value', 'year'])
+    without_drip = pd.concat(without_drip_rows, ignore_index=True) if without_drip_rows else pd.DataFrame(columns=['stock', 'year', 'lot', 'price', 'value'])
     return investments, returns, without_drip, porto_df, transactions
 
 ### End of Function definition
