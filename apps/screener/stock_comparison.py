@@ -15,6 +15,7 @@ from harvest.utils import setup_logging
 
 
 st.title('Stock Comparison ⚖️')
+st.set_page_config(page_title='Stock Comparison - Panen Dividen')
 
 # ── Constants ────────────────────────────────────────────────────────────────
 DIV_MATURITY_HALFLIFE = 25
