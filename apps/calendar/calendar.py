@@ -21,6 +21,8 @@ from harvest.utils import setup_logging
 current_year = datetime.today().year
 current_month = datetime.today().month
 
+st.set_page_config(page_title='Dividend Calendar - Panen Dividen')
+
 
 sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
 
