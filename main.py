@@ -17,6 +17,8 @@ logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 logging.getLogger('tornado.access').setLevel(logging.CRITICAL)
 logging.getLogger('tornado.application').setLevel(logging.CRITICAL)
 logging.getLogger('tornado.general').setLevel(logging.CRITICAL)
+# Suppress bot-scanner noise (e.g. requests for system/js/core.js)
+logging.getLogger('streamlit.web.server.media_file_handler').setLevel(logging.CRITICAL)
 
 
 page_home = st.Page('home.py', title='Home', icon='🪙')
