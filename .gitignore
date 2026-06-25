@@ -1,6 +1,11 @@
 *.csv
 *.gif
 *.pkl
+*.ipynb
+*.txt
+*.png
+*.json
+articles/
 .DS_Store
 __pycache__/
 .streamlit/secrets.toml
