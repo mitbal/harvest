@@ -1,6 +1,12 @@
 import io
+import os
 import time
 import logging
+import mimetypes
+
+# Streamlit's Tornado static server uses mimetypes.guess_type() at request time.
+# Register SVG so logos are served as image/svg+xml (not text/plain).
+mimetypes.add_type('image/svg+xml', '.svg')
 
 import redis
 import numpy as np
@@ -636,6 +642,12 @@ with tab_scatter:
     scatter_options = {k: v[0] for k, v in METRIC_OPTIONS.items() if v[0] in filtered_df.columns or v[0] == 'DScore'}
     scatter_keys = list(scatter_options.keys())
 
+    # Special sentinel values for bubble-size selector
+    _SIZE_NONE   = '— None (uniform size) —'
+    _SIZE_SYMBOL = '★ Symbol (company logo)'
+    _size_special = [_SIZE_NONE, _SIZE_SYMBOL]
+    size_keys_extended = _size_special + scatter_keys
+
     # Resolve scatter axes from URL
     _sc_x_qp    = _qp_get('sc_x',    'Dividend Yield (%)')
     _sc_y_qp    = _qp_get('sc_y',    'PE Ratio')
@@ -646,6 +658,13 @@ with tab_scatter:
             return scatter_keys.index(label)
         return scatter_keys.index(default) if default in scatter_keys else 0
 
+    def _sc_size_idx(label, default):
+        if label in size_keys_extended:
+            return size_keys_extended.index(label)
+        if default in size_keys_extended:
+            return size_keys_extended.index(default)
+        return size_keys_extended.index(_SIZE_NONE)
+
     sc1, sc2, sc3, sc4 = st.columns(4)
     x_label    = sc1.selectbox('X Axis',      options=scatter_keys,
                                index=_sc_idx(_sc_x_qp, 'Dividend Yield (%)'),
@@ -653,8 +672,8 @@ with tab_scatter:
     y_label    = sc2.selectbox('Y Axis',      options=scatter_keys,
                                index=_sc_idx(_sc_y_qp, 'PE Ratio'),
                                key='comp_sc_y')
-    size_label = sc3.selectbox('Bubble Size', options=scatter_keys,
-                               index=_sc_idx(_sc_size_qp, 'Market Cap'),
+    size_label = sc3.selectbox('Bubble Size', options=size_keys_extended,
+                               index=_sc_size_idx(_sc_size_qp, 'Market Cap'),
                                key='comp_sc_size')
 
     # Sync scatter axes → URL
@@ -673,12 +692,37 @@ with tab_scatter:
         help='Show all stocks as grey background dots',
     )
 
-    x_col    = scatter_options[x_label]
-    y_col    = scatter_options[y_label]
-    size_col = scatter_options[size_label]
+    # Determine size mode
+    _size_is_none   = (size_label == _SIZE_NONE)
+    _size_is_symbol = (size_label == _SIZE_SYMBOL)
+    size_col = scatter_options.get(size_label) if not _size_is_none and not _size_is_symbol else None
+
+    x_col = scatter_options[x_label]
+    y_col = scatter_options[y_label]
+
+    # ── Helper: return a logo URL for the company ────────────────────────── #
+    _JKSE_LOGO_BASE  = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos'
+    _SP500_LOGO_BASE = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos'
+
+    @st.cache_data(show_spinner=False)
+    def _load_logo_b64(stock: str, market: str) -> str | None:
+        """Return a direct SVG URL for the stock's logo.
+
+        JKSE  → GitHub raw CDN under jkse/logos/{ticker}.svg
+        Other → GitHub raw CDN under sp500/logos/{ticker}.svg
+        """
+        ticker = stock.split('.')[0]   # strip .JK / exchange suffix
+
+        if market == 'JKSE':
+            return f'{_JKSE_LOGO_BASE}/{ticker}.svg'
+
+        return f'{_SP500_LOGO_BASE}/{ticker}.svg'
+
 
     # Validate columns exist
-    missing = [c for c in [x_col, y_col, size_col] if c not in filtered_df.columns]
+    missing = [c for c in [x_col, y_col] if c not in filtered_df.columns]
+    if size_col and size_col not in filtered_df.columns:
+        missing.append(size_col)
     if missing:
         st.warning(f'Some selected metrics are not available in the data: {missing}')
     elif x_col == y_col:
@@ -687,142 +731,300 @@ with tab_scatter:
             'Please choose two different metrics to plot a meaningful scatter chart.'
         )
     else:
-        # Prepare selected stocks DataFrame
-        sc_comp = comp_df[[x_col, y_col, size_col, 'sector']].copy().dropna()
-        sc_comp = sc_comp.reset_index()  # index = stock name
+        # ── Columns needed for selected-stocks frame ───────────────────────── #
+        _cols_needed = [c for c in [x_col, y_col, size_col, 'sector'] if c]
+        sc_comp = comp_df[_cols_needed].copy().dropna(subset=[x_col, y_col])
+        sc_comp = sc_comp.reset_index()  # index → 'stock' column
 
-        # ── Remove extreme outliers from selected stocks ─────────────────── #
-        # (No outlier removal for selected stocks — we always want to show them)
+        # ══════════════════════════════════════════════════════════════════════
+        # MODE A — Symbol (company logos via Altair mark_image)
+        # JKSE: logos are fetched directly from GitHub raw-content CDN (SVG).
+        # Other markets: PNG data-URLs converted from local SVG via ImageMagick.
+        # ══════════════════════════════════════════════════════════════════════
+        if _size_is_symbol:
+            # Attach logo URL to each row
+            sc_comp['_logo_url'] = sc_comp['stock'].apply(
+                lambda s: _load_logo_b64(s, sl) or ''
+            )
+            sc_with_logo    = sc_comp[sc_comp['_logo_url'] != ''].copy()
+            sc_without_logo = sc_comp[sc_comp['_logo_url'] == ''].copy()
 
-        color_scale_sel = alt.Scale(
-            domain=selected_stocks,
-            range=[stock_colors[s] for s in selected_stocks],
-        )
+            color_scale_sel_sym = alt.Scale(
+                domain=selected_stocks,
+                range=[stock_colors[s] for s in selected_stocks],
+            )
 
-        # ── Base scatter for selected stocks ─────────────────────────────── #
-        selected_scatter = alt.Chart(sc_comp).mark_circle(
-            opacity=1.0, stroke='white', strokeWidth=1.5,
-        ).encode(
-            x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-            y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-            size=alt.Size(f'{size_col}:Q', title=size_label,
-                          scale=alt.Scale(range=[200, 1800])),
-            color=alt.Color('stock:N', title='Stock',
-                            scale=color_scale_sel,
-                            legend=alt.Legend(orient='right')),
-            tooltip=[
-                alt.Tooltip('stock:N',      title='Stock'),
-                alt.Tooltip('sector:N',     title='Sector'),
-                alt.Tooltip(f'{x_col}:Q',   title=x_label,    format='.2f'),
-                alt.Tooltip(f'{y_col}:Q',   title=y_label,    format='.2f'),
-                alt.Tooltip(f'{size_col}:Q', title=size_label, format='.2f'),
-            ],
-        )
+            # y-offset for labels in data-unit space
+            _logo_px = 28
+            _y_vals_sym  = sc_comp[y_col].values
+            _y_range_sym = float(_y_vals_sym.max() - _y_vals_sym.min()) or abs(float(_y_vals_sym.mean())) * 0.1 or 1.0
+            _dpp_sym     = (_y_range_sym * 1.1) / 520
+            sc_comp = sc_comp.copy()
+            sc_comp['_label_y'] = sc_comp[y_col] + (_logo_px + 6) * _dpp_sym
 
-        # ── Stock name labels ─────────────────────────────────────────────── #
-        # dx/dy are not encodable channels in this Altair version, so we
-        # pre-compute a shifted y position in data space instead.
-        #
-        # Each bubble's visual radius ≈ √(pixel_area) / 2, where Altair maps
-        # the size encoding to pixel-area in [200, 1800].
-        # We convert that pixel offset to data units using the y-axis range
-        # and chart height, then store the result as `_label_y`.
-        _sc_size = sc_comp[size_col].values
-        _sc_min, _sc_max = _sc_size.min(), _sc_size.max()
-        if _sc_max > _sc_min:
-            _sc_norm = (_sc_size - _sc_min) / (_sc_max - _sc_min)
+            sym_layers = []
+
+            # Universe background dots (if toggled)
+            if show_universe_scatter:
+                _uni_cols_sym = [c for c in [x_col, y_col, 'sector'] if c]
+                sc_universe_sym = filtered_df[_uni_cols_sym].copy().dropna().reset_index()
+                q95_x = sc_universe_sym[x_col].quantile(0.95)
+                q05_x = sc_universe_sym[x_col].quantile(0.05)
+                q95_y = sc_universe_sym[y_col].quantile(0.95)
+                q05_y = sc_universe_sym[y_col].quantile(0.05)
+                sc_universe_sym = sc_universe_sym[
+                    (sc_universe_sym[x_col] <= q95_x) & (sc_universe_sym[x_col] >= q05_x) &
+                    (sc_universe_sym[y_col] <= q95_y) & (sc_universe_sym[y_col] >= q05_y)
+                ]
+                x_med_sym = float(sc_universe_sym[x_col].median())
+                y_med_sym = float(sc_universe_sym[y_col].median())
+                bg_sym = alt.Chart(sc_universe_sym).mark_circle(
+                    opacity=0.18, color='#9ca3af', size=60,
+                ).encode(
+                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    tooltip=[
+                        alt.Tooltip('stock:N',  title='Stock'),
+                        alt.Tooltip('sector:N', title='Sector'),
+                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
+                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
+                    ],
+                )
+                vline_sym = alt.Chart(pd.DataFrame({x_col: [x_med_sym]})).mark_rule(
+                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5,
+                ).encode(x=f'{x_col}:Q')
+                hline_sym = alt.Chart(pd.DataFrame({y_col: [y_med_sym]})).mark_rule(
+                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5,
+                ).encode(y=f'{y_col}:Q')
+                sym_layers += [bg_sym, vline_sym, hline_sym]
+
+            # Logo layer — mark_image with static-served SVG URLs
+            if not sc_with_logo.empty:
+                logo_layer = alt.Chart(sc_with_logo).mark_image(
+                    width=44, height=44,
+                ).encode(
+                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    url='_logo_url:N',
+                    tooltip=[
+                        alt.Tooltip('stock:N',  title='Stock'),
+                        alt.Tooltip('sector:N', title='Sector'),
+                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
+                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
+                    ],
+                )
+                sym_layers.append(logo_layer)
+
+            # Fallback circles for stocks with no logo
+            if not sc_without_logo.empty:
+                fallback_layer = alt.Chart(sc_without_logo).mark_circle(
+                    size=800, opacity=0.85, stroke='white', strokeWidth=1.5,
+                ).encode(
+                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    color=alt.Color('stock:N', scale=color_scale_sel_sym, legend=None),
+                    tooltip=[
+                        alt.Tooltip('stock:N',  title='Stock'),
+                        alt.Tooltip('sector:N', title='Sector'),
+                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
+                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
+                    ],
+                )
+                sym_layers.append(fallback_layer)
+
+            # Ticker labels floating above each logo
+            sym_label_layer = alt.Chart(sc_comp).mark_text(
+                align='center', baseline='bottom',
+                fontSize=11, fontWeight='bold',
+            ).encode(
+                x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                y=alt.Y('_label_y:Q', title=y_label, scale=alt.Scale(zero=False)),
+                text=alt.Text('stock:N'),
+                color=alt.Color('stock:N', scale=color_scale_sel_sym,
+                                legend=alt.Legend(orient='right')),
+            )
+            sym_layers.append(sym_label_layer)
+
+            sym_chart = alt.layer(*sym_layers).properties(height=520).interactive()
+            st.altair_chart(sym_chart, width='stretch')
+
+
+
+        # ══════════════════════════════════════════════════════════════════════
+        # MODE B — Altair (None or metric-based bubble size)
+        # ══════════════════════════════════════════════════════════════════════
         else:
-            _sc_norm = np.full(len(_sc_size), 0.5)
-        _px_area   = 200 + _sc_norm * (1800 - 200)   # pixel-area in [200, 1800]
-        _px_radius = np.sqrt(_px_area) / 2            # visual radius in pixels
+            color_scale_sel = alt.Scale(
+                domain=selected_stocks,
+                range=[stock_colors[s] for s in selected_stocks],
+            )
 
-        _y_vals   = sc_comp[y_col].values
-        _y_range  = float(_y_vals.max() - _y_vals.min()) or abs(float(_y_vals.mean())) * 0.1 or 1.0
-        # chart height is 520px; Altair adds ~5% padding each side → effective domain ≈ range * 1.1
-        _data_per_px = (_y_range * 1.1) / 520
+            # ── Build size encoding ──────────────────────────────────────────
+            if _size_is_none:
+                # Uniform size — no encoding, fixed pixel area
+                _fixed_area = 600
+                size_encoding = alt.value(_fixed_area)
+                _px_radius_arr = np.full(len(sc_comp), np.sqrt(_fixed_area) / 2)
+            else:
+                # Metric-based bubble size
+                size_encoding = alt.Size(f'{size_col}:Q', title=size_label,
+                                         scale=alt.Scale(range=[200, 1800]))
+                _sc_size_vals = sc_comp[size_col].values
+                _sc_min, _sc_max = _sc_size_vals.min(), _sc_size_vals.max()
+                if _sc_max > _sc_min:
+                    _sc_norm = (_sc_size_vals - _sc_min) / (_sc_max - _sc_min)
+                else:
+                    _sc_norm = np.full(len(_sc_size_vals), 0.5)
+                _px_area_arr   = 200 + _sc_norm * (1800 - 200)
+                _px_radius_arr = np.sqrt(_px_area_arr) / 2
 
-        sc_comp = sc_comp.copy()
-        sc_comp['_label_y'] = sc_comp[y_col] + (_px_radius + 6) * _data_per_px
-
-        stock_labels = alt.Chart(sc_comp).mark_text(
-            align='center',
-            baseline='bottom',
-            fontSize=12,
-            fontWeight='bold',
-        ).encode(
-            x=alt.X(f'{x_col}:Q', scale=alt.Scale(zero=False)),
-            y=alt.Y('_label_y:Q', scale=alt.Scale(zero=False)),
-            text=alt.Text('stock:N'),
-            color=alt.Color('stock:N', scale=color_scale_sel, legend=None),
-        )
-
-        layers = []
-
-        if show_universe_scatter:
-            # Background grey dots — full universe (outliers removed)
-            sc_universe = filtered_df[[x_col, y_col, size_col, 'sector']].copy().dropna().reset_index()
-            q95_x = sc_universe[x_col].quantile(0.95)
-            q05_x = sc_universe[x_col].quantile(0.05)
-            q95_y = sc_universe[y_col].quantile(0.95)
-            q05_y = sc_universe[y_col].quantile(0.05)
-            sc_universe = sc_universe[
-                (sc_universe[x_col] <= q95_x) & (sc_universe[x_col] >= q05_x) &
-                (sc_universe[y_col] <= q95_y) & (sc_universe[y_col] >= q05_y)
+            # ── Tooltip list ─────────────────────────────────────────────────
+            _tooltip = [
+                alt.Tooltip('stock:N',    title='Stock'),
+                alt.Tooltip('sector:N',   title='Sector'),
+                alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
+                alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
             ]
+            if not _size_is_none:
+                _tooltip.append(alt.Tooltip(f'{size_col}:Q', title=size_label, format='.2f'))
 
-            background = alt.Chart(sc_universe).mark_circle(
-                opacity=0.18, color='#9ca3af', size=60,
+            # ── Base scatter for selected stocks ─────────────────────────── #
+            selected_scatter = alt.Chart(sc_comp).mark_circle(
+                opacity=1.0, stroke='white', strokeWidth=1.5,
             ).encode(
                 x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
                 y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-                tooltip=[
-                    alt.Tooltip('stock:N',    title='Stock'),
-                    alt.Tooltip('sector:N',   title='Sector'),
-                    alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
-                    alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
-                ],
+                size=size_encoding,
+                color=alt.Color('stock:N', title='Stock',
+                                scale=color_scale_sel,
+                                legend=alt.Legend(orient='right')),
+                tooltip=_tooltip,
             )
 
-            # Median lines from full universe
-            x_med = float(sc_universe[x_col].median())
-            y_med = float(sc_universe[y_col].median())
-            vline = alt.Chart(pd.DataFrame({x_col: [x_med]})).mark_rule(
-                color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5
-            ).encode(x=f'{x_col}:Q')
-            hline = alt.Chart(pd.DataFrame({y_col: [y_med]})).mark_rule(
-                color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5
-            ).encode(y=f'{y_col}:Q')
+            # ── Stock name labels ─────────────────────────────────────────── #
+            _y_vals   = sc_comp[y_col].values
+            _y_range  = float(_y_vals.max() - _y_vals.min()) or abs(float(_y_vals.mean())) * 0.1 or 1.0
+            _data_per_px = (_y_range * 1.1) / 520
 
-            layers = [background, vline, hline, selected_scatter, stock_labels]
-        else:
-            layers = [selected_scatter, stock_labels]
+            sc_comp = sc_comp.copy()
+            sc_comp['_label_y'] = sc_comp[y_col] + (_px_radius_arr + 6) * _data_per_px
 
-        chart = alt.layer(*layers).properties(height=520).interactive()
-        st.altair_chart(chart, width='stretch')
+            stock_labels = alt.Chart(sc_comp).mark_text(
+                align='center',
+                baseline='bottom',
+                fontSize=12,
+                fontWeight='bold',
+            ).encode(
+                x=alt.X(f'{x_col}:Q', scale=alt.Scale(zero=False)),
+                y=alt.Y('_label_y:Q', scale=alt.Scale(zero=False)),
+                text=alt.Text('stock:N'),
+                color=alt.Color('stock:N', scale=color_scale_sel, legend=None),
+            )
+
+            layers = []
+
+            if show_universe_scatter:
+                _uni_cols_b = [c for c in [x_col, y_col, size_col, 'sector'] if c]
+                sc_universe = filtered_df[_uni_cols_b].copy().dropna(subset=[x_col, y_col]).reset_index()
+                q95_x = sc_universe[x_col].quantile(0.95)
+                q05_x = sc_universe[x_col].quantile(0.05)
+                q95_y = sc_universe[y_col].quantile(0.95)
+                q05_y = sc_universe[y_col].quantile(0.05)
+                sc_universe = sc_universe[
+                    (sc_universe[x_col] <= q95_x) & (sc_universe[x_col] >= q05_x) &
+                    (sc_universe[y_col] <= q95_y) & (sc_universe[y_col] >= q05_y)
+                ]
+
+                background = alt.Chart(sc_universe).mark_circle(
+                    opacity=0.18, color='#9ca3af', size=60,
+                ).encode(
+                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    tooltip=[
+                        alt.Tooltip('stock:N',    title='Stock'),
+                        alt.Tooltip('sector:N',   title='Sector'),
+                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
+                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
+                    ],
+                )
+
+                # Median lines from full universe
+                x_med = float(sc_universe[x_col].median())
+                y_med = float(sc_universe[y_col].median())
+                vline = alt.Chart(pd.DataFrame({x_col: [x_med]})).mark_rule(
+                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5
+                ).encode(x=f'{x_col}:Q')
+                hline = alt.Chart(pd.DataFrame({y_col: [y_med]})).mark_rule(
+                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5
+                ).encode(y=f'{y_col}:Q')
+
+                layers = [background, vline, hline, selected_scatter, stock_labels]
+            else:
+                layers = [selected_scatter, stock_labels]
+
+            chart = alt.layer(*layers).properties(height=520).interactive()
+            st.altair_chart(chart, width='stretch')
 
         # ── Quick stats table below scatter ──────────────────────────────── #
+        def _safe_isnan(v):
+            """Return True when v is a missing / non-finite numeric value."""
+            try:
+                return np.isnan(float(v))
+            except (TypeError, ValueError):
+                return v is None or v == ''
+
+        def _fmt_val(fmt, v):
+            if _safe_isnan(v):
+                return 'N/A'
+            try:
+                return fmt.format(v)
+            except (TypeError, ValueError):
+                return str(v)
+
         st.markdown('##### Selected Stocks — Key Values')
         quick_cols = st.columns(len(selected_stocks))
         for i, stock in enumerate(selected_stocks):
             if stock not in comp_df.index:
                 continue
-            row = comp_df.loc[stock]
-            x_val = row.get(x_col, float('nan'))
-            y_val = row.get(y_col, float('nan'))
-            sz_val = row.get(size_col, float('nan'))
+            try:
+                row = comp_df.loc[stock]
+                x_val = row[x_col] if x_col in row.index else float('nan')
+                y_val = row[y_col] if y_col in row.index else float('nan')
 
-            _, _, x_fmt = METRIC_OPTIONS[x_label]
-            _, _, y_fmt = METRIC_OPTIONS[y_label]
-            _, _, sz_fmt = METRIC_OPTIONS[size_label]
+                _, _, x_fmt = METRIC_OPTIONS[x_label]
+                _, _, y_fmt = METRIC_OPTIONS[y_label]
 
-            quick_cols[i].markdown(
-                f"""
-                <div style="border:2px solid {stock_colors[stock]};border-radius:10px;padding:12px 14px;text-align:center;">
-                    <div style="font-size:1.1rem;font-weight:800;color:{stock_colors[stock]}">{stock}</div>
-                    <div style="font-size:0.8rem;color:#6b7280;margin-top:4px">{x_label}: <b>{x_fmt.format(x_val) if not np.isnan(x_val) else 'N/A'}</b></div>
-                    <div style="font-size:0.8rem;color:#6b7280">{y_label}: <b>{y_fmt.format(y_val) if not np.isnan(y_val) else 'N/A'}</b></div>
-                    <div style="font-size:0.8rem;color:#6b7280">{size_label}: <b>{sz_fmt.format(sz_val) if not np.isnan(sz_val) else 'N/A'}</b></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                # Size value line (only for metric modes)
+                if not _size_is_none and not _size_is_symbol and size_col in row.index:
+                    sz_val  = row[size_col]
+                    _, _, sz_fmt = METRIC_OPTIONS[size_label]
+                    size_line = (
+                        f'<div style="font-size:0.8rem;color:#6b7280">'
+                        f'{size_label}: <b>{_fmt_val(sz_fmt, sz_val)}</b></div>'
+                    )
+                else:
+                    size_line = ''
+
+                # Logo thumbnail (for Symbol mode)
+                if _size_is_symbol:
+                    logo_url = _load_logo_b64(stock, sl)
+                    logo_html = (
+                        f'<img src="{logo_url}" style="height:36px;margin-bottom:6px;object-fit:contain"/>'
+                        if logo_url else ''
+                    )
+                else:
+                    logo_html = ''
+
+                card_html = f"""
+<div style="border:2px solid {stock_colors[stock]};border-radius:10px;padding:12px 14px;text-align:center;">
+    {logo_html}
+    <div style="font-size:1.1rem;font-weight:800;color:{stock_colors[stock]}">{stock}</div>
+    <div style="font-size:0.8rem;color:#6b7280;margin-top:4px">{x_label}: <b>{_fmt_val(x_fmt, x_val)}</b></div>
+    <div style="font-size:0.8rem;color:#6b7280">{y_label}: <b>{_fmt_val(y_fmt, y_val)}</b></div>
+    {size_line}
+</div>
+""".strip()
+                quick_cols[i].html(card_html)
+            except Exception as e:
+                logger.warning('COMPARISON | event=key_values_error | stock=%s | error=%s', stock, e)
+                quick_cols[i].warning(f'Could not render key values for {stock}.')
