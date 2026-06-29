@@ -102,6 +102,15 @@ _KEEP_COLS = [
 def get_processed_df(df):
     df = df.copy()
     df['marginTTM'] = df['earningTTM'] / df['revenueTTM'] * 100
+    # Dividend Payout Ratio = (lastDiv per share) / (EPS TTM)
+    # EPS TTM = earningTTM / shares = earningTTM / (mktCap / price)
+    # => payoutRatio = lastDiv * mktCap / (price * earningTTM) * 100
+    eps_ttm = df['earningTTM'] / (df['mktCap'] / df['price'])
+    df['dividendPayoutRatio'] = np.where(
+        eps_ttm > 0,
+        df['lastDiv'] / eps_ttm * 100,
+        np.nan,
+    )
     df['mc_penalty'] = df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
     df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
     df['max10CutPct'] = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
@@ -137,6 +146,7 @@ METRIC_OPTIONS = {
     'Years Paying Dividend':     ('numDividendYear',        'higher_better', '{:.0f}'),
     'Years Raised Dividend':     ('positiveYear',           'higher_better', '{:.0f}'),
     'Dividend Score':            ('DScore',                 'higher_better', '{:.2f}'),
+    'Dividend Payout Ratio (%)': ('dividendPayoutRatio',    'lower_better',  '{:.1f}%'),
     # ── Valuation ──
     'PE Ratio':                  ('peRatio',                'lower_better',  '{:.1f}x'),
     'PS Ratio':                  ('psRatio',                'lower_better',  '{:.2f}x'),
