@@ -466,8 +466,18 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
         }, chart=dist_chart, color=color, key=f"chart_profit_{stock_name}")
 
-def render_company_profile(cp_df, stock_name):
-    st.write(cp_df.loc[stock_name, 'description'])
+def render_company_profile(cp_df, stock_name, sl):
+    _JKSE_LOGO_BASE  = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos'
+    _SP500_LOGO_BASE = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos'
+
+    ticker = stock_name.split('.')[0]
+    logo_url = f'{_JKSE_LOGO_BASE}/{ticker}.svg' if sl == 'JKSE' else f'{_SP500_LOGO_BASE}/{ticker}.svg'
+
+    col_logo, col_text = st.columns([1, 3])
+    with col_logo:
+        st.markdown(f'<img src="{logo_url}" style="width:100%;max-width:120px;object-fit:contain;"/>', unsafe_allow_html=True)
+    with col_text:
+        st.write(cp_df.loc[stock_name, 'description'])
     
 def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_share=None, currency='IDR', cp_df=None, price_df=None):
     if sdf is not None and not sdf.empty:
@@ -1439,7 +1449,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
 
 def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl):
     with st.expander('Company Profile', expanded=False):    
-        render_company_profile(cp_df, stock_name)
+        render_company_profile(cp_df, stock_name, sl)
     
     currency = cp_df.loc[stock_name, 'currency']
 
