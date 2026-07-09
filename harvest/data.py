@@ -1,5 +1,7 @@
 import os
 import io
+import time
+import random
 import datetime
 import requests
 from requests.adapters import HTTPAdapter
@@ -10,6 +12,29 @@ session.mount('https://', adapter)
 session.mount('http://', adapter)
 requests.get = session.get
 from typing import Dict
+
+_DAGUERREO_DATA_BASE = 'https://cdn.jsdelivr.net/gh/mitbal/daguerreo-data@main'
+_DAG_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_dag_not_found_cache: set = set()
+
+
+def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
+    r = None
+    for attempt in range(retries):
+        r = requests.get(url, timeout=30)
+        if r.status_code in (200, 404) or r.status_code not in _DAG_RETRYABLE_STATUS:
+            return r
+        retry_after = r.headers.get('Retry-After')
+        if retry_after:
+            try:
+                delay = float(retry_after)
+            except ValueError:
+                delay = base_delay * (2 ** attempt)
+        else:
+            delay = base_delay * (2 ** attempt)
+        time.sleep(delay + random.uniform(0, 0.4))
+    return r
+
 # from datetime import datetime, timedelta
 
 import scipy
@@ -175,12 +200,18 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None):
 
 def get_dividend_history_single_stock_dag(stock):
 
-    url = f'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/dividends/{stock[:4]}.csv'
-    r = requests.get(url)
-    if r.text != '404: Not Found':
+    if stock in _dag_not_found_cache:
+        return None
+
+    url = f'{_DAGUERREO_DATA_BASE}/jkse/dividends/{stock[:4]}.csv'
+    r = _dag_fetch_with_retry(url)
+    if r.status_code == 200 and r.text.strip() and '404: Not Found' not in r.text:
         df = pd.read_csv(io.StringIO(r.text))
         df.rename(columns={'ex_date': 'date', 'dividend': 'adjDividend'}, inplace=True)
     else:
+        if r.status_code == 404:
+            _dag_not_found_cache.add(stock)
+        print(f"No dividend data available for {stock} (HTTP {r.status_code}).")
         df = None
 
     return df
