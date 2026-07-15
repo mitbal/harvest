@@ -402,7 +402,7 @@ def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> 
 # Supported params:
 #   market  : 'JKSE' | 'SP500'
 #   date    : 'YYYY-MM-DD'
-#   size    : 'Market Cap' | 'Revenue' | 'Net Income'
+#   size    : 'Market Cap' | 'Revenue' | 'Net Income' | 'Dividend Yield'
 #   color   : any label from _COLOR_OPTION_COL_MAP
 #   sector  : sector name | 'ALL'
 #   group   : '1' | '0'
@@ -483,7 +483,7 @@ for _rc in _ret_pct_cols:
 
 # ── Treemap controls ──────────────────────────────────────────────────────── #
 
-_SIZE_OPTIONS = ['Market Cap', 'Revenue', 'Net Income']
+_SIZE_OPTIONS = ['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield']
 _size_qp      = _qp.get('size', '')
 _size_default_idx = (
     _SIZE_OPTIONS.index(_size_qp)
@@ -707,9 +707,10 @@ else:
 
     # Map size variable
     size_col_map = {
-        'Market Cap': 'mktCap_B',
-        'Revenue':    'revenueTTM',
-        'Net Income': 'earningTTM',
+        'Market Cap':      'mktCap_B',
+        'Revenue':         'revenueTTM',
+        'Net Income':      'earningTTM',
+        'Dividend Yield':  'yield',
     }
     size_col = size_col_map[size_var]
 
@@ -740,7 +741,14 @@ else:
         'industry':        df_tree['industry'],
         size_var:          df_tree[size_col],
         color_var_label:   color_col_data,
-    }, index=df_tree.index).dropna()
+    }, index=df_tree.index)
+
+    # Sanitize non-finite values (inf / -inf) — these serialize to the literal
+    # ``Infinity`` in JSON which the browser's JSON.parse rejects.  Convert
+    # them to NaN so the subsequent dropna() cleans the offending rows.
+    _num_cols = [size_var, color_var_label]
+    tree_input[_num_cols] = tree_input[_num_cols].replace([np.inf, -np.inf], np.nan)
+    tree_input = tree_input.dropna()
 
     # ── Color map & threshold based on selected variable ─────────────────── #
     _return_labels = {
