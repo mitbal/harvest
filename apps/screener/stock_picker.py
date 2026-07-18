@@ -46,7 +46,7 @@ def connect_redis(redis_url):
     return r
 
 
-@st.cache_data(ttl=60*10, show_spinner='Downloading dividend data')
+@st.cache_data(max_entries=4, ttl=60*10, show_spinner='Downloading dividend data')
 def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend table...'):
 
     # try from cache from redis first
@@ -82,7 +82,7 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
     return final_df.set_index('stock')
 
 
-@st.cache_data(ttl=60*60, show_spinner=False)
+@st.cache_data(max_entries=256, ttl=60*60, show_spinner=False)
 def get_specific_stock_detail(stock_name, sl):
     """Pure data-fetching function — no UI side-effects so cache is safe to share."""
     start_time = time.time()
@@ -202,7 +202,7 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
     return pd.Series(stats, name=stock_name)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=512, show_spinner=False)
 def calculate_missing_stats_cached(stock_name, fin_json, cp_json, price_json, sdf_json, n_share):
     """
     Cached wrapper around calculate_missing_stats.
@@ -219,7 +219,7 @@ def calculate_missing_stats_cached(stock_name, fin_json, cp_json, price_json, sd
 _RATING_COLS = ['peRatio', 'numDividendYear', 'yield', 'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin', 'sector']
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=512, show_spinner=False)
 def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json):
     """
     Cached implementation — DataFrames are passed as JSON strings so Streamlit hashes
@@ -791,7 +791,7 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
         st.caption('  ·  '.join(legend_parts) + '  |  RSI overbought > 70 (🔴) · oversold < 30 (🟢)')
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=256, show_spinner=False)
 def cached_calc_ratio_history(price_df_json, fin_json, n_shares, ratio, reported_currency, target_currency):
     """Cached wrapper — roll-over PE/PS ratio history only recomputed when inputs change."""
     price_df = pd.read_json(io.StringIO(price_df_json))
@@ -799,7 +799,7 @@ def cached_calc_ratio_history(price_df_json, fin_json, n_shares, ratio, reported
     return hd.calc_ratio_history(price_df, fin, n_shares=n_shares, ratio=ratio,
                                  reported_currency=reported_currency, target_currency=target_currency)
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=512, show_spinner=False)
 def cached_calc_fin_stats(fin_json, target_currency):
     """Cached wrapper — fin stats recomputed only when the financial data changes."""
     fin = pd.read_json(io.StringIO(fin_json))
@@ -1054,7 +1054,7 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
             st.altair_chart(chart, width='stretch')
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=256, show_spinner=False)
 def _calc_best_buy_cached(price_json, sdf_json):
     """Cached wrapper for calc_best_buy_timing — DataFrames passed as JSON."""
     price_df = pd.read_json(io.StringIO(price_json))
@@ -1561,7 +1561,7 @@ st.sidebar.caption(f'RAM: {_rss_mb:.0f} MB')
 # ---------------------------------------------------------------------------
 # Cached compute pipeline — only re-runs when final_df changes
 # ---------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=16, show_spinner=False)
 def get_processed_df(df):
     """Compute all derived columns and sort. Cached so it only runs when data changes."""
     df = df.copy()
