@@ -89,7 +89,7 @@ _KEEP_COLS = [
     'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate',
     'yield', 'lastDiv', 'avgFlatAnnualDivIncrease', 'numDividendYear',
     'positiveYear', 'numOfYear', 'maximumCutPct', 'max10CutPct',
-    'peRatio', 'psRatio', 'revenueGrowth', 'netIncomeGrowth',
+    'peRatio', 'psRatio', 'revenueGrowth', 'revenueCAGR5Y', 'netIncomeGrowth',
     'medianProfitMargin', 'earningTTM', 'revenueTTM',
     'revenueGrowthTTM', 'netIncomeGrowthTTM', 'beta',
     'return_7d', 'return_1m', 'return_1y', 'return_10y',
@@ -132,7 +132,9 @@ def get_processed_df(df):
       * (1 + df['maxRevGrowthDecrease'] / 100) \
       * (1 + df['maxIncGrowthDecrease'] / 100)
 
+    payout_ratio = df['dividendPayoutRatio'].copy()
     df = df.fillna(0).sort_values('DScore', ascending=False)
+    df['dividendPayoutRatio'] = payout_ratio
     df.insert(0, 'Rank', range(1, len(df) + 1))
     return df
 
@@ -152,9 +154,12 @@ METRIC_OPTIONS = {
     'PS Ratio':                  ('psRatio',                'lower_better',  '{:.2f}x'),
     # ── Growth ──
     'Revenue Growth (5Y)':       ('revenueGrowth',          'higher_better', '{:.1f}%'),
+    'Revenue CAGR (5Y)':         ('revenueCAGR5Y',          'higher_better', '{:.1f}%'),
     'Net Income Growth (5Y)':    ('netIncomeGrowth',        'higher_better', '{:.1f}%'),
     'Revenue Growth (TTM)':      ('revenueGrowthTTM',       'higher_better', '{:.1f}%'),
     'Net Income Growth (TTM)':   ('netIncomeGrowthTTM',     'higher_better', '{:.1f}%'),
+    'Revenue (TTM)':             ('revenueTTM',             'neutral',       '{:.2e}'),
+    'Net Income (TTM)':          ('earningTTM',              'neutral',       '{:.2e}'),
     # ── Profitability ──
     'Profit Margin (Median)':    ('medianProfitMargin',     'higher_better', '{:.1f}%'),
     'Profit Margin (TTM)':       ('marginTTM',              'higher_better', '{:.1f}%'),
@@ -174,8 +179,9 @@ TABLE_DEFAULT_METRICS = [
     'Dividend Yield (%)', 'Last Dividend', 'Years Paying Dividend',
     'Years Raised Dividend', 'Dividend Score',
     'PE Ratio', 'PS Ratio',
-    'Revenue Growth (5Y)', 'Net Income Growth (5Y)',
+    'Revenue Growth (5Y)', 'Revenue CAGR (5Y)', 'Net Income Growth (5Y)',
     'Profit Margin (Median)', 'Profit Margin (TTM)',
+    'Revenue (TTM)', 'Net Income (TTM)',
     '1Y Return', 'Total 1Y Return',
 ]
 
