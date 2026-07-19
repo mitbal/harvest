@@ -249,14 +249,28 @@ def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json
             val_score = 0
 
     # 2. Dividend Rating (Consistency & Yield)
-    div_year_rank = ranking_df['numDividendYear'].rank(pct=True)
-    yield_rank    = ranking_df['yield'].rank(pct=True)
-    if stock_name in div_year_rank.index:
-        div_score = (div_year_rank[stock_name] + yield_rank[stock_name]) / 2 * 100
+    # Gate on yield > 0: non-payers score 0, and ranks are computed only among
+    # payers so any dividend-paying stock strictly outranks a zero-yield one.
+    pos_yield_mask  = ranking_df['yield'] > 0
+    div_score_series = pd.Series(0.0, index=ranking_df.index)
+    if pos_yield_mask.any():
+        payer_dy_rank = ranking_df.loc[pos_yield_mask, 'numDividendYear'].rank(pct=True)
+        payer_y_rank  = ranking_df.loc[pos_yield_mask, 'yield'].rank(pct=True)
+        div_score_series.loc[pos_yield_mask] = (payer_dy_rank + payer_y_rank) / 2 * 100
+
+    if stock_name in div_score_series.index:
+        div_score = div_score_series[stock_name]
     else:
-        dy_rank   = (ranking_df['numDividendYear'] < stock_data['numDividendYear']).mean()
-        y_rank    = (ranking_df['yield'] < stock_data['yield']).mean()
-        div_score = (dy_rank + y_rank) / 2 * 100
+        if stock_data['yield'] > 0:
+            payers = ranking_df[ranking_df['yield'] > 0]
+            if not payers.empty:
+                dy_rank = (payers['numDividendYear'] < stock_data['numDividendYear']).mean()
+                y_rank  = (payers['yield'] < stock_data['yield']).mean()
+                div_score = (dy_rank + y_rank) / 2 * 100
+            else:
+                div_score = 0
+        else:
+            div_score = 0
 
     # 3. Growth Rating (Revenue & Net Income)
     rev_growth_rank = ranking_df['revenueGrowth'].rank(pct=True)
@@ -1591,10 +1605,19 @@ def get_processed_df(df):
       * (100 - df['max10CutPct']) / 100 \
       * df['mc_penalty'] \
       * (1 + df['maxRevGrowthDecrease'] / 100) \
-      * (1 + df['maxIncGrowthDecrease'] / 100)
+      * (1 + df['maxIncGrowthDecrease'] / 100) \
+      * (df['yield'] > 0)  # gate: zero-yield stocks always score 0, below any payer
 
     df['DScore'] = df['DScore'].clip(lower=0)  # safety net: score should never be negative
-    df = df.fillna(0).sort_values('DScore', ascending=False)
+
+    # Lexicographic ranking: dividend payers (yield > 0) always rank above non-payers,
+    # even when a payer's DScore is clipped to 0 (e.g. past dividend cuts) and would
+    # otherwise tie arbitrarily with zero-yield stocks. A negligible epsilon keeps the
+    # displayed score strictly positive for payers so score order matches rank order.
+    df['_is_payer'] = df['yield'] > 0
+    df['DScore'] = df['DScore'] + df['_is_payer'] * 1e-6
+    df = df.fillna(0).sort_values(['_is_payer', 'DScore'], ascending=False)
+    df = df.drop(columns='_is_payer')
     df.insert(0, 'Rank', range(1, len(df) + 1))
     return df
 
