@@ -27,9 +27,7 @@ api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
 
 # Constants for Dividend Score (DScore) calculation
-DIV_MATURITY_HALFLIFE = 25   # Years until dividend consistency is considered "mature"
 PROJECTION_HORIZON_YRS = 5   # Number of forecast years for dividend extrapolation
-
 ### Start of Function definition
 
 
@@ -1585,28 +1583,52 @@ def get_processed_df(df):
 
     df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
     df['max10CutPct']   = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
-    df['maxDivIncrease']       = df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
-    # Clamp to -100 so the penalty multiplier (1 + x/100) floors at 0, not negative.
-    # Without this, extreme negative values (e.g. -18871%) combined with a negative
-    # base yield (dividend cut) would flip the score positive — a spurious result.
-    df['maxRevGrowthDecrease'] = df.apply(lambda x: max(min(x['revenueGrowthTTM'], 0), -100), axis=1)
-    df['maxIncGrowthDecrease'] = df.apply(lambda x: max(min(x['netIncomeGrowthTTM'], 0), -100), axis=1)
 
     return_cols = ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
     for col in return_cols:
         if col in df.columns:
             df[col] = df[col] * 100
 
+    # ------------------------------------------------------------------
+    # Dividend Score: risk-adjusted projected forward yield
+    # ------------------------------------------------------------------
+    is_payer = df['yield'] > 0
+
+    # 1. Projected forward yield: fractional dividend growth capped at +5%/yr and
+    #    floored at -20%/yr, so dividend cutters degrade gracefully instead of
+    #    having the whole score clip to 0.
+    reliability = (df['positiveYear'] / df['numOfYear'].replace(0, np.nan)).fillna(1.0)
+    growth_rate = (df['avgFlatAnnualDivIncrease'] / df['lastDiv'].replace(0, np.nan)).clip(-0.20, 0.05).fillna(0)
+    proj_div    = df['lastDiv'] * (1 + growth_rate * PROJECTION_HORIZON_YRS * reliability)
+    fwd_yield   = (proj_div / df['price'].replace(0, np.nan) * 100).clip(lower=0)
+
+    # 2. Single maturity factor (replaces the previous double-counted pair that
+    #    discounted a 5-year payer's yield by ~90%)
+    maturity = 1 - np.exp(-df['numDividendYear'] / 10)
+
+    # 3. Sustainability via payout ratio. payout = yield/100 * peRatio is identical to
+    #    lastDiv*n_share / earningTTM (mktCap = price*n_share cancels out).
+    #    Smooth penalty above 100% payout: 1.5x -> 0.67, 2x -> 0.5, 3x -> 0.33.
+    #    Missing or negative earnings stay neutral (1.0).
+    payout  = df['yield'] / 100 * df['peRatio'].where(df['peRatio'] > 0)
+    sustain = (1 / (1 + (payout - 1).clip(lower=0))).fillna(1.0)
+
+    # 4. Symmetric growth adjustment: reward growth up to +25%, penalize decline down
+    #    to -100% (multiplier floors at 0, never negative). Missing data stays neutral.
+    rev_adj = (1 + df['revenueGrowthTTM'].clip(-100, 25) / 100).fillna(1.0)
+    inc_adj = (1 + df['netIncomeGrowthTTM'].clip(-100, 25) / 100).fillna(1.0)
+
+    # 5. Yield capped at 12% so distressed high-yielders can't dominate on yield alone.
     df['DScore'] = (
-        (df['lastDiv'] + df['maxDivIncrease'] * PROJECTION_HORIZON_YRS * (df['positiveYear'] / df['numOfYear'])) / df['price']
-    ) * 100 \
-      * (df['numDividendYear'] / (df['numDividendYear'] + DIV_MATURITY_HALFLIFE)) \
-      * (1 - np.exp(-df['numDividendYear'] / 5)) \
-      * (100 - df['max10CutPct']) / 100 \
-      * df['mc_penalty'] \
-      * (1 + df['maxRevGrowthDecrease'] / 100) \
-      * (1 + df['maxIncGrowthDecrease'] / 100) \
-      * (df['yield'] > 0)  # gate: zero-yield stocks always score 0, below any payer
+        np.minimum(fwd_yield, 12)
+        * maturity
+        * (100 - df['max10CutPct']) / 100
+        * df['mc_penalty']
+        * rev_adj
+        * inc_adj
+        * sustain
+        * is_payer  # gate: zero-yield stocks always score 0, below any payer
+    )
 
     df['DScore'] = df['DScore'].clip(lower=0)  # safety net: score should never be negative
 
@@ -1756,7 +1778,11 @@ with full_table_section:
             ),
             'DScore': st.column_config.NumberColumn(
                 'Dividend Score',
-                help='Dividend Score of the stock',
+                help=('Risk-adjusted projected forward yield: projected 5y dividend yield (growth capped at '
+                      '+5%/yr, decline floored at -20%/yr, yield capped at 12%), scaled by dividend-track-record '
+                      'maturity, worst 10y dividend cut, payout sustainability (>100% payout is penalized), '
+                      'revenue/income growth (reward up to +25%, decline to -100%), and market cap '
+                      '(small caps are structurally discounted)'),
                 format='%,.02f',
             ),
             'lastDiv': st.column_config.NumberColumn(
