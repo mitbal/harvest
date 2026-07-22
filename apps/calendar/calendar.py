@@ -392,14 +392,35 @@ MONTH_ORDER = list(calendar.month_abbr[1:])
 
 @st.cache_data(max_entries=512, ttl=60 * 60 * 6, show_spinner=False)
 def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
-    """Download 10 years of daily closes for a single stock. Cached for 6 h."""
+    """Download 10 years of daily closes + full dividend history for a stock.
+
+    Returns a dict with keys ``symbol``, ``price_df`` (date/close) and
+    ``div_dates`` (a DataFrame with a ``date`` column of all historical
+    ex-dividend dates >= ``start_from``). Cached for 6 h.
+    """
+    rec = None
     try:
         pdf = hd.get_daily_stock_price(symbol, start_from=start_from)
         if pdf is not None and not pdf.empty and 'close' in pdf.columns:
-            return {'symbol': symbol, 'price_df': pdf[['date', 'close']]}
+            rec = {'symbol': symbol, 'price_df': pdf[['date', 'close']]}
     except Exception:
         pass
-    return None
+    if rec is None:
+        return None
+
+    try:
+        ddf = hd.get_dividend_history_single_stock(symbol)
+        if ddf is not None and not ddf.empty and 'date' in ddf.columns:
+            ddf = ddf[['date']].copy()
+            ddf['date'] = pd.to_datetime(ddf['date'], errors='coerce')
+            ddf = ddf.dropna()
+            ddf = ddf[ddf['date'] >= pd.Timestamp(start_from)]
+            rec['div_dates'] = ddf.reset_index(drop=True)
+        else:
+            rec['div_dates'] = pd.DataFrame(columns=['date'])
+    except Exception:
+        rec['div_dates'] = pd.DataFrame(columns=['date'])
+    return rec
 
 
 @st.cache_data(max_entries=16, ttl=60 * 60 * 6, show_spinner=False)
@@ -416,7 +437,7 @@ def _fetch_all_prices(symbols_tuple):
 
 
 def _seasonality_for_sector(price_results, div_cal_df, sector_map, sector='All', pre_ex_days=180):
-    """Aggregate monthly seasonality + best-days KDE for a single sector (or All)."""
+    """Aggregate monthly seasonality + best-days/recovery KDE + raw per-event records."""
     sector = sector or 'All'
     if sector != 'All':
         sector_symbols = {s for s, sec in sector_map.items() if sec == sector}
@@ -425,22 +446,44 @@ def _seasonality_for_sector(price_results, div_cal_df, sector_map, sector='All',
         results = list(price_results)
 
     if not results:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     agg_df = hd.calc_aggregate_seasonality(results)
 
-    # Best-days KDE — for each stock × dividend event, find how many days before
-    # ex-date the price was cheapest, then pool across all stocks and events.
+    # Best-days & recovery — for each stock × dividend event, find (a) how many
+    # days before ex-date the price was cheapest and (b) how many days after it
+    # recovered its cum-date price. Pool across all stocks and events; keep the
+    # per-event detail records too so the raw data can be inspected.
     all_best_days = []
+    all_recovery_days = []
+    best_raw = []
+    recovery_raw = []
     for rec in results:
         sym = rec['symbol']
-        sdf_sym = div_cal_df[div_cal_df['symbol'] == sym][['date']].copy()
-        sdf_sym['date'] = sdf_sym['date'].dt.strftime('%Y-%m-%d')
-        best = hd.calc_pre_ex_best_days(rec['price_df'], sdf_sym, pre_ex_days=pre_ex_days)
-        all_best_days.extend(best)
+        if 'div_dates' in rec and not rec['div_dates'].empty:
+            sdf_sym = rec['div_dates'].copy()
+            sdf_sym['date'] = pd.to_datetime(sdf_sym['date']).dt.strftime('%Y-%m-%d')
+        else:
+            sdf_sym = div_cal_df[div_cal_df['symbol'] == sym][['date']].copy()
+            sdf_sym['date'] = sdf_sym['date'].dt.strftime('%Y-%m-%d')
+
+        best_detail = hd.calc_pre_ex_best_days(rec['price_df'], sdf_sym, pre_ex_days=pre_ex_days, detail=True)
+        for ev in best_detail:
+            ev['symbol'] = sym
+            best_raw.append(ev)
+            all_best_days.append(ev['days_before'])
+
+        rec_detail = hd.calc_post_ex_recovery_days(rec['price_df'], sdf_sym, max_lookforward=180, detail=True)
+        for ev in rec_detail:
+            ev['symbol'] = sym
+            recovery_raw.append(ev)
+            all_recovery_days.append(ev['days_after'])
 
     best_days_df = pd.DataFrame({'days_before': all_best_days}) if all_best_days else pd.DataFrame()
-    return agg_df, best_days_df
+    recovery_days_df = pd.DataFrame({'days_after': all_recovery_days}) if all_recovery_days else pd.DataFrame()
+    best_raw_df = pd.DataFrame(best_raw) if best_raw else pd.DataFrame()
+    recovery_raw_df = pd.DataFrame(recovery_raw) if recovery_raw else pd.DataFrame()
+    return agg_df, best_days_df, recovery_days_df, best_raw_df, recovery_raw_df
 
 
 def _season_sector_table(price_results, div_cal_df, sector_map, sectors, all_symbols):
@@ -451,11 +494,12 @@ def _season_sector_table(price_results, div_cal_df, sector_map, sectors, all_sym
         n_stocks = len(sec_symbols)
         if n_stocks == 0:
             continue
-        agg_df, best_df = _seasonality_for_sector(price_results, div_cal_df, sector_map, sec)
+        agg_df, best_df, rec_df, _, _ = _seasonality_for_sector(price_results, div_cal_df, sector_map, sec)
         if agg_df.empty:
             rows.append({
                 'sector': sec, 'n_stocks': n_stocks, 'best_month': '—',
                 'avg_rel_price': None, 'median_days': None, 'p25_days': None, 'p75_days': None, 'n_events': 0,
+                'median_recovery': None, 'p25_recovery': None, 'p75_recovery': None, 'n_recovery': 0,
             })
             continue
         best_row = agg_df.loc[agg_df['mean'].idxmin()]
@@ -467,6 +511,14 @@ def _season_sector_table(price_results, div_cal_df, sector_map, sectors, all_sym
         else:
             median_days = p25_days = p75_days = None
             n_events = 0
+        if not rec_df.empty:
+            median_recovery = int(rec_df['days_after'].median())
+            p25_recovery = int(rec_df['days_after'].quantile(0.25))
+            p75_recovery = int(rec_df['days_after'].quantile(0.75))
+            n_recovery = len(rec_df)
+        else:
+            median_recovery = p25_recovery = p75_recovery = None
+            n_recovery = 0
         rows.append({
             'sector': sec,
             'n_stocks': n_stocks,
@@ -476,10 +528,15 @@ def _season_sector_table(price_results, div_cal_df, sector_map, sectors, all_sym
             'p25_days': p25_days,
             'p75_days': p75_days,
             'n_events': n_events,
+            'median_recovery': median_recovery,
+            'p25_recovery': p25_recovery,
+            'p75_recovery': p75_recovery,
+            'n_recovery': n_recovery,
         })
     return pd.DataFrame(rows, columns=[
         'sector', 'n_stocks', 'best_month', 'avg_rel_price',
-        'median_days', 'p25_days', 'p75_days', 'n_events'
+        'median_days', 'p25_days', 'p75_days', 'n_events',
+        'median_recovery', 'p25_recovery', 'p75_recovery', 'n_recovery'
     ])
 
 
@@ -548,6 +605,14 @@ else:
                             'p25_days': st.column_config.NumberColumn('Q25 Days', format='%d'),
                             'p75_days': st.column_config.NumberColumn('Q75 Days', format='%d'),
                             'n_events': st.column_config.NumberColumn('Events', format='%d'),
+                            'median_recovery': st.column_config.NumberColumn(
+                                'Median Days to Recover',
+                                help='Median calendar days after ex-date to return to the cum-date price',
+                                format='%d'
+                            ),
+                            'p25_recovery': st.column_config.NumberColumn('Q25 Recover', format='%d'),
+                            'p75_recovery': st.column_config.NumberColumn('Q75 Recover', format='%d'),
+                            'n_recovery': st.column_config.NumberColumn('Recoveries', format='%d'),
                         },
                     )
                     st.caption(
@@ -563,7 +628,7 @@ else:
                 help='Choose a sector to see its monthly seasonality and best-timing distribution.'
             )
 
-            _agg_df, _best_days_df = _seasonality_for_sector(
+            _agg_df, _best_days_df, _recovery_df, _best_raw_df, _recovery_raw_df = _seasonality_for_sector(
                 _price_results, _div_cal_df, _sector_map, _selected_sector
             )
 
@@ -680,4 +745,120 @@ else:
                         )
                     else:
                         st.info('No pre-ex timing data available for these stocks.')
+
+            # ---------------------------------------------------------------- #
+            # Chart C — Days after ex-date until price recovers                 #
+            # ---------------------------------------------------------------- #
+            st.markdown('#### Distribution: Days After Ex-Date to Recover Cum-Date Price')
+            st.caption(
+                f'For each historical dividend event across {_scope_label}, shows how many '
+                'calendar days after the ex-date the stock price first returned to the '
+                'cum-date (pre-dividend) closing price.'
+            )
+
+            if not _recovery_df.empty:
+                _median_rec = int(_recovery_df['days_after'].median())
+                _r_p25 = int(_recovery_df['days_after'].quantile(0.25))
+                _r_p75 = int(_recovery_df['days_after'].quantile(0.75))
+                _n_rec = len(_recovery_df)
+
+                _rec_kde = alt.Chart(_recovery_df).transform_density(
+                    'days_after',
+                    as_=['Days After Ex-Date', 'Density'],
+                    bandwidth=3,
+                ).mark_area(
+                    color=alt.Gradient(
+                        gradient='linear',
+                        stops=[
+                            alt.GradientStop(color='#7d3c98', offset=0),
+                            alt.GradientStop(color='#a569bd', offset=1),
+                        ],
+                        x1=1, x2=1, y1=1, y2=0
+                    ),
+                    line={'color': '#6c3483'},
+                    opacity=0.75,
+                ).encode(
+                    x=alt.X('Days After Ex-Date:Q', title='Calendar Days After Ex-Date',
+                            scale=alt.Scale(domain=[0, 180])),
+                    y=alt.Y('Density:Q', title='',
+                            axis=alt.Axis(tickSize=0, domain=False, labelFontSize=0)),
+                    tooltip=[alt.Tooltip('Days After Ex-Date:Q', format='.0f', title='Days After')]
+                )
+
+                _rec_median_rule = alt.Chart(
+                    pd.DataFrame({'x': [_median_rec], 'label': [f'Median: {_median_rec}d']})
+                ).mark_rule(color='#f39c12', strokeWidth=2, strokeDash=[5, 3]).encode(x='x:Q')
+                _rec_median_text = alt.Chart(
+                    pd.DataFrame({'x': [_median_rec + 1.5], 'y': [0],
+                                  'label': [f'Median: {_median_rec}d']})
+                ).mark_text(
+                    align='left', color='#f39c12', fontSize=11, fontWeight='bold', dy=-8
+                ).encode(x='x:Q', y=alt.Y('y:Q', impute=alt.ImputeParams(value=0)), text='label:N')
+
+                st.altair_chart((_rec_kde + _rec_median_rule + _rec_median_text).properties(height=320),
+                                width='stretch')
+                st.success(
+                    f'📈 Prices recover to the cum-date level a median of **{_median_rec} days** '
+                    f'after ex-date (across {_n_rec} events). '
+                    f'Middle 50% range: **{_r_p25}–{_r_p75} days** after.'
+                )
+            st.info('No post-ex recovery data available for these stocks.')
+
+            # ---------------------------------------------------------------- #
+            # Raw per-event data — sanity-check tables                          #
+            # ---------------------------------------------------------------- #
+            if st.toggle('👁 Show raw per-event data', key='cal_show_raw_data',
+                         help='Show the underlying symbol × ex-date records behind '
+                              'the two distributions above, for sanity checking.'):
+                st.caption(
+                    'Per-event records pooled across the 10-year price & dividend history. '
+                    'Use these to verify which stocks and ex-dates feed each distribution.'
+                )
+                _raw_col = st.columns(2)
+
+                with _raw_col[0]:
+                    st.markdown('##### Days Before Ex-Date (raw)')
+                    if not _best_raw_df.empty:
+                        _best_view = _best_raw_df[['symbol', 'ex_date', 'low_date', 'days_before', 'low_price']].copy()
+                        _best_view = _best_view.sort_values(['symbol', 'ex_date']).reset_index(drop=True)
+                        st.dataframe(
+                            _best_view,
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                'symbol': st.column_config.TextColumn('Symbol'),
+                                'ex_date': st.column_config.TextColumn('Ex Date'),
+                                'low_date': st.column_config.TextColumn('Low Date'),
+                                'days_before': st.column_config.NumberColumn('Days Before', format='%d'),
+                                'low_price': st.column_config.NumberColumn('Low Price', format='%.2f'),
+                            },
+                        )
+                        st.caption(f'{len(_best_view)} events')
+                    else:
+                        st.info('No pre-ex data.')
+
+                with _raw_col[1]:
+                    st.markdown('##### Days After Ex-Date to Recover (raw)')
+                    if not _recovery_raw_df.empty:
+                        _rec_view = _recovery_raw_df[
+                            ['symbol', 'ex_date', 'cum_date', 'cum_price', 'recover_date', 'recover_price', 'days_after']
+                        ].copy()
+                        _rec_view = _rec_view.sort_values(['symbol', 'ex_date']).reset_index(drop=True)
+                        st.dataframe(
+                            _rec_view,
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                'symbol': st.column_config.TextColumn('Symbol'),
+                                'ex_date': st.column_config.TextColumn('Ex Date'),
+                                'cum_date': st.column_config.TextColumn('Cum Date'),
+                                'cum_price': st.column_config.NumberColumn('Cum Price', format='%.2f'),
+                                'recover_date': st.column_config.TextColumn('Recover Date'),
+                                'recover_price': st.column_config.NumberColumn('Recover Price', format='%.2f'),
+                                'days_after': st.column_config.NumberColumn('Days After', format='%d'),
+                            },
+                        )
+                        st.caption(f'{len(_rec_view)} events')
+                    else:
+                        st.info('No recovery data.')
 
