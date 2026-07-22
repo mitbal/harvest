@@ -60,7 +60,7 @@ def connect_redis(redis_url):
 r = connect_redis(url)
 
 
-@st.cache_data(ttl=60*60, show_spinner='Downloading dividend data')
+@st.cache_data(max_entries=4, ttl=60*60, show_spinner='Downloading dividend data')
 def get_data_from_redis(key):
 
     start = time.time()
@@ -204,6 +204,10 @@ st.title(f'Dividend Calendar {selected_year+1}')
 st.write(f'*based on {selected_year} data*')
 
 div_score_df = get_data_from_redis(div_score_key)
+
+_sector_map = {}
+if 'sector' in div_score_df.columns and 'symbol' in div_score_df.columns:
+    _sector_map = dict(zip(div_score_df['symbol'], div_score_df['sector'].fillna('Unknown')))
 
 if sl == 'JKSE':
     show_next_year = True
@@ -386,7 +390,7 @@ st.write(
 MONTH_ORDER = list(calendar.month_abbr[1:])
 
 
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+@st.cache_data(max_entries=512, ttl=60 * 60 * 6, show_spinner=False)
 def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
     """Download 10 years of daily closes for a single stock. Cached for 6 h."""
     try:
@@ -398,20 +402,27 @@ def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
     return None
 
 
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
-def _compute_agg_seasonality(symbols_tuple, div_cal_df_json):
-    """Parallel-fetch prices then compute aggregate monthly seasonality + best-days KDE. Cached 6 h."""
-    symbols = list(symbols_tuple)
-    div_cal_df = pd.read_json(io.StringIO(div_cal_df_json))
-    div_cal_df['date'] = pd.to_datetime(div_cal_df['date'])
-
+@st.cache_data(max_entries=16, ttl=60 * 60 * 6, show_spinner=False)
+def _fetch_all_prices(symbols_tuple):
+    """Parallel-fetch 10+ years of daily closes for every symbol once. Cached for 6 h."""
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(_fetch_price_for_stock, s): s for s in symbols}
+        futures = {ex.submit(_fetch_price_for_stock, s): s for s in symbols_tuple}
         for fut in concurrent.futures.as_completed(futures):
             rec = fut.result()
             if rec is not None:
                 results.append(rec)
+    return results
+
+
+def _seasonality_for_sector(price_results, div_cal_df, sector_map, sector='All', pre_ex_days=180):
+    """Aggregate monthly seasonality + best-days KDE for a single sector (or All)."""
+    sector = sector or 'All'
+    if sector != 'All':
+        sector_symbols = {s for s, sec in sector_map.items() if sec == sector}
+        results = [r for r in price_results if r['symbol'] in sector_symbols]
+    else:
+        results = list(price_results)
 
     if not results:
         return pd.DataFrame(), pd.DataFrame()
@@ -425,23 +436,72 @@ def _compute_agg_seasonality(symbols_tuple, div_cal_df_json):
         sym = rec['symbol']
         sdf_sym = div_cal_df[div_cal_df['symbol'] == sym][['date']].copy()
         sdf_sym['date'] = sdf_sym['date'].dt.strftime('%Y-%m-%d')
-        best = hd.calc_pre_ex_best_days(rec['price_df'], sdf_sym, pre_ex_days=180)
+        best = hd.calc_pre_ex_best_days(rec['price_df'], sdf_sym, pre_ex_days=pre_ex_days)
         all_best_days.extend(best)
 
     best_days_df = pd.DataFrame({'days_before': all_best_days}) if all_best_days else pd.DataFrame()
     return agg_df, best_days_df
 
 
+def _season_sector_table(price_results, div_cal_df, sector_map, sectors, all_symbols):
+    """Build a per-sector summary: best month + best-timing stats. Returns a DataFrame."""
+    rows = []
+    for sec in sectors:
+        sec_symbols = {s for s, v in sector_map.items() if v == sec and s in all_symbols}
+        n_stocks = len(sec_symbols)
+        if n_stocks == 0:
+            continue
+        agg_df, best_df = _seasonality_for_sector(price_results, div_cal_df, sector_map, sec)
+        if agg_df.empty:
+            rows.append({
+                'sector': sec, 'n_stocks': n_stocks, 'best_month': '—',
+                'avg_rel_price': None, 'median_days': None, 'p25_days': None, 'p75_days': None, 'n_events': 0,
+            })
+            continue
+        best_row = agg_df.loc[agg_df['mean'].idxmin()]
+        if not best_df.empty:
+            median_days = int(best_df['days_before'].median())
+            p25_days = int(best_df['days_before'].quantile(0.25))
+            p75_days = int(best_df['days_before'].quantile(0.75))
+            n_events = len(best_df)
+        else:
+            median_days = p25_days = p75_days = None
+            n_events = 0
+        rows.append({
+            'sector': sec,
+            'n_stocks': n_stocks,
+            'best_month': best_row['month_name'],
+            'avg_rel_price': best_row['mean'],
+            'median_days': median_days,
+            'p25_days': p25_days,
+            'p75_days': p75_days,
+            'n_events': n_events,
+        })
+    return pd.DataFrame(rows, columns=[
+        'sector', 'n_stocks', 'best_month', 'avg_rel_price',
+        'median_days', 'p25_days', 'p75_days', 'n_events'
+    ])
+
+
 # Only compute when the user explicitly asks — price fetch can be slow for many stocks
 _all_symbols = sorted(stats_df['symbol'].unique().tolist()) if not stats_df.empty else []
 _n_stocks = len(_all_symbols)
 
+# Sectors actually present among the calendar's dividend-paying stocks
+_sector_options = ['All']
+if _sector_map and _all_symbols:
+    _present_sectors = sorted({_sector_map.get(s, 'Unknown') for s in _all_symbols if s in _sector_map})
+    _sector_options += _present_sectors
+
 if _n_stocks == 0:
     st.info('No stocks available for seasonality analysis.')
+elif not _sector_map:
+    st.info('Sector information unavailable — cannot break down by sector.')
 else:
     _col_info, _col_btn = st.columns([3, 1])
     _col_info.caption(
-        f'Will fetch 10+ years of price history for up to **{_n_stocks} stocks**. '
+        f'Will fetch 10+ years of price history for up to **{_n_stocks} stocks** across '
+        f'**{len(_sector_options) - 1} sectors**. '
         'This may take 30–60 seconds on first load; results are cached for 6 hours.'
     )
 
@@ -451,121 +511,173 @@ else:
     if st.session_state.get('cal_show_seasonality'):
         with st.spinner(f'Fetching price data for {_n_stocks} stocks…'):
             _symbols_tuple = tuple(_all_symbols)
-            # Pass all available dividend events so we can match each stock's sdf
-            _div_cal_json = df[['symbol', 'date']].to_json()
-            _agg_df, _best_days_df = _compute_agg_seasonality(_symbols_tuple, _div_cal_json)
+            _price_results = _fetch_all_prices(_symbols_tuple)
+            _div_cal_df = df[['symbol', 'date']].copy()
+            _div_cal_df['date'] = pd.to_datetime(_div_cal_df['date'])
 
-        if _agg_df.empty:
+        if not _price_results:
             st.warning('Could not compute seasonality — price data unavailable.')
         else:
-            _chart_cols = st.columns(2)
-
-            # ---------------------------------------------------------------- #
-            # Chart A — Aggregate monthly bar + IQR band                       #
-            # ---------------------------------------------------------------- #
-            with _chart_cols[0]:
-                st.markdown('#### Aggregate Monthly Relative Price')
-                st.caption('Median ± IQR across all stocks. Green highlight = historically cheapest month.')
-
-                _best_row = _agg_df.loc[_agg_df['mean'].idxmin()]
-                _best_month_name = _best_row['month_name']
-
-                _base = alt.Chart(_agg_df)
-
-                _band = _base.mark_area(opacity=0.18, color='#2ecc71').encode(
-                    x=alt.X('month_name:O', sort=MONTH_ORDER, title='Month'),
-                    y=alt.Y('q25:Q', title='Relative Price (%)'),
-                    y2=alt.Y2('q75:Q'),
+            # ── Sector breakdown table — best time to buy distribution ── #
+            with st.expander(f'🏆 Best Time to Buy by Sector ({len(_sector_options) - 1} sectors)', expanded=True):
+                _sector_table = _season_sector_table(
+                    _price_results, _div_cal_df, _sector_map,
+                    _sector_options[1:], _all_symbols
                 )
-                _line = _base.mark_line(point=True, color='#27ae60', strokeWidth=2.5).encode(
-                    x=alt.X('month_name:O', sort=MONTH_ORDER),
-                    y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
-                    tooltip=[
-                        alt.Tooltip('month_name:O', title='Month'),
-                        alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
-                        alt.Tooltip('median:Q', title='Median', format='.2f'),
-                        alt.Tooltip('q25:Q', title='Q25', format='.2f'),
-                        alt.Tooltip('q75:Q', title='Q75', format='.2f'),
-                    ]
-                )
-                _ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                    color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
-                ).encode(y='y:Q')
-
-                _best_data = _agg_df[_agg_df['month_name'] == _best_month_name]
-                _best_bar = alt.Chart(_best_data).mark_bar(color='#1abc9c', opacity=0.4, width=40).encode(
-                    x=alt.X('month_name:O', sort=MONTH_ORDER),
-                    y=alt.Y('q25:Q'),
-                    y2=alt.Y2('q75:Q'),
-                )
-
-                _agg_chart = (_band + _best_bar + _line + _ref).properties(height=320)
-                st.altair_chart(_agg_chart, width='stretch')
-
-                _best_val = _best_row['mean']
-                st.success(
-                    f'🏆 **{_best_month_name}** is historically the cheapest month across these dividend stocks '
-                    f'(avg relative price: **{_best_val:.1f}%** of annual mean)'
-                )
-
-            # ---------------------------------------------------------------- #
-            # Chart B — KDE of best days before ex-date                        #
-            # ---------------------------------------------------------------- #
-            with _chart_cols[1]:
-                st.markdown('#### Distribution: Days Before Ex-Date to Buy')
-                st.caption(
-                    'For each historical dividend event across all stocks, shows how many '
-                    'calendar days before ex-date the price hit its lowest within a 180-day window.'
-                )
-
-                if not _best_days_df.empty:
-                    _median_days = int(_best_days_df['days_before'].median())
-                    _mean_days = int(_best_days_df['days_before'].mean())
-
-                    _kde_chart = alt.Chart(_best_days_df).transform_density(
-                        'days_before',
-                        as_=['Days Before Ex-Date', 'Density'],
-                        bandwidth=3,
-                    ).mark_area(
-                        color=alt.Gradient(
-                            gradient='linear',
-                            stops=[
-                                alt.GradientStop(color='#1a5276', offset=0),
-                                alt.GradientStop(color='#3498db', offset=1),
-                            ],
-                            x1=1, x2=1, y1=1, y2=0
-                        ),
-                        line={'color': '#2e86c1'},
-                        opacity=0.75,
-                    ).encode(
-                        x=alt.X('Days Before Ex-Date:Q', title='Calendar Days Before Ex-Date',
-                                scale=alt.Scale(domain=[0, 180])),
-                        y=alt.Y('Density:Q', title='',
-                                axis=alt.Axis(tickSize=0, domain=False, labelFontSize=0)),
-                        tooltip=[alt.Tooltip('Days Before Ex-Date:Q', format='.0f', title='Days Before')]
-                    )
-
-                    _median_rule = alt.Chart(
-                        pd.DataFrame({'x': [_median_days], 'label': [f'Median: {_median_days}d']})
-                    ).mark_rule(color='#f39c12', strokeWidth=2, strokeDash=[5, 3]).encode(
-                        x='x:Q'
-                    )
-                    _median_text = alt.Chart(
-                        pd.DataFrame({'x': [_median_days + 1.5], 'y': [0], 'label': [f'Median: {_median_days}d']})
-                    ).mark_text(
-                        align='left', color='#f39c12', fontSize=11, fontWeight='bold', dy=-8
-                    ).encode(x='x:Q', y=alt.Y('y:Q', impute=alt.ImputeParams(value=0)), text='label:N')
-
-                    _kde_full = (_kde_chart + _median_rule + _median_text).properties(height=320)
-                    st.altair_chart(_kde_full, width='stretch')
-
-                    _n_events = len(_best_days_df)
-                    _p25 = int(_best_days_df['days_before'].quantile(0.25))
-                    _p75 = int(_best_days_df['days_before'].quantile(0.75))
-                    st.success(
-                        f'🎯 Buy **{_median_days} days** before ex-date (median across {_n_events} events). '
-                        f'Middle 50% range: **{_p25}–{_p75} days** before.'
-                    )
+                if _sector_table.empty:
+                    st.info('No sector breakdown available.')
                 else:
-                    st.info('No pre-ex timing data available for these stocks.')
+                    _sector_table = _sector_table.sort_values('avg_rel_price', ascending=True).reset_index(drop=True)
+                    _sector_table.insert(0, 'rank', range(1, len(_sector_table) + 1))
+                    st.dataframe(
+                        _sector_table,
+                        hide_index=True,
+                        width='stretch',
+                        column_config={
+                            'rank': st.column_config.NumberColumn('Rank', format='%d'),
+                            'sector': st.column_config.TextColumn('Sector'),
+                            'n_stocks': st.column_config.NumberColumn('Stocks', format='%d'),
+                            'best_month': st.column_config.TextColumn('Best Month to Buy'),
+                            'avg_rel_price': st.column_config.NumberColumn(
+                                'Avg Rel Price (%)', help='<100 means cheaper than the annual average',
+                                format='%.1f'
+                            ),
+                            'median_days': st.column_config.NumberColumn(
+                                'Median Days Before', help='Median calendar days before ex-date to buy', format='%d'
+                            ),
+                            'p25_days': st.column_config.NumberColumn('Q25 Days', format='%d'),
+                            'p75_days': st.column_config.NumberColumn('Q75 Days', format='%d'),
+                            'n_events': st.column_config.NumberColumn('Events', format='%d'),
+                        },
+                    )
+                    st.caption(
+                        'Cheapest-by-relative-price ranks which sector tends to dip most below its annual mean. '
+                        '"Median Days Before" pools pre-ex timing across each sector\'s dividend events.'
+                    )
+
+            # ── Drill into a single sector with the interactive charts ── #
+            st.markdown('#### Drill Down by Sector')
+            _selected_sector = st.selectbox(
+                'Filter by Sector', _sector_options,
+                key='cal_season_sector',
+                help='Choose a sector to see its monthly seasonality and best-timing distribution.'
+            )
+
+            _agg_df, _best_days_df = _seasonality_for_sector(
+                _price_results, _div_cal_df, _sector_map, _selected_sector
+            )
+
+            if _agg_df.empty:
+                st.warning(f'No seasonality data for sector "{_selected_sector}".')
+            else:
+                _scope_label = 'all dividend stocks' if _selected_sector == 'All' else f'the **{_selected_sector}** sector'
+                _chart_cols = st.columns(2)
+
+                # ---------------------------------------------------------------- #
+                # Chart A — Aggregate monthly bar + IQR band                       #
+                # ---------------------------------------------------------------- #
+                with _chart_cols[0]:
+                    st.markdown('#### Aggregate Monthly Relative Price')
+                    st.caption(f'Median ± IQR across {_scope_label}. Green highlight = historically cheapest month.')
+
+                    _best_row = _agg_df.loc[_agg_df['mean'].idxmin()]
+                    _best_month_name = _best_row['month_name']
+
+                    _base = alt.Chart(_agg_df)
+
+                    _band = _base.mark_area(opacity=0.18, color='#2ecc71').encode(
+                        x=alt.X('month_name:O', sort=MONTH_ORDER, title='Month'),
+                        y=alt.Y('q25:Q', title='Relative Price (%)'),
+                        y2=alt.Y2('q75:Q'),
+                    )
+                    _line = _base.mark_line(point=True, color='#27ae60', strokeWidth=2.5).encode(
+                        x=alt.X('month_name:O', sort=MONTH_ORDER),
+                        y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
+                        tooltip=[
+                            alt.Tooltip('month_name:O', title='Month'),
+                            alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
+                            alt.Tooltip('median:Q', title='Median', format='.2f'),
+                            alt.Tooltip('q25:Q', title='Q25', format='.2f'),
+                            alt.Tooltip('q75:Q', title='Q75', format='.2f'),
+                        ]
+                    )
+                    _ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                        color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+                    ).encode(y='y:Q')
+
+                    _best_data = _agg_df[_agg_df['month_name'] == _best_month_name]
+                    _best_bar = alt.Chart(_best_data).mark_bar(color='#1abc9c', opacity=0.4, width=40).encode(
+                        x=alt.X('month_name:O', sort=MONTH_ORDER),
+                        y=alt.Y('q25:Q'),
+                        y2=alt.Y2('q75:Q'),
+                    )
+
+                    _agg_chart = (_band + _best_bar + _line + _ref).properties(height=320)
+                    st.altair_chart(_agg_chart, width='stretch')
+
+                    _best_val = _best_row['mean']
+                    st.success(
+                        f'🏆 **{_best_month_name}** is historically the cheapest month for {_scope_label} '
+                        f'(avg relative price: **{_best_val:.1f}%** of annual mean)'
+                    )
+
+                # ---------------------------------------------------------------- #
+                # Chart B — KDE of best days before ex-date                        #
+                # ---------------------------------------------------------------- #
+                with _chart_cols[1]:
+                    st.markdown('#### Distribution: Days Before Ex-Date to Buy')
+                    st.caption(
+                        f'For each historical dividend event across {_scope_label}, shows how many '
+                        'calendar days before ex-date the price hit its lowest within a 180-day window.'
+                    )
+
+                    if not _best_days_df.empty:
+                        _median_days = int(_best_days_df['days_before'].median())
+
+                        _kde_chart = alt.Chart(_best_days_df).transform_density(
+                            'days_before',
+                            as_=['Days Before Ex-Date', 'Density'],
+                            bandwidth=3,
+                        ).mark_area(
+                            color=alt.Gradient(
+                                gradient='linear',
+                                stops=[
+                                    alt.GradientStop(color='#1a5276', offset=0),
+                                    alt.GradientStop(color='#3498db', offset=1),
+                                ],
+                                x1=1, x2=1, y1=1, y2=0
+                            ),
+                            line={'color': '#2e86c1'},
+                            opacity=0.75,
+                        ).encode(
+                            x=alt.X('Days Before Ex-Date:Q', title='Calendar Days Before Ex-Date',
+                                    scale=alt.Scale(domain=[0, 180])),
+                            y=alt.Y('Density:Q', title='',
+                                    axis=alt.Axis(tickSize=0, domain=False, labelFontSize=0)),
+                            tooltip=[alt.Tooltip('Days Before Ex-Date:Q', format='.0f', title='Days Before')]
+                        )
+
+                        _median_rule = alt.Chart(
+                            pd.DataFrame({'x': [_median_days], 'label': [f'Median: {_median_days}d']})
+                        ).mark_rule(color='#f39c12', strokeWidth=2, strokeDash=[5, 3]).encode(
+                            x='x:Q'
+                        )
+                        _median_text = alt.Chart(
+                            pd.DataFrame({'x': [_median_days + 1.5], 'y': [0], 'label': [f'Median: {_median_days}d']})
+                        ).mark_text(
+                            align='left', color='#f39c12', fontSize=11, fontWeight='bold', dy=-8
+                        ).encode(x='x:Q', y=alt.Y('y:Q', impute=alt.ImputeParams(value=0)), text='label:N')
+
+                        _kde_full = (_kde_chart + _median_rule + _median_text).properties(height=320)
+                        st.altair_chart(_kde_full, width='stretch')
+
+                        _n_events = len(_best_days_df)
+                        _p25 = int(_best_days_df['days_before'].quantile(0.25))
+                        _p75 = int(_best_days_df['days_before'].quantile(0.75))
+                        st.success(
+                            f'🎯 Buy **{_median_days} days** before ex-date (median across {_n_events} events). '
+                            f'Middle 50% range: **{_p25}–{_p75} days** before.'
+                        )
+                    else:
+                        st.info('No pre-ex timing data available for these stocks.')
 
