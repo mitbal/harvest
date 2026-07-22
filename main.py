@@ -25,16 +25,16 @@ page_home = st.Page('home.py', title='Home', icon='🪙')
 page_screener = st.Page('apps/screener/stock_picker.py', title='Div Ranking', icon='💸')
 page_comparison = st.Page('apps/screener/stock_comparison.py', title='Stock Comparison', icon='⚖️')
 page_market_watch = st.Page('apps/screener/market_watch.py', title='Market Watch', icon='📡')
+# page_market_animation = st.Page('apps/screener/market_watch_animation.py', title='Market Animation', icon='📽️')
 page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Overview', icon='💰')
 page_history = st.Page('apps/history/history_overview.py', title='Historical Breakdown', icon='🧭')
 page_calendar = st.Page('apps/calendar/calendar.py', title='Dividend Calendar', icon='📅')
 page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
-# page_backtester = st.Page('apps/trading/backtester.py', title='Strategy Backtester', icon='📈')
-# page_day_trading_ml = st.Page('apps/trading/day_trading_ml.py', title='Day Trading (ML)', icon='🤖')
-# page_trading = st.Page('apps/voc/copenhagen.py', title='Copenhagen Model', icon='🎮')
-# page_viz = st.Page('apps/viz/viz.py', title='Vis')
+# page_backtester = st.Page('apps/trading/backtester.py', title='Position Trading - Long Term', icon='📈')
+# page_day_trading = st.Page('apps/trading/day_trading.py', title='Day Trading Lab', icon='⚡')
+# page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Swing Trading Lab', icon='🏄')
 
 
 pages = st.navigation(
@@ -42,25 +42,42 @@ pages = st.navigation(
         'Home': [page_home],
         'Apps': [page_screener,
                  page_market_watch,
+                #  page_market_animation,
                  page_comparison,
                  page_calendar,
                  page_porto,
                  page_simulator,
-                 #  page_assistant,
-                #  page_backtester,
-                #  page_day_trading_ml,
-                #  page_article,
-                #  page_viz,
-                #  page_history,
-                #  page_trading
-                 ]
+                 ],
+        # 'Trading': [
+        #         page_backtester,
+        #         page_day_trading,
+        #         page_swing_trading,
+        # ]
     }
 )
 
+# Redirect to portfolio only right after a fresh OAuth login.
+# We detect this by checking the HTTP Referer header: after completing
+# OAuth, the browser referrer will be from the OAuth provider domain
+# (e.g. accounts.google.com). Direct opens / bookmarks have no referrer.
 if st.user.is_logged_in and 'has_redirected_after_login' not in st.session_state:
     st.session_state['has_redirected_after_login'] = True
     if pages.title == 'Home':
-        st.switch_page(page_porto)
+        try:
+            referrer = st.context.headers.get('Referer', '')
+        except Exception:
+            referrer = ''
+        # Known OAuth / identity provider domains
+        _OAUTH_DOMAINS = [
+            'accounts.google.com',
+            'github.com',
+            'login.microsoftonline.com',
+            'auth0.com',
+            'okta.com',
+        ]
+        is_fresh_oauth_login = any(domain in referrer for domain in _OAUTH_DOMAINS)
+        if is_fresh_oauth_login:
+            st.switch_page(page_porto)
 
 
 # --- URL Parameter Tracking ---
