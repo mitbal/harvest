@@ -391,8 +391,8 @@ MONTH_ORDER = list(calendar.month_abbr[1:])
 
 
 @st.cache_data(max_entries=512, ttl=60 * 60 * 6, show_spinner=False)
-def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
-    """Download 10 years of daily closes + full dividend history for a stock.
+def _fetch_price_for_stock(symbol, start_from='2015-01-01', end_year=None):
+    """Download daily closes + full dividend history for a stock.
 
     Returns a dict with keys ``symbol``, ``price_df`` (date/close) and
     ``div_dates`` (a DataFrame with a ``date`` column of all historical
@@ -402,7 +402,11 @@ def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
     try:
         pdf = hd.get_daily_stock_price(symbol, start_from=start_from)
         if pdf is not None and not pdf.empty and 'close' in pdf.columns:
-            rec = {'symbol': symbol, 'price_df': pdf[['date', 'close']]}
+            pdf = pdf[['date', 'close']].copy()
+            pdf['date'] = pd.to_datetime(pdf['date'])
+            if end_year is not None:
+                pdf = pdf[pdf['date'].dt.year <= end_year]
+            rec = {'symbol': symbol, 'price_df': pdf}
     except Exception:
         pass
     if rec is None:
@@ -415,6 +419,8 @@ def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
             ddf['date'] = pd.to_datetime(ddf['date'], errors='coerce')
             ddf = ddf.dropna()
             ddf = ddf[ddf['date'] >= pd.Timestamp(start_from)]
+            if end_year is not None:
+                ddf = ddf[ddf['date'].dt.year <= end_year]
             rec['div_dates'] = ddf.reset_index(drop=True)
         else:
             rec['div_dates'] = pd.DataFrame(columns=['date'])
@@ -424,11 +430,11 @@ def _fetch_price_for_stock(symbol, start_from='2015-01-01'):
 
 
 @st.cache_data(max_entries=16, ttl=60 * 60 * 6, show_spinner=False)
-def _fetch_all_prices(symbols_tuple):
-    """Parallel-fetch 10+ years of daily closes for every symbol once. Cached for 6 h."""
+def _fetch_all_prices(symbols_tuple, start_from='2015-01-01', end_year=None):
+    """Parallel-fetch daily closes for every symbol once. Cached for 6 h."""
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(_fetch_price_for_stock, s): s for s in symbols_tuple}
+        futures = {ex.submit(_fetch_price_for_stock, s, start_from=start_from, end_year=end_year): s for s in symbols_tuple}
         for fut in concurrent.futures.as_completed(futures):
             rec = fut.result()
             if rec is not None:
@@ -557,18 +563,36 @@ elif not _sector_map:
 else:
     _col_info, _col_btn = st.columns([3, 1])
     _col_info.caption(
-        f'Will fetch 10+ years of price history for up to **{_n_stocks} stocks** across '
+        f'Will fetch price history for up to **{_n_stocks} stocks** across '
         f'**{len(_sector_options) - 1} sectors**. '
         'This may take 30–60 seconds on first load; results are cached for 6 hours.'
     )
+
+    _yr_col1, _yr_col2 = st.columns(2)
+    _year_range_start = list(range(2015, current_year + 1))
+    _year_range_end = list(range(2015, current_year + 1))
+    _start_year = _yr_col1.selectbox(
+        'Start Year', _year_range_start,
+        index=_year_range_start.index(2015),
+        help='First year of price history to include in the distribution.'
+    )
+    _end_year = _yr_col2.selectbox(
+        'End Year', _year_range_end,
+        index=_year_range_end.index(current_year),
+        help='Last year of price history to include in the distribution.'
+    )
+    if _end_year < _start_year:
+        st.warning('End year must be >= start year. Please adjust the range.')
+        _end_year = _start_year
+    _start_from_str = f'{_start_year}-01-01'
 
     if _col_btn.button('🔍 Calculate Seasonality', width='stretch'):
         st.session_state['cal_show_seasonality'] = True
 
     if st.session_state.get('cal_show_seasonality'):
-        with st.spinner(f'Fetching price data for {_n_stocks} stocks…'):
+        with st.spinner(f'Fetching price data for {_n_stocks} stocks ({_start_year}–{_end_year})…'):
             _symbols_tuple = tuple(_all_symbols)
-            _price_results = _fetch_all_prices(_symbols_tuple)
+            _price_results = _fetch_all_prices(_symbols_tuple, start_from=_start_from_str, end_year=_end_year)
             _div_cal_df = df[['symbol', 'date']].copy()
             _div_cal_df['date'] = pd.to_datetime(_div_cal_df['date'])
 
