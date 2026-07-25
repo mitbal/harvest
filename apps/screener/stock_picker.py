@@ -1504,12 +1504,12 @@ if 'market' in st.query_params:
         default_sl = 1
 
 
-# sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], horizontal=True, key='sl', index=default_sl)
+logger = get_logger('screener')
 
-stock_select = st.sidebar.radio(
+stock_select = st.radio(
     'Stock List Selection',
     ['Indonesian Stock', 'S&P 500 (US and World Stock)'],
-    horizontal=False,
+    horizontal=True,
     key='sl',
     index=default_sl
 )
@@ -1519,29 +1519,16 @@ if stock_select == 'Indonesian Stock':
 else:
     sl = 'S&P500'
 
-if sl is None:
-    st.stop()
-
 if sl == 'JKSE':
     key = 'div_score_jkse'
-    mcap_value = 300
     currency = 'IDR'
 else:
     key = 'div_score_sp500'
-    mcap_value = 100
     currency = 'USD'
-
-
-logger = get_logger('screener')
 
 final_df = get_div_score_table(key)
 if sl != 'JKSE':
     final_df = final_df.drop('GOOGL')
-
-if sl == 'JKSE':
-    is_syariah = st.sidebar.toggle('Syariah Only?')
-    if is_syariah:
-        final_df = final_df[final_df['is_syariah'] == True]
 
 # ---------------------------------------------------------------------------
 # Column pruning — keep only columns actually used in the page
@@ -1646,6 +1633,11 @@ def get_processed_df(df):
 
 full_table_section = st.container(border=True)
 with full_table_section:
+
+    if sl == 'JKSE':
+        is_syariah = st.toggle('Syariah Only?', value=False)
+        if is_syariah:
+            final_df = final_df[final_df['is_syariah'] == True]
 
     filtered_df = get_processed_df(final_df)
 
@@ -1846,75 +1838,6 @@ with full_table_section:
         }
 
         event = st.dataframe(display_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
-
-    if False:  # Treemap view moved to its own page
-        
-        treemap_cols = st.columns([2,2,3,2])
-        size_var = treemap_cols[0].selectbox(options=['Market Cap', 'Revenue', 'Net Income', 'Dividend Yield'], label='Select Size Variable')
-        color_var = treemap_cols[1].selectbox(options=['None', 'Dividend Yield', 'Median Profit Margin', 'TTM Profit Margin', 'Revenue Growth', '1D Price Return', '7D Price Return', '1M Price Return', '1Y Price Return', '10Y Price Return', 'Total 1Y Return', 'Total 10Y Return', 'PE Ratio', 'PS Ratio'], label='Select Color Variable', index=color_var_index)
-        sector_var = treemap_cols[2].selectbox(options=['ALL']+filtered_df['sector'].unique().tolist(), label='Select Sector')
-        group_secs = treemap_cols[3].toggle('Group by Sector', value=True)
-        
-        # Build df_tree in one shot — avoids 17 separate column-assignment intermediate arrays
-        df_tree = pd.DataFrame({
-            'sector':              filtered_df['sector'],
-            'industry':            filtered_df['industry'],
-            'Market Cap':          filtered_df['mktCap'] / 1_000_000_000,
-            'Revenue':             filtered_df['revenueTTM'],
-            'Net Income':          filtered_df['earningTTM'],
-            'Dividend Yield':      filtered_df['yield'],
-            'Median Profit Margin': filtered_df['medianProfitMargin'],
-            'TTM Profit Margin':   filtered_df['marginTTM'],
-            'Revenue Growth':      filtered_df['revenueGrowth'],
-            '1D Price Return':     filtered_df['changes'] / filtered_df['price'] * 100,
-            '7D Price Return':     filtered_df['return_7d'],
-            '1M Price Return':     filtered_df['return_1m'],
-            '1Y Price Return':     filtered_df['return_1y'],
-            '10Y Price Return':    filtered_df['return_10y'],
-            'Total 1Y Return':     filtered_df['total_return_1y'],
-            'Total 10Y Return':    filtered_df['total_return_10y'],
-            'PE Ratio':            filtered_df['peRatio'],
-            'PS Ratio':            filtered_df['psRatio'],
-        }, index=filtered_df.index).dropna()
-
-        if sector_var != 'ALL':
-            df_tree = df_tree[df_tree['sector'] == sector_var]
-
-        if color_var == 'None':
-            color_var = None
-            show_gradient = False
-            add_label = None
-        else:
-            show_gradient = True
-            add_label = 'color_var'
-
-        color_map = 'green_shade'
-        color_threshold = None
-        if color_var in ['1D Price Return', '7D Price Return', '1M Price Return', '1Y Price Return', '10Y Price Return', 'Total 1Y Return', 'Total 10Y Return']:
-            color_map = 'red_green'
-            color_threshold = [-10, -5, -0.001, 0.001, 5, 10]
-        elif color_var == 'PE Ratio':
-            color_map = 'red_shade'
-            color_threshold = [-100, 0, 5, 15]
-        elif color_var == 'PS Ratio':
-            color_map = 'red_shade'
-            color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
-        elif color_var == 'Dividend Yield':
-            color_threshold = [0,1,2,3,4, 5, 6, 7,8,9,10]
-
-        tree_data = hd.prep_treemap(df_tree, size_var=size_var, color_var=color_var, color_threshold=color_threshold, add_label=add_label, group_secs=group_secs)
-        option = hp.plot_treemap(tree_data, size_var=size_var, color_var=color_var, show_gradient=show_gradient, colormap=color_map, group_secs=group_secs)
-        
-        click_event_js = """function(params){if(!params.data.children){return params.name;} return null;}"""
-        
-        clicked_item_name = st_echarts(
-            option,
-            events={"click": click_event_js},
-            height='900px', 
-            width='100%'
-        )
-    
-
 
 
 
