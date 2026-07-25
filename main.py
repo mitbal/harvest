@@ -22,13 +22,14 @@ logging.getLogger('streamlit.web.server.media_file_handler').setLevel(logging.CR
 
 
 page_home = st.Page('home.py', title='Home', icon='🪙')
-page_screener = st.Page('apps/screener/stock_picker.py', title='Div Ranking', icon='💸')
+page_screener = st.Page('apps/screener/stock_picker.py', title='Ranking Screener', icon='💸')
 page_comparison = st.Page('apps/screener/stock_comparison.py', title='Stock Comparison', icon='⚖️')
-page_market_watch = st.Page('apps/screener/market_watch.py', title='Market Watch', icon='📡')
+page_market_watch = st.Page('apps/screener/market_watch.py', title='Stock Heatmap', icon='📡')
 # page_market_animation = st.Page('apps/screener/market_watch_animation.py', title='Market Animation', icon='📽️')
-page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Overview', icon='💰')
+page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Analytics', icon='💰')
 page_history = st.Page('apps/history/history_overview.py', title='Historical Breakdown', icon='🧭')
-page_calendar = st.Page('apps/calendar/calendar.py', title='Dividend Calendar', icon='📅')
+page_calendar = st.Page('apps/calendar/calendar.py', title='Payout Calendar', icon='📅')
+page_best_timing = st.Page('apps/calendar/best_timing.py', title='Best Timing', icon='🎯')
 page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
@@ -40,14 +41,20 @@ page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simul
 pages = st.navigation(
     {
         'Home': [page_home],
-        'Apps': [page_screener,
-                 page_market_watch,
-                #  page_market_animation,
-                 page_comparison,
+        'Dividend': [page_screener,
                  page_calendar,
+                 page_best_timing,
+                #  page_market_watch,
+                #  page_market_animation,
+                #  page_comparison,
                  page_porto,
                  page_simulator,
                  ],
+        'Market':
+            [
+                page_market_watch,
+                page_comparison,
+            ],
         # 'Trading': [
         #         page_backtester,
         #         page_day_trading,

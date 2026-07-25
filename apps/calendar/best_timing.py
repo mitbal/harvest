@@ -223,7 +223,7 @@ def _seasonality_for_sector(price_results, div_cal_df, sector_map, sector='All',
             best_raw.append(ev)
             all_best_days.append(ev['days_before'])
 
-        rec_detail = hd.calc_post_ex_recovery_days(rec['price_df'], sdf_sym, max_lookforward=180, detail=True)
+        rec_detail = hd.calc_post_ex_recovery_days(rec['price_df'], sdf_sym, max_lookforward=365, detail=True)
         for ev in rec_detail:
             ev['symbol'] = sym
             recovery_raw.append(ev)
@@ -243,7 +243,7 @@ def _season_sector_table(price_results, div_cal_df, sector_map, sectors, all_sym
         n_stocks = len(sec_symbols)
         if n_stocks == 0:
             continue
-        agg_df, best_df, rec_df, _, _ = _seasonality_for_sector(price_results, div_cal_df, sector_map, sec)
+        agg_df, best_df, rec_df, _, rec_raw_df = _seasonality_for_sector(price_results, div_cal_df, sector_map, sec)
         if agg_df.empty:
             rows.append({
                 'sector': sec, 'n_stocks': n_stocks, 'best_month': '—',

@@ -511,6 +511,15 @@ def calc_growth_stats(fin_df, metric='revenue'):
         stats[f'median_{p}y_{metric}_growth'] = np.median(growth) *100
         stats[f'trim_mean_{p}y_{metric}_growth'] = (scipy.stats.trim_mean(growth, 0.1)) *100
 
+        # Compounded annual growth rate over p years:
+        # (current rolling TTM value / value p years ago) ^ (1/p) - 1
+        cagr_ratio = (rolling_metric[metric] / rolling_metric.shift(p * 4)[metric])[::-1]
+        cagr_ratio = cagr_ratio.dropna()
+        if not cagr_ratio.empty and cagr_ratio.iloc[0] > 0:
+            stats[f'cagr_{p}y_{metric}'] = (cagr_ratio.iloc[0] ** (1.0 / p) - 1) * 100
+        else:
+            stats[f'cagr_{p}y_{metric}'] = None
+
     stats[f'{metric}_growth_TTM'] = growth.iloc[0] * 100
     return stats
 
@@ -1122,7 +1131,7 @@ def calc_best_buy_timing(price_df, sdf, pre_ex_days=180, post_ex_days=30):
     return seasonality_df, pre_ex_df, ex_drop_stats
 
 
-def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180):
+def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180, detail=False):
     """
     For each historical dividend ex-date, find how many calendar days before
     the ex-date the stock price reached its lowest point within the look-back
@@ -1133,10 +1142,13 @@ def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180):
         sdf (pd.DataFrame): Dividend history with a ``date`` column
             (str ``YYYY-MM-DD``).
         pre_ex_days (int): Look-back window in calendar days (default 90).
+        detail (bool): When True, return a list of dicts with keys ``ex_date``
+            and ``days_before`` (and ``low_date``) instead of plain ints.
 
     Returns:
-        list[int]: One value per dividend event — the number of calendar days
-            before ex-date when the price was cheapest.  Only events where a
+        list[int] | list[dict]: One entry per dividend event — the number of
+            calendar days before ex-date when the price was cheapest (or, in
+            ``detail`` mode, a dict describing the event). Only events where a
             clear pre-ex low exists are included.
     """
     if price_df is None or price_df.empty or sdf is None or sdf.empty:
@@ -1161,9 +1173,106 @@ def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180):
         days_before = (ex_date - min_date).days
 
         if 0 < days_before <= pre_ex_days:
-            best_days.append(days_before)
+            if detail:
+                on_ex = pdf[pdf['date'] <= ex_date]
+                ex_price = float(on_ex.iloc[-1]['close']) if not on_ex.empty else None
+                best_days.append({
+                    'ex_date': pd.Timestamp(ex_date).strftime('%Y-%m-%d'),
+                    'ex_price': ex_price,
+                    'low_date': min_date.strftime('%Y-%m-%d'),
+                    'days_before': int(days_before),
+                    'low_price': float(window.loc[min_idx, 'close']),
+                })
+            else:
+                best_days.append(days_before)
 
     return best_days
+
+
+def calc_post_ex_recovery_days(price_df, sdf, max_lookforward=365, detail=False):
+    """
+    For each historical dividend ex-date, find how many calendar days after
+    the ex-date the stock price first recovers to (or exceeds) the cum-date
+    price (the close on the last trading day before the ex-date).
+
+    Events where the price **never recovers** within the lookforward window
+    are **right-censored**: they are included with ``days_after`` set to
+    ``max_lookforward`` and ``recovered`` set to ``False`` (in detail mode)
+    so they are reflected in the distribution.
+
+    Args:
+        price_df (pd.DataFrame): Daily prices with ``date`` and ``close``.
+        sdf (pd.DataFrame): Dividend history with a ``date`` column
+            (str ``YYYY-MM-DD``).
+        max_lookforward (int): Maximum calendar days to look forward from
+            ex-date when searching for price recovery (default 365).
+        detail (bool): When True, return a list of dicts with keys ``ex_date``,
+            ``cum_date``, ``cum_price``, ``recover_date``, ``recover_price``,
+            ``days_after`` and ``recovered`` instead of plain ints.
+
+    Returns:
+        list[int] | list[dict]: One entry per dividend event — the number of
+            calendar days after ex-date when the price first returned to the
+            cum-date price, or ``max_lookforward`` for right-censored events
+            that never recovered (in ``detail`` mode, a dict describing the
+            event with a ``recovered`` flag).
+    """
+    if price_df is None or price_df.empty or sdf is None or sdf.empty:
+        return []
+
+    pdf = price_df[['date', 'close']].copy()
+    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf = pdf.sort_values('date').reset_index(drop=True)
+
+    recovery_days = []
+    ex_dates = pd.to_datetime(sdf['date']).sort_values().unique()
+
+    for ex_date in ex_dates:
+        on_cum = pdf[pdf['date'] < ex_date]
+        if on_cum.empty:
+            continue
+        cum_price = on_cum.iloc[-1]['close']
+        cum_date = on_cum.iloc[-1]['date']
+
+        window_end = ex_date + datetime.timedelta(days=max_lookforward)
+        forward = pdf[(pdf['date'] >= ex_date) & (pdf['date'] <= window_end)].copy()
+        if forward.empty or cum_price <= 0:
+            continue
+
+        forward['days_after'] = (forward['date'] - ex_date).dt.days
+        recovered = forward[forward['close'] >= cum_price]
+
+        if recovered.empty:
+            # Right-censor: price never recovered within the lookforward window
+            if detail:
+                recovery_days.append({
+                    'ex_date': pd.Timestamp(ex_date).strftime('%Y-%m-%d'),
+                    'cum_date': cum_date.strftime('%Y-%m-%d'),
+                    'cum_price': float(cum_price),
+                    'recover_date': None,
+                    'recover_price': None,
+                    'days_after': max_lookforward,
+                    'recovered': False,
+                })
+            else:
+                recovery_days.append(max_lookforward)
+        else:
+            rec_row = recovered.iloc[0]
+            days_after = int(rec_row['days_after'])
+            if detail:
+                recovery_days.append({
+                    'ex_date': pd.Timestamp(ex_date).strftime('%Y-%m-%d'),
+                    'cum_date': cum_date.strftime('%Y-%m-%d'),
+                    'cum_price': float(cum_price),
+                    'recover_date': rec_row['date'].strftime('%Y-%m-%d'),
+                    'recover_price': float(rec_row['close']),
+                    'days_after': days_after,
+                    'recovered': True,
+                })
+            else:
+                recovery_days.append(days_after)
+
+    return recovery_days
 
 
 def calc_aggregate_seasonality(price_records):
