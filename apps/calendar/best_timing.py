@@ -534,10 +534,18 @@ else:
                     _r_p90 = int(_recovery_clean['days_after'].quantile(0.90))
                     _n_rec = len(_recovery_clean)
 
+                    if _n_rec > 1:
+                        _rec_std = float(_recovery_clean['days_after'].std())
+                        _rec_bw = max(1.06 * _rec_std * (_n_rec ** -0.2), 1)
+                    else:
+                        _rec_bw = 3
+                    _rec_p99 = float(_recovery_clean['days_after'].quantile(0.99)) if _n_rec > 0 else 180
+                    _rec_domain_max = max(120, int(_rec_p99) + 10)
+
                     _rec_kde = alt.Chart(_recovery_clean).transform_density(
                         'days_after',
                         as_=['Days After Ex-Date', 'Density'],
-                        bandwidth=3,
+                        bandwidth=_rec_bw,
                     ).mark_area(
                         color=alt.Gradient(
                             gradient='linear',
@@ -551,7 +559,7 @@ else:
                         opacity=0.75,
                     ).encode(
                         x=alt.X('Days After Ex-Date:Q', title='Calendar Days After Ex-Date',
-                                scale=alt.Scale(domain=[0, 180])),
+                                scale=alt.Scale(domain=[0, _rec_domain_max])),
                         y=alt.Y('Density:Q', title='',
                                 axis=alt.Axis(tickSize=0, domain=False, labelFontSize=0)),
                         tooltip=[alt.Tooltip('Days After Ex-Date:Q', format='.0f', title='Days After')]
