@@ -57,7 +57,7 @@ logger = get_logger('market_watch')
 
 # ── Load stock universe (sector / industry / mcap metadata) ──────────────── #
 
-@st.cache_data(ttl=60 * 5, show_spinner='Fetching live price changes from FMP…')
+@st.cache_data(max_entries=32, ttl=60 * 5, show_spinner='Fetching live price changes from FMP…')
 def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
     """
     Fetches the latest price, absolute change, and % change for each symbol
@@ -117,7 +117,7 @@ def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=60 * 10, show_spinner='Loading stock universe…')
+@st.cache_data(max_entries=4, ttl=60 * 10, show_spinner='Loading stock universe…')
 def get_stock_universe(key: str) -> pd.DataFrame:
     r = connect_redis(redis_url)
     rjson = r.get(key)
@@ -139,7 +139,7 @@ def get_stock_universe(key: str) -> pd.DataFrame:
 
 # ── Load historical prices for a date range from Supabase ────────────────── #
 
-@st.cache_data(ttl=60 * 60, show_spinner='Fetching historical prices…')
+@st.cache_data(max_entries=64, ttl=60 * 60, show_spinner='Fetching historical prices…')
 def get_prices_for_date_range(
     symbols: tuple,       # tuple so it is hashable for caching
     date_from: str,
@@ -234,7 +234,7 @@ _INDEX_FLAGS = {
 }
 
 
-@st.cache_data(ttl=60 * 60 * 4, show_spinner='Fetching index prices…')
+@st.cache_data(max_entries=16, ttl=60 * 60 * 4, show_spinner='Fetching index prices…')
 def get_index_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
     """
     Fetches daily close prices for all tracked indices from FMP.
@@ -294,7 +294,7 @@ _FX_COLORS  = {sym: v[2] for sym, v in _FX_SYMBOLS.items()}
 _FX_LABEL_TO_SYM = {v[0]: sym for sym, v in _FX_SYMBOLS.items()}
 
 
-@st.cache_data(ttl=60 * 60 * 4, show_spinner='Fetching currency rates…')
+@st.cache_data(max_entries=16, ttl=60 * 60 * 4, show_spinner='Fetching currency rates…')
 def get_fx_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
     """
     Fetches daily close rates for all tracked FX pairs (vs IDR) from FMP.
@@ -364,7 +364,41 @@ def calc_daily_return_for_date(prices_df: pd.DataFrame, target_date: pd.Timestam
     return merged
 
 
-@st.cache_data(ttl=60 * 60 * 4, show_spinner=False)
+def build_tree_input(
+    df_tree: pd.DataFrame,
+    size_col: str,
+    size_var: str,
+    color_col_data: pd.Series,
+    color_var_label: str,
+) -> pd.DataFrame:
+    """
+    Assemble the DataFrame passed to ``hd.prep_treemap``.
+
+    ``size_var`` and ``color_var_label`` may be identical (e.g. the user picks
+    'Dividend Yield' for both size and color).  In that case both series hold
+    the same values and a single shared column is used — using the same label
+    twice would collapse into one dict key, and the non-finite sanitization
+    below would then fail with ``ValueError: Columns must be same length as key``.
+    """
+    cols = {
+        'sector':   df_tree['sector'],
+        'industry': df_tree['industry'],
+        size_var:   df_tree[size_col],
+    }
+    if color_var_label != size_var:
+        cols[color_var_label] = color_col_data
+
+    tree_input = pd.DataFrame(cols, index=df_tree.index)
+
+    # Sanitize non-finite values (inf / -inf) — these serialize to the literal
+    # ``Infinity`` in JSON which the browser's JSON.parse rejects.  Convert
+    # them to NaN so the subsequent dropna() cleans the offending rows.
+    num_cols = list(dict.fromkeys([size_var, color_var_label]))
+    tree_input[num_cols] = tree_input[num_cols].replace([np.inf, -np.inf], np.nan)
+    return tree_input.dropna()
+
+
+@st.cache_data(max_entries=256, ttl=60 * 60 * 4, show_spinner=False)
 def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> float | None:
     """
     Fetches USDIDR close rates for ``n_days`` before ``date_to_str`` and returns
@@ -736,19 +770,13 @@ else:
         color_col_data = df_tree['return_1d_pct']
         color_var_label = '1D Return %'
 
-    tree_input = pd.DataFrame({
-        'sector':          df_tree['sector'],
-        'industry':        df_tree['industry'],
-        size_var:          df_tree[size_col],
-        color_var_label:   color_col_data,
-    }, index=df_tree.index)
-
-    # Sanitize non-finite values (inf / -inf) — these serialize to the literal
-    # ``Infinity`` in JSON which the browser's JSON.parse rejects.  Convert
-    # them to NaN so the subsequent dropna() cleans the offending rows.
-    _num_cols = [size_var, color_var_label]
-    tree_input[_num_cols] = tree_input[_num_cols].replace([np.inf, -np.inf], np.nan)
-    tree_input = tree_input.dropna()
+    tree_input = build_tree_input(
+        df_tree,
+        size_col=size_col,
+        size_var=size_var,
+        color_col_data=color_col_data,
+        color_var_label=color_var_label,
+    )
 
     # ── Color map & threshold based on selected variable ─────────────────── #
     _return_labels = {
