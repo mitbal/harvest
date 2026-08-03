@@ -24,7 +24,6 @@ st.title('Stock Comparison ⚖️')
 st.set_page_config(page_title='Stock Comparison - Panen Dividen')
 
 # ── Constants ────────────────────────────────────────────────────────────────
-DIV_MATURITY_HALFLIFE = 25
 PROJECTION_HORIZON_YRS = 5
 
 # Colour palette for up to 10 selected stocks
@@ -59,7 +58,7 @@ def connect_redis(redis_url):
 
 
 # ── Data loading (mirrors stock_picker.py) ───────────────────────────────────
-@st.cache_data(ttl=60 * 10, show_spinner='Downloading stock universe…')
+@st.cache_data(max_entries=4, ttl=60 * 10, show_spinner='Downloading stock universe…')
 def get_div_score_table(key='jkse_div_score'):
     redis_url = os.environ['REDIS_URL']
     r = connect_redis(redis_url)
@@ -98,7 +97,7 @@ _KEEP_COLS = [
 ]
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(max_entries=16, show_spinner=False)
 def get_processed_df(df):
     df = df.copy()
     df['marginTTM'] = df['earningTTM'] / df['revenueTTM'] * 100
@@ -114,26 +113,13 @@ def get_processed_df(df):
     df['mc_penalty'] = df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
     df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
     df['max10CutPct'] = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
-    df['maxDivIncrease'] = df.apply(lambda x: min(x['avgFlatAnnualDivIncrease'], x['lastDiv'] * 0.05), axis=1)
-    df['maxRevGrowthDecrease'] = df.apply(lambda x: min(x['revenueGrowthTTM'], 0), axis=1)
-    df['maxIncGrowthDecrease'] = df.apply(lambda x: min(x['netIncomeGrowthTTM'], 0), axis=1)
 
     for col in ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']:
         if col in df.columns:
             df[col] = df[col] * 100
 
-    df['DScore'] = (
-        (df['lastDiv'] + df['maxDivIncrease'] * PROJECTION_HORIZON_YRS * (df['positiveYear'] / df['numOfYear'])) / df['price']
-    ) * 100 \
-      * (df['numDividendYear'] / (df['numDividendYear'] + DIV_MATURITY_HALFLIFE)) \
-      * (1 - np.exp(-df['numDividendYear'] / 5)) \
-      * (100 - df['max10CutPct']) / 100 \
-      * df['mc_penalty'] \
-      * (1 + df['maxRevGrowthDecrease'] / 100) \
-      * (1 + df['maxIncGrowthDecrease'] / 100)
-
     payout_ratio = df['dividendPayoutRatio'].copy()
-    df = df.fillna(0).sort_values('DScore', ascending=False)
+    df = df.fillna(0)
     df['dividendPayoutRatio'] = payout_ratio
     df.insert(0, 'Rank', range(1, len(df) + 1))
     return df
@@ -147,7 +133,6 @@ METRIC_OPTIONS = {
     'Div Growth (Annual)':       ('avgFlatAnnualDivIncrease','higher_better','{:,.2f}'),
     'Years Paying Dividend':     ('numDividendYear',        'higher_better', '{:.0f}'),
     'Years Raised Dividend':     ('positiveYear',           'higher_better', '{:.0f}'),
-    'Dividend Score':            ('DScore',                 'higher_better', '{:.2f}'),
     'Dividend Payout Ratio (%)': ('dividendPayoutRatio',    'lower_better',  '{:.1f}%'),
     # ── Valuation ──
     'PE Ratio':                  ('peRatio',                'lower_better',  '{:.1f}x'),
@@ -158,8 +143,8 @@ METRIC_OPTIONS = {
     'Net Income Growth (5Y)':    ('netIncomeGrowth',        'higher_better', '{:.1f}%'),
     'Revenue Growth (TTM)':      ('revenueGrowthTTM',       'higher_better', '{:.1f}%'),
     'Net Income Growth (TTM)':   ('netIncomeGrowthTTM',     'higher_better', '{:.1f}%'),
-    'Revenue (TTM)':             ('revenueTTM',             'neutral',       '{:.2e}'),
-    'Net Income (TTM)':          ('earningTTM',              'neutral',       '{:.2e}'),
+    'Revenue (TTM)':             ('revenueTTM',             'higher_better', '{:.2e}'),
+    'Net Income (TTM)':          ('earningTTM',              'higher_better', '{:.2e}'),
     # ── Profitability ──
     'Profit Margin (Median)':    ('medianProfitMargin',     'higher_better', '{:.1f}%'),
     'Profit Margin (TTM)':       ('marginTTM',              'higher_better', '{:.1f}%'),
@@ -177,7 +162,7 @@ METRIC_OPTIONS = {
 # Subset shown by default in the Table tab
 TABLE_DEFAULT_METRICS = [
     'Dividend Yield (%)', 'Last Dividend', 'Years Paying Dividend',
-    'Years Raised Dividend', 'Dividend Score',
+    'Years Raised Dividend',
     'PE Ratio', 'PS Ratio',
     'Revenue Growth (5Y)', 'Revenue CAGR (5Y)', 'Net Income Growth (5Y)',
     'Profit Margin (Median)', 'Profit Margin (TTM)',
@@ -255,6 +240,13 @@ else:
     currency = 'USD'
     divisor = 1_000_000_000
     mcap_suffix = 'B USD'
+
+
+def format_comparison_value(label, value, fmt):
+    """Format financial totals in the selected market's readable currency unit."""
+    if label in ('Revenue (TTM)', 'Net Income (TTM)'):
+        return f'{value / divisor:,.2f} {mcap_suffix}'
+    return fmt.format(value)
 
 final_df = get_div_score_table(key)
 if sl != 'JKSE':
@@ -375,7 +367,7 @@ with tab_table:
                 v = comp_df.loc[stock, col_name]
                 vals[stock] = v
                 try:
-                    row[stock] = fmt.format(v)
+                    row[stock] = format_comparison_value(label, v, fmt)
                 except (ValueError, TypeError):
                     row[stock] = str(v)
 
@@ -401,14 +393,14 @@ with tab_table:
             stock_color = stock_colors[stock]
             if stock == best:
                 bg = 'rgba(46, 125, 50, 0.18)'
-                border = '2px solid #2e7d32'
+                outline = 'inset 0 0 0 2px #2e7d32'
             elif stock == worst:
                 bg = 'rgba(183, 28, 28, 0.13)'
-                border = '2px solid #b71c1c'
+                outline = 'inset 0 0 0 2px #b71c1c'
             else:
                 bg = 'transparent'
-                border = f'2px solid {stock_color}20'
-            return f'<td style="text-align:center;background:{bg};border:{border};padding:6px 12px;font-weight:500">{val}</td>'
+                outline = f'inset 0 0 0 2px {stock_color}20'
+            return f'<td style="text-align:center;background:{bg};box-shadow:{outline};padding:6px 12px;font-weight:500">{val}</td>'
 
         # Build the HTML table
         html_rows_meta = {r['Metric']: r for r in rows}
@@ -720,7 +712,7 @@ with tab_scatter:
     _JKSE_LOGO_BASE  = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos'
     _SP500_LOGO_BASE = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos'
 
-    @st.cache_data(show_spinner=False)
+    @st.cache_data(max_entries=512, show_spinner=False)
     def _load_logo_b64(stock: str, market: str) -> str | None:
         """Return a direct SVG URL for the stock's logo.
 
