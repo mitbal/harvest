@@ -16,6 +16,7 @@ from typing import Dict
 _DAGUERREO_DATA_BASE = 'https://cdn.jsdelivr.net/gh/mitbal/daguerreo-data@main'
 _DAG_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _dag_not_found_cache: set = set()
+_FMP_TIMEOUT = (10, 30)
 
 
 def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
@@ -56,7 +57,8 @@ def get_all_idx_stocks(api_key=None):
         raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}'
-    r = requests.get(url)
+    r = requests.get(url, timeout=_FMP_TIMEOUT)
+    r.raise_for_status()
     sl = r.json()
 
     sdf = pd.DataFrame(sl)
@@ -77,7 +79,8 @@ def get_all_sp500_stocks(api_key=None):
         raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/sp500_constituent?apikey={api_key}'
-    r = requests.get(url)
+    r = requests.get(url, timeout=_FMP_TIMEOUT)
+    r.raise_for_status()
     
     sp_df = pd.DataFrame(r.json())
     return sp_df
@@ -113,10 +116,59 @@ def get_daily_stock_price(stock, api_key=None, n_days=365, start_from=None):
     else:
         start_date = start_from
     url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{stock}?apikey={api_key}&from={start_date}'
-    r = requests.get(url)
+    r = requests.get(url, timeout=_FMP_TIMEOUT)
+    r.raise_for_status()
     intraday  = r.json()
-    
-    return pd.DataFrame(intraday['historical'])
+
+    return pd.DataFrame(intraday.get('historical', []))
+
+
+def get_daily_stock_history_yahoo(stock, start_from=None, end_at=None):
+    """Return daily prices and dividend actions from Yahoo Finance.
+
+    ``end_at`` is inclusive to match the date filtering used by the apps.
+    The returned columns use the FMP-style names expected by callers:
+    ``date``, ``close``, ``adjClose``, and ``dividend``.
+    """
+    import yfinance as yf
+
+    if start_from is None:
+        start_from = (
+            datetime.datetime.today() - datetime.timedelta(days=365)
+        ).strftime('%Y-%m-%d')
+
+    history_kwargs = {
+        'start': start_from,
+        'auto_adjust': False,
+        'actions': True,
+    }
+    if end_at is not None:
+        exclusive_end = pd.Timestamp(end_at) + pd.Timedelta(days=1)
+        history_kwargs['end'] = exclusive_end.strftime('%Y-%m-%d')
+
+    history = yf.Ticker(stock).history(**history_kwargs)
+    if history is None or history.empty:
+        return pd.DataFrame(columns=['date', 'close', 'adjClose', 'dividend'])
+
+    history = history.copy()
+    if isinstance(history.index, pd.DatetimeIndex) and history.index.tz is not None:
+        history.index = history.index.tz_localize(None)
+    history = history.reset_index()
+    date_column = 'Date' if 'Date' in history.columns else history.columns[0]
+    history = history.rename(columns={
+        date_column: 'date',
+        'Close': 'close',
+        'Adj Close': 'adjClose',
+        'Dividends': 'dividend',
+    })
+    if 'adjClose' not in history.columns and 'close' in history.columns:
+        history['adjClose'] = history['close']
+    if 'dividend' not in history.columns:
+        history['dividend'] = 0.0
+    required = ['date', 'close', 'adjClose', 'dividend']
+    if not {'date', 'close'}.issubset(history.columns):
+        return pd.DataFrame(columns=required)
+    return history.reindex(columns=required)
 
 
 def get_sector_industry_pe(date=None, api_key=None):
@@ -173,11 +225,12 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None):
 
     dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stock}?apikey={api_key}'
     try:
-        dr = requests.get(dividend_history_url)
+        dr = requests.get(dividend_history_url, timeout=_FMP_TIMEOUT)
         dr.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
         drj = dr.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching dividend history for {stock}: {e}")
+        status = e.response.status_code if e.response is not None else 'network error'
+        print(f"Error fetching dividend history for {stock}: HTTP {status}")
         return None
 
     if drj and 'historical' in drj:
@@ -628,7 +681,7 @@ def prep_div_cal(div_dict, cp, year=2025):
 
 
 def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 2], add_label=None, group_secs=True):
-
+    df = df.copy()
     if color_var is not None:
         if color_threshold is None:
             yields = df[color_var]
@@ -643,8 +696,31 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                                     labels=labels).astype(float)
 
         if group_secs:
-            sector_df = df.groupby('sector')[[size_var, 'color_grad']].sum()
-            industry_df = df.groupby(['sector', 'industry'])[[size_var, 'color_grad']].sum()
+            def aggregate_group(group):
+                values = pd.to_numeric(group[color_var], errors='coerce')
+                weights = pd.to_numeric(group[size_var], errors='coerce')
+                valid = values.notna() & weights.notna() & np.isfinite(values) & np.isfinite(weights)
+                values = values[valid]
+                weights = weights[valid]
+                if values.empty:
+                    weighted_color = np.nan
+                elif weights.sum() > 0:
+                    weighted_color = float(np.average(values, weights=weights))
+                else:
+                    weighted_color = float(values.mean())
+                return pd.Series({
+                    '_aggregate_size': float(weights.sum()),
+                    '_aggregate_color': weighted_color,
+                })
+
+            sector_df = df.groupby('sector').apply(aggregate_group, include_groups=False)
+            industry_df = df.groupby(['sector', 'industry']).apply(aggregate_group, include_groups=False)
+            sector_df['color_grad'] = pd.cut(
+                sector_df['_aggregate_color'], bins=bins, labels=labels
+            ).astype(float)
+            industry_df['color_grad'] = pd.cut(
+                industry_df['_aggregate_color'], bins=bins, labels=labels
+            ).astype(float)
     
     else:
         if group_secs:
@@ -715,9 +791,14 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                     'path': path
                 }]
 
-            value = [industry_df.loc[(sector, industry), size_var]]
             if color_var is not None:
-                value += [0, int(industry_df.loc[(sector, industry), 'color_grad'])]
+                value = [
+                    float(industry_df.loc[(sector, industry), '_aggregate_size']),
+                    float(industry_df.loc[(sector, industry), '_aggregate_color']),
+                    int(industry_df.loc[(sector, industry), 'color_grad']),
+                ]
+            else:
+                value = [industry_df.loc[(sector, industry), size_var]]
 
             path = sector+'/'+industry
             children += [{
@@ -727,9 +808,14 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
                 'children': gc
             }]
         
-        value = [sector_df.loc[sector, size_var]]
         if color_var is not None:
-            value += [0, int(sector_df.loc[sector, 'color_grad'])]
+            value = [
+                float(sector_df.loc[sector, '_aggregate_size']),
+                float(sector_df.loc[sector, '_aggregate_color']),
+                int(sector_df.loc[sector, 'color_grad']),
+            ]
+        else:
+            value = [sector_df.loc[sector, size_var]]
         tree_data += [{
             'value': value,
             'name': sector,
@@ -741,18 +827,29 @@ def prep_treemap(df, size_var='mktCap', color_var=None, color_threshold=[-2, 0, 
 
 
 def simulate_simple_compounding(initial_value, num_year, avg_yield):
-    
-    investments = [initial_value]
-    returns = []
-    for i in range(num_year):
-        returns += [int(investments[i] * avg_yield)]
-        investments += [investments[i] + returns[i]]
-    returns += [investments[-1] * avg_yield]
+    if num_year < 1:
+        raise ValueError('num_year must be at least 1')
+    if initial_value < 0:
+        raise ValueError('initial_value must be non-negative')
+    if avg_yield < 0:
+        raise ValueError('avg_yield must be non-negative')
 
-    return_df = pd.DataFrame({'investment': investments, 'returns': returns})[:num_year]
-    return_df['year'] = [f'Year {i+1:02d}' for i in range(len(return_df))]
+    balance = float(initial_value)
+    rows = []
+    for year in range(1, num_year + 1):
+        annual_return = int(balance * avg_yield)
+        balance += annual_return
+        rows.append({
+            'year': f'Year {year:02d}',
+            'holdings_value': balance,
+            'cash': 0.0,
+            'portfolio_value': balance,
+            'dividend_income': annual_return,
+            'investment': balance,
+            'returns': annual_return,
+        })
 
-    return return_df
+    return pd.DataFrame(rows)
 
 
 def simulate_dividend_compounding(
@@ -1155,11 +1252,18 @@ def calc_pre_ex_best_days(price_df, sdf, pre_ex_days=180, detail=False):
         return []
 
     pdf = price_df[['date', 'close']].copy()
-    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf['date'] = pd.to_datetime(pdf['date'], errors='coerce', format='mixed')
+    pdf['close'] = pd.to_numeric(pdf['close'], errors='coerce')
+    pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna(subset=['date', 'close'])
+    pdf = pdf[pdf['close'] > 0]
+    if pdf.empty:
+        return []
     pdf = pdf.sort_values('date').reset_index(drop=True)
 
     best_days = []
-    ex_dates = pd.to_datetime(sdf['date']).sort_values().unique()
+    ex_dates = pd.to_datetime(
+        sdf['date'], errors='coerce', format='mixed'
+    ).dropna().sort_values().unique()
 
     for ex_date in ex_dates:
         window_start = ex_date - datetime.timedelta(days=pre_ex_days)
@@ -1195,10 +1299,10 @@ def calc_post_ex_recovery_days(price_df, sdf, max_lookforward=365, detail=False)
     the ex-date the stock price first recovers to (or exceeds) the cum-date
     price (the close on the last trading day before the ex-date).
 
-    Events where the price **never recovers** within the lookforward window
-    are **right-censored**: they are included with ``days_after`` set to
-    ``max_lookforward`` and ``recovered`` set to ``False`` (in detail mode)
-    so they are reflected in the distribution.
+    Events where the price **never recovers** are **right-censored**: they are
+    included with ``days_after`` set to the number of calendar days actually
+    observed, capped by ``max_lookforward``, and ``recovered`` set to ``False``
+    in detail mode.
 
     Args:
         price_df (pd.DataFrame): Daily prices with ``date`` and ``close``.
@@ -1213,19 +1317,26 @@ def calc_post_ex_recovery_days(price_df, sdf, max_lookforward=365, detail=False)
     Returns:
         list[int] | list[dict]: One entry per dividend event — the number of
             calendar days after ex-date when the price first returned to the
-            cum-date price, or ``max_lookforward`` for right-censored events
-            that never recovered (in ``detail`` mode, a dict describing the
-            event with a ``recovered`` flag).
+            cum-date price, or observed follow-up time for right-censored
+            events that never recovered (in ``detail`` mode, a dict describing
+            the event with a ``recovered`` flag).
     """
     if price_df is None or price_df.empty or sdf is None or sdf.empty:
         return []
 
     pdf = price_df[['date', 'close']].copy()
-    pdf['date'] = pd.to_datetime(pdf['date'])
+    pdf['date'] = pd.to_datetime(pdf['date'], errors='coerce', format='mixed')
+    pdf['close'] = pd.to_numeric(pdf['close'], errors='coerce')
+    pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna(subset=['date', 'close'])
+    pdf = pdf[pdf['close'] > 0]
+    if pdf.empty:
+        return []
     pdf = pdf.sort_values('date').reset_index(drop=True)
 
     recovery_days = []
-    ex_dates = pd.to_datetime(sdf['date']).sort_values().unique()
+    ex_dates = pd.to_datetime(
+        sdf['date'], errors='coerce', format='mixed'
+    ).dropna().sort_values().unique()
 
     for ex_date in ex_dates:
         on_cum = pdf[pdf['date'] < ex_date]
@@ -1243,7 +1354,10 @@ def calc_post_ex_recovery_days(price_df, sdf, max_lookforward=365, detail=False)
         recovered = forward[forward['close'] >= cum_price]
 
         if recovered.empty:
-            # Right-censor: price never recovered within the lookforward window
+            # Right-censor at the end of the data actually observed. Recent
+            # events must not be represented as if 365 days had elapsed.
+            observation_end = min(pdf['date'].max(), window_end)
+            observed_days = max(0, int((observation_end - ex_date).days))
             if detail:
                 recovery_days.append({
                     'ex_date': pd.Timestamp(ex_date).strftime('%Y-%m-%d'),
@@ -1251,11 +1365,11 @@ def calc_post_ex_recovery_days(price_df, sdf, max_lookforward=365, detail=False)
                     'cum_price': float(cum_price),
                     'recover_date': None,
                     'recover_price': None,
-                    'days_after': max_lookforward,
+                    'days_after': observed_days,
                     'recovered': False,
                 })
             else:
-                recovery_days.append(max_lookforward)
+                recovery_days.append(observed_days)
         else:
             rec_row = recovered.iloc[0]
             days_after = int(rec_row['days_after'])
@@ -1288,7 +1402,9 @@ def calc_aggregate_seasonality(price_records):
     Returns:
         pd.DataFrame: columns ``month``, ``month_name``, ``mean``,
             ``median``, ``std``, ``q25``, ``q75`` — the pooled relative
-            price distribution for each calendar month across all stocks.
+            detrended price distribution for each calendar month across all
+            stocks. Only complete stock-years are used, and every stock has
+            equal weight regardless of history length.
             Returns an empty DataFrame if no usable data is found.
     """
     import calendar as _cal
@@ -1296,17 +1412,44 @@ def calc_aggregate_seasonality(price_records):
     all_monthly = []
     for rec in price_records:
         pdf = rec['price_df'][['date', 'close']].copy()
-        pdf['date'] = pd.to_datetime(pdf['date'])
+        pdf['date'] = pd.to_datetime(pdf['date'], errors='coerce')
+        pdf['close'] = pd.to_numeric(pdf['close'], errors='coerce')
+        pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna(subset=['date', 'close'])
+        pdf = pdf[pdf['close'] > 0]
         pdf = pdf.sort_values('date')
+        if pdf.empty:
+            continue
         pdf['year'] = pdf['date'].dt.year
         pdf['month'] = pdf['date'].dt.month
 
-        monthly = pdf.groupby(['year', 'month'])['close'].median().reset_index(name='monthly_price')
-        annual_mean = pdf.groupby('year')['close'].mean().reset_index(name='annual_mean')
-        monthly = monthly.merge(annual_mean, on='year')
-        monthly['rel_price'] = monthly['monthly_price'] / monthly['annual_mean'] * 100
-        monthly['symbol'] = rec['symbol']
-        all_monthly.append(monthly)
+        complete_years = pdf.groupby('year')['month'].nunique()
+        complete_years = complete_years[complete_years == 12].index
+        pdf = pdf[pdf['year'].isin(complete_years)]
+        if pdf.empty:
+            continue
+
+        detrended_years = []
+        for year, year_df in pdf.groupby('year'):
+            year_df = year_df.copy()
+            x = (year_df['date'] - year_df['date'].min()).dt.days.to_numpy(dtype=float)
+            if len(year_df) < 2 or np.ptp(x) == 0:
+                continue
+            log_close = np.log(year_df['close'].to_numpy(dtype=float))
+            slope, intercept = np.polyfit(x, log_close, 1)
+            year_df['rel_price'] = np.exp(log_close - (slope * x + intercept)) * 100
+            detrended_years.append(
+                year_df.groupby('month', as_index=False)['rel_price'].median()
+            )
+
+        if not detrended_years:
+            continue
+        symbol_monthly = (
+            pd.concat(detrended_years, ignore_index=True)
+            .groupby('month', as_index=False)['rel_price']
+            .median()
+        )
+        symbol_monthly['symbol'] = rec['symbol']
+        all_monthly.append(symbol_monthly)
 
     if not all_monthly:
         return pd.DataFrame()
