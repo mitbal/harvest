@@ -1,8 +1,8 @@
 import os
 import io
 import json
-import time
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 
 import redis
@@ -17,9 +17,8 @@ import harvest.data as hd
 from harvest.utils import setup_logging
 
 
-st.title('📡 Market Watch')
-st.set_page_config(page_title='Market Watch - Panen Dividen')
-st.caption('Daily price return heatmap — browse any trading day to see who moved and by how much.')
+st.title('Market Heatmap')
+st.caption('Explore daily market performance by company. Tile size and color follow the selected measures.')
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
@@ -57,6 +56,42 @@ logger = get_logger('market_watch')
 
 # ── Load stock universe (sector / industry / mcap metadata) ──────────────── #
 
+def parse_live_profile_item(item: dict) -> dict | None:
+    """Normalize one FMP profile quote without letting a bad row abort its chunk."""
+    try:
+        price = item.get('price')
+        changes = item.get('changes')
+        changes_pct = item.get('changesPercentage')
+        symbol = item.get('symbol')
+        if price is None or symbol is None:
+            return None
+
+        price = float(price)
+        if changes is not None:
+            prev_close = price - float(changes)
+            ret = (
+                float(changes_pct)
+                if changes_pct is not None
+                else (price / prev_close - 1) * 100 if prev_close else np.nan
+            )
+        elif changes_pct is not None:
+            ret = float(changes_pct)
+            denominator = 1 + ret / 100
+            prev_close = price / denominator if denominator else np.nan
+        else:
+            return None
+
+        if not np.isfinite([price, prev_close, ret]).all():
+            return None
+        return {
+            'symbol': symbol,
+            'close': price,
+            'prev_close': prev_close,
+            'return_1d_pct': ret,
+        }
+    except (TypeError, ValueError, OverflowError):
+        return None
+
 @st.cache_data(max_entries=32, ttl=60 * 5, show_spinner='Fetching live price changes from FMP…')
 def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
     """
@@ -70,11 +105,11 @@ def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
     """
     import requests as _req
 
-    chunk_size = 50   # FMP accepts up to ~50 tickers per request
-    rows = []
+    chunk_size = 50
+    chunks = [list(symbols[i:i + chunk_size]) for i in range(0, len(symbols), chunk_size)]
 
-    for i in range(0, len(symbols), chunk_size):
-        chunk = list(symbols[i: i + chunk_size])
+    def fetch_chunk(chunk):
+        rows = []
         param = ','.join(chunk)
         url = (
             f'https://financialmodelingprep.com/api/v3/profile/{param}'
@@ -86,29 +121,18 @@ def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
             data = resp.json()
             if isinstance(data, list):
                 for item in data:
-                    price    = item.get('price')
-                    changes  = item.get('changes')
-                    changes_pct = item.get('changesPercentage')
-                    sym      = item.get('symbol')
-                    if price is None or sym is None:
-                        continue
-                    # Derive prev_close; fall back to computing from price + changes
-                    if changes_pct is not None and price is not None:
-                        ret = float(changes_pct)
-                    elif changes is not None and price is not None:
-                        prev = float(price) - float(changes)
-                        ret  = (float(changes) / prev * 100) if prev else 0.0
-                    else:
-                        continue
-                    prev_close = float(price) - float(changes or 0)
-                    rows.append({
-                        'symbol':        sym,
-                        'close':         float(price),
-                        'prev_close':    prev_close,
-                        'return_1d_pct': ret,
-                    })
+                    parsed = parse_live_profile_item(item)
+                    if parsed is not None:
+                        rows.append(parsed)
         except Exception as e:
             logger.warning(f'Could not fetch company profile chunk: {e}')
+        return rows
+
+    rows = []
+    with ThreadPoolExecutor(max_workers=min(4, len(chunks) or 1)) as executor:
+        futures = [executor.submit(fetch_chunk, chunk) for chunk in chunks]
+        for future in as_completed(futures):
+            rows.extend(future.result())
 
     if not rows:
         return pd.DataFrame(columns=['close', 'prev_close', 'return_1d_pct'])
@@ -234,8 +258,13 @@ _INDEX_FLAGS = {
 }
 
 
-@st.cache_data(max_entries=16, ttl=60 * 60 * 4, show_spinner='Fetching index prices…')
-def get_index_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
+@st.cache_data(max_entries=32, ttl=60 * 60 * 4, show_spinner='Fetching index prices…')
+def get_index_prices(
+    fmp_key: str,
+    date_from: str,
+    date_to: str,
+    symbols: tuple | None = None,
+) -> pd.DataFrame:
     """
     Fetches daily close prices for all tracked indices from FMP.
     Returns a long-format DataFrame: [date, index, close].
@@ -243,7 +272,9 @@ def get_index_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame
     import requests as _req
 
     all_rows = []
-    for sym, label in _INDEX_SYMBOLS.items():
+    selected_symbols = tuple(_INDEX_SYMBOLS) if symbols is None else symbols
+    for sym in selected_symbols:
+        label = _INDEX_SYMBOLS[sym]
         try:
             url = (
                 f'https://financialmodelingprep.com/api/v3/historical-price-full/{sym}'
@@ -294,8 +325,13 @@ _FX_COLORS  = {sym: v[2] for sym, v in _FX_SYMBOLS.items()}
 _FX_LABEL_TO_SYM = {v[0]: sym for sym, v in _FX_SYMBOLS.items()}
 
 
-@st.cache_data(max_entries=16, ttl=60 * 60 * 4, show_spinner='Fetching currency rates…')
-def get_fx_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
+@st.cache_data(max_entries=32, ttl=60 * 60 * 4, show_spinner='Fetching currency rates…')
+def get_fx_prices(
+    fmp_key: str,
+    date_from: str,
+    date_to: str,
+    symbols: tuple | None = None,
+) -> pd.DataFrame:
     """
     Fetches daily close rates for all tracked FX pairs (vs IDR) from FMP.
     Returns a long-format DataFrame: [date, pair, close].
@@ -303,7 +339,9 @@ def get_fx_prices(fmp_key: str, date_from: str, date_to: str) -> pd.DataFrame:
     import requests as _req
 
     all_rows = []
-    for sym, (label, _flag, _color) in _FX_SYMBOLS.items():
+    selected_symbols = tuple(_FX_SYMBOLS) if symbols is None else symbols
+    for sym in selected_symbols:
+        label, _flag, _color = _FX_SYMBOLS[sym]
         try:
             url = (
                 f'https://financialmodelingprep.com/api/v3/historical-price-full/{sym}'
@@ -359,9 +397,73 @@ def calc_daily_return_for_date(prices_df: pd.DataFrame, target_date: pd.Timestam
         .rename(columns={'close': 'prev_close'})
     )
 
-    merged = today_df.join(prev_df, how='inner')
-    merged['return_1d_pct'] = (merged['close'] / merged['prev_close'] - 1) * 100
+    merged = today_df.join(prev_df, how='left')
+    valid_previous = merged['prev_close'].notna() & merged['prev_close'].ne(0)
+    merged['return_1d_pct'] = np.where(
+        valid_previous,
+        (merged['close'] / merged['prev_close'] - 1) * 100,
+        np.nan,
+    )
     return merged
+
+
+def select_top_movers(df: pd.DataFrame, limit: int = 20) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return strictly positive gainers and strictly negative losers."""
+    valid = df.dropna(subset=['return_1d_pct'])
+    gainers = valid[valid['return_1d_pct'] > 0].nlargest(limit, 'return_1d_pct')
+    losers = valid[valid['return_1d_pct'] < 0].nsmallest(limit, 'return_1d_pct')
+    return gainers, losers
+
+
+_RETURN_THRESHOLDS = {
+    '1D':  [-10, -5, -2, -0.5, 0.5, 2, 5, 10],
+    '7D':  [-15, -10, -5, -2, 2, 5, 10, 15],
+    '1M':  [-25, -15, -10, -5, 5, 10, 15, 25],
+    '1Y':  [-50, -25, -10, -5, 5, 10, 25, 50],
+    '10Y': [-100, -50, -25, -10, 10, 25, 50, 100],
+}
+
+
+def get_return_color_threshold(label: str) -> list[float] | None:
+    """Resolve a horizon-aware scale for price and total-return variants."""
+    normalized = label.removeprefix('Total ').replace(' USD', '')
+    period = normalized.split()[0] if normalized else ''
+    return _RETURN_THRESHOLDS.get(period)
+
+
+def normalize_on_shared_date(
+    prices: pd.DataFrame,
+    group_col: str,
+) -> tuple[pd.DataFrame, pd.Timestamp | None]:
+    """Rebase all selected series to 100 on their earliest shared valid date."""
+    if prices.empty or group_col not in prices.columns:
+        return pd.DataFrame(columns=list(prices.columns) + ['normalized']), None
+
+    aligned = prices.copy()
+    aligned['close'] = pd.to_numeric(aligned['close'], errors='coerce')
+    aligned = aligned[
+        aligned['close'].notna()
+        & np.isfinite(aligned['close'])
+        & aligned['close'].ne(0)
+    ].drop_duplicates([group_col, 'date'], keep='last')
+    if aligned.empty:
+        return aligned.assign(normalized=pd.Series(dtype=float)), None
+
+    group_count = aligned[group_col].nunique()
+    shared_dates = (
+        aligned.groupby('date')[group_col]
+        .nunique()
+        .loc[lambda counts: counts == group_count]
+        .index
+    )
+    if shared_dates.empty:
+        return aligned.iloc[0:0].assign(normalized=pd.Series(dtype=float)), None
+
+    shared_start = pd.Timestamp(min(shared_dates))
+    aligned = aligned[aligned['date'] >= shared_start].copy()
+    baselines = aligned[aligned['date'] == shared_start].set_index(group_col)['close']
+    aligned['normalized'] = aligned['close'] / aligned[group_col].map(baselines) * 100
+    return aligned.sort_values([group_col, 'date']), shared_start
 
 
 def build_tree_input(
@@ -419,14 +521,27 @@ def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> 
         )
         resp = _req.get(url, timeout=15)
         resp.raise_for_status()
-        hist = resp.json().get('historical', [])  # newest-first
+        hist = resp.json().get('historical', [])
         if len(hist) < 2:
             return None
-        usdidr_end   = float(hist[0]['close'])   # most recent (period end)
-        usdidr_start = float(hist[-1]['close'])  # oldest available (period start)
+        history = pd.DataFrame(hist)
+        history['date'] = pd.to_datetime(history['date'], errors='coerce')
+        history['close'] = pd.to_numeric(history['close'], errors='coerce')
+        history = history.dropna(subset=['date', 'close']).sort_values('date')
+        requested_end = pd.Timestamp(date_to_str)
+        end_rows = history[history['date'] <= requested_end]
+        if end_rows.empty:
+            return None
+        actual_end = end_rows.iloc[-1]
+        desired_start = actual_end['date'] - pd.Timedelta(days=n_days)
+        start_rows = history[history['date'] <= desired_start]
+        if start_rows.empty:
+            return None
+        usdidr_end = float(actual_end['close'])
+        usdidr_start = float(start_rows.iloc[-1]['close'])
         if usdidr_end == 0:
             return None
-        return usdidr_start / usdidr_end   # > 1 means IDR strengthened
+        return usdidr_start / usdidr_end
     except Exception as e:
         logger.warning(f'Could not fetch USDIDR for {n_days}D window: {e}')
         return None
@@ -444,7 +559,7 @@ def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> 
 
 _qp = st.query_params
 
-# ── Sidebar — market selector ─────────────────────────────────────────────── #
+# ── Primary controls ──────────────────────────────────────────────────────── #
 
 _MARKET_OPTIONS = ['Indonesian Stock (JKSE)', 'S&P 500 (US)']
 _market_qp      = _qp.get('market', '')
@@ -453,23 +568,43 @@ _market_default = (
     else 'Indonesian Stock (JKSE)'
 )
 
-stock_select = st.sidebar.radio(
+today = date.today()
+default_date = today if today.weekday() < 5 else today - timedelta(days=today.weekday() - 4)
+
+
+def _show_latest_date():
+    st.session_state['mw_date'] = default_date
+
+
+def _reset_heatmap_filters():
+    market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    st.session_state['mw_date'] = default_date
+    st.session_state['mw_size'] = 'Market Cap'
+    st.session_state['mw_color'] = '1D Return %'
+    st.session_state['mw_sector'] = 'ALL'
+    st.session_state['mw_group'] = True
+    st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
+
+
+def _market_changed():
+    market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    st.session_state['mw_color'] = '1D Return %'
+    st.session_state['mw_sector'] = 'ALL'
+    st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
+
+
+primary_cols = st.columns(2)
+stock_select = primary_cols[0].selectbox(
     'Market',
     _MARKET_OPTIONS,
     index=_MARKET_OPTIONS.index(_market_default),
-    horizontal=False,
     key='mw_sl',
+    on_change=_market_changed,
 )
 
 sl = 'JKSE' if stock_select == 'Indonesian Stock (JKSE)' else 'SP500'
 redis_key = 'div_score_jkse' if sl == 'JKSE' else 'div_score_sp500'
 
-
-# ── Date picker ───────────────────────────────────────────────────────────── #
-
-today = date.today()
-# Default to most recent weekday
-default_date = today if today.weekday() < 5 else today - timedelta(days=today.weekday() - 4)
 
 # Parse date from URL param if present
 _date_qp = _qp.get('date', '')
@@ -480,10 +615,8 @@ try:
 except (ValueError, TypeError):
     pass
 
-ctrl_cols = st.columns([2, 2, 2, 2, 2, 1])
-
-selected_date = ctrl_cols[0].date_input(
-    '📅 Select Date',
+selected_date = primary_cols[1].date_input(
+    'Trading date',
     value=default_date,
     max_value=today,
     min_value=date(2015, 1, 1),
@@ -524,8 +657,9 @@ _size_default_idx = (
     if _size_qp in _SIZE_OPTIONS else 0
 )
 
-size_var = ctrl_cols[1].selectbox(
-    'Size by',
+heatmap_cols = st.columns(2)
+size_var = heatmap_cols[0].selectbox(
+    'Tile size',
     options=_SIZE_OPTIONS,
     index=_size_default_idx,
     key='mw_size',
@@ -578,8 +712,8 @@ _color_default_idx = (
     if _color_qp in _available_color_opts else 0
 )
 
-color_var_label = ctrl_cols[2].selectbox(
-    'Color by',
+color_var_label = heatmap_cols[1].selectbox(
+    'Tile color',
     options=_available_color_opts,
     index=_color_default_idx,
     key='mw_color',
@@ -589,17 +723,8 @@ _sector_options = ['ALL'] + sorted(universe_df['sector'].dropna().unique().tolis
 _sector_qp      = _qp.get('sector', 'ALL')
 _sector_default = _sector_qp if _sector_qp in _sector_options else 'ALL'
 
-sector_filter = ctrl_cols[3].selectbox(
-    'Sector',
-    options=_sector_options,
-    index=_sector_options.index(_sector_default),
-    key='mw_sector',
-)
-
 _group_qp  = _qp.get('group', '1')
 _group_default = _group_qp != '0'
-
-group_secs = ctrl_cols[4].toggle('Group by Sector', value=_group_default, key='mw_group')
 
 _mcap_default = 1 if sl == 'SP500' else 10
 try:
@@ -609,15 +734,35 @@ try:
 except (ValueError, TypeError):
     pass
 
-min_mcap_b = ctrl_cols[5].number_input(
-    'Min MCap (B)',
-    min_value=0,
-    max_value=1_000,
-    value=_mcap_default,
-    step=1,
-    key='mw_mcap',
-    help='Minimum market cap in Billions to include in the treemap'
-)
+with st.expander('More heatmap filters', expanded=False):
+    filter_cols = st.columns(3)
+    sector_filter = filter_cols[0].selectbox(
+        'Sector',
+        options=_sector_options,
+        index=_sector_options.index(_sector_default),
+        format_func=lambda value: 'All sectors' if value == 'ALL' else value,
+        key='mw_sector',
+    )
+    group_secs = filter_cols[1].toggle(
+        'Group companies by sector', value=_group_default, key='mw_group'
+    )
+    market_cap_currency = 'IDR' if sl == 'JKSE' else 'USD'
+    min_mcap_b = filter_cols[2].number_input(
+        'Minimum market cap (billions)',
+        min_value=0,
+        max_value=1_000,
+        value=_mcap_default,
+        step=1,
+        key='mw_mcap',
+        help=f'Exclude companies below this market cap in {market_cap_currency} billions.',
+    )
+    action_cols = st.columns([1, 1, 3])
+    action_cols[0].button(
+        'Latest data', on_click=_show_latest_date, use_container_width=True
+    )
+    action_cols[1].button(
+        'Reset filters', on_click=_reset_heatmap_filters, use_container_width=True
+    )
 
 # ── Sync widget state → URL query params ──────────────────────────────────── #
 _qp['market']  = sl
@@ -642,7 +787,8 @@ symbols_tuple = tuple(sorted(filtered_uni.index.tolist()))
 
 # ── Fetch prices for target date + a few days back ────────────────────────── #
 
-date_to_str   = selected_date.strftime('%Y-%m-%d')
+selected_date_str = selected_date.strftime('%Y-%m-%d')
+date_to_str   = selected_date_str
 date_from_str = (selected_date - timedelta(days=14)).strftime('%Y-%m-%d')
 
 with st.spinner(f'Fetching price data for {date_to_str}…'):
@@ -658,71 +804,84 @@ returns_df = calc_daily_return_for_date(prices_df, target_ts)
 #   3. Most recent available Supabase date  (e.g. yesterday, for weekends / holidays)
 
 _effective_date = selected_date
-_using_live_profile = False   # flag: returns_df came from FMP company profile
+_data_source = 'Supabase historical prices'
+_as_of_label = selected_date_str
 
-if returns_df.empty:
-    # ── Try FMP live profile first for recent dates ─────────────────────── #
-    if selected_date >= (date.today() - timedelta(days=3)):
+
+def _has_reported_returns(frame):
+    return not frame.empty and frame['return_1d_pct'].notna().any()
+
+if not _has_reported_returns(returns_df):
+    # Live profiles represent the latest quote and must never stand in for a
+    # historical date such as yesterday or a recent market holiday.
+    if selected_date == date.today():
         with st.spinner('Fetching live price data from FMP…'):
             live_returns = get_live_returns_from_profile(symbols_tuple)
-        if not live_returns.empty:
+        if _has_reported_returns(live_returns):
             returns_df = live_returns
-            _using_live_profile = True
+            _data_source = 'FMP live/latest company profiles'
+            _as_of_label = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')
             st.info(
-                f'Supabase has no price data for **{date_to_str}** yet. '
-                'Showing **live / latest** price changes from FMP company profiles instead.',
+                f'Historical prices are not available for **{selected_date_str}** yet. '
+                f'Showing **live/latest** profile changes as of **{_as_of_label}**.',
                 icon='📡'
             )
 
-    # ── If live profile also failed, fall back to most recent Supabase date ─ #
-    if returns_df.empty and not prices_df.empty:
-        available_dates = prices_df['date'].unique()
-        if len(available_dates) > 0:
-            latest_available = pd.Timestamp(max(available_dates)).date()
-            if latest_available != selected_date:
+    # Try available historical dates newest-first until one has a usable
+    # predecessor. The latest row alone may be incomplete during ingestion.
+    if not _has_reported_returns(returns_df) and not prices_df.empty:
+        available_dates = sorted(prices_df['date'].dropna().unique(), reverse=True)
+        for available_date in available_dates:
+            candidate_date = pd.Timestamp(available_date).date()
+            if candidate_date > selected_date:
+                continue
+            candidate_returns = calc_daily_return_for_date(
+                prices_df, pd.Timestamp(candidate_date)
+            )
+            if _has_reported_returns(candidate_returns):
+                returns_df = candidate_returns
+                _effective_date = candidate_date
+                target_ts = pd.Timestamp(candidate_date)
+                date_to_str = candidate_date.strftime('%Y-%m-%d')
+                _as_of_label = date_to_str
                 st.info(
-                    f'No price data available for **{date_to_str}** '
-                    f'(weekend, holiday, or data not yet loaded). '
-                    f'Showing data for the most recent available date: **{latest_available}**.',
+                    f'No complete session was available for **{selected_date_str}**. '
+                    f'Showing the most recent usable trading date: **{date_to_str}**.',
                     icon='ℹ️'
                 )
-                _effective_date = latest_available
-                target_ts = pd.Timestamp(latest_available)
-                date_to_str = latest_available.strftime('%Y-%m-%d')
-                returns_df = calc_daily_return_for_date(prices_df, target_ts)
+                break
 
 # ── KPI row ───────────────────────────────────────────────────────────────── #
 
-if returns_df.empty:
+if not _has_reported_returns(returns_df):
     st.warning(
-        f'No price data found for **{date_to_str}**. '
-        'This might be a weekend, public holiday, or data for this date is not yet available.',
+        f'No usable price changes were found for **{selected_date_str}**. '
+        'Try Latest data, another trading date, or a broader filter.',
         icon='⚠️'
     )
 else:
-    n_gainers  = int((returns_df['return_1d_pct'] > 0).sum())
-    n_losers   = int((returns_df['return_1d_pct'] < 0).sum())
-    n_flat     = int((returns_df['return_1d_pct'] == 0).sum())
-    avg_return = float(returns_df['return_1d_pct'].mean())
-    med_return = float(returns_df['return_1d_pct'].median())
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric('📅 Date',           date_to_str)
-    k2.metric('📈 Gainers',        f'{n_gainers}',
-              delta=f'+{n_gainers}', delta_color='normal')
-    k3.metric('📉 Losers',         f'{n_losers}',
-              delta=f'-{n_losers}', delta_color='inverse')
-    k4.metric('↔️ Flat',            f'{n_flat}')
-    k5.metric('📊 Avg Daily Return', f'{avg_return:+.2f}%',
-              delta=f'Median {med_return:+.2f}%',
-              delta_color='normal' if med_return >= 0 else 'inverse')
+    valid_returns = returns_df['return_1d_pct'].dropna()
+    n_reporting = int(valid_returns.size)
+    n_unavailable = max(len(symbols_tuple) - n_reporting, 0)
+    coverage_pct = n_reporting / len(symbols_tuple) * 100 if symbols_tuple else 0
+    n_gainers = int((valid_returns > 0).sum())
+    n_losers = int((valid_returns < 0).sum())
+    n_flat = int((valid_returns == 0).sum())
+    avg_return = float(valid_returns.mean())
+    med_return = float(valid_returns.median())
+    breadth_pct = n_gainers / n_reporting * 100 if n_reporting else 0
 
     # ── Merge returns into universe ───────────────────────────────────────── #
 
     df_tree = filtered_uni.copy()
     _ret_cols = [c for c in ['return_1d_pct'] if c in returns_df.columns]
     df_tree = df_tree.join(returns_df[_ret_cols], how='left')
-    df_tree['return_1d_pct'] = df_tree['return_1d_pct'].fillna(0)
+
+    if selected_date != date.today() and color_var_label != '1D Return %':
+        st.caption(
+            f'{color_var_label} uses the latest universe snapshot; only 1D Return % '
+            f'is calculated for the effective trading date {date_to_str}.'
+        )
 
     # ── If a USD return variant is requested, fetch the period FX factor ───── #
     _fx_factor = None
@@ -790,7 +949,7 @@ else:
     }
     if color_var_label in _return_labels:
         color_map = 'red_green'
-        color_threshold = [-10, -5, -2, -0.5, 0.5, 2, 5, 10]
+        color_threshold = get_return_color_threshold(color_var_label)
     elif color_var_label == 'PE Ratio':
         color_map = 'red_shade'
         color_threshold = [-100, 0, 5, 15]
@@ -824,9 +983,21 @@ else:
         group_secs=group_secs,
     )
 
-    click_event_js = "function(params){if(!params.data.children){return params.name;} return null;}"
+    st.caption('Click a stock tile to open its full analysis in Dividend Ranking.')
 
-    clicked_item = st_echarts(
+    target_market = 'JKSE' if sl == 'JKSE' else 'S&P500'
+    click_event_js = (
+        "function(params){"
+        "if(params.data.children){return null;}"
+        "var symbol=String(params.name).split('\\n')[0];"
+        "var origin=document.referrer?new URL(document.referrer).origin:window.location.origin;"
+        f"var url=origin+'/stock_picker?market={target_market}&stock='+encodeURIComponent(symbol);"
+        "window.open(url,'_blank','noopener,noreferrer');"
+        "return null;"
+        "}"
+    )
+
+    st_echarts(
         option,
         events={'click': click_event_js},
         height='860px',
@@ -834,25 +1005,34 @@ else:
         key='mw_treemap',
     )
 
-    # ── Tooltip on click: show return details ─────────────────────────────── #
+    if color_threshold:
+        st.caption(
+            f'Color scale for {color_var_label}: lower values use red tones, '
+            f'higher values use green tones. Breakpoints: '
+            f'{", ".join(f"{value:g}" for value in color_threshold)}.'
+        )
 
-    if clicked_item:
-        sym = clicked_item.split()[0]
-        if sym in returns_df.index:
-            row = returns_df.loc[sym]
-            ret = row['return_1d_pct']
-            close = row['close']
-            prev  = row['prev_close']
-            color = '🟢' if ret > 0 else ('🔴' if ret < 0 else '⚪')
-            st.info(
-                f"{color} **{sym}** — Close: **{close:,.2f}**  |  Prev Close: **{prev:,.2f}**  |  "
-                f"1D Return: **{ret:+.2f}%**",
-                icon='ℹ️'
-            )
+    snapshot_cols = st.columns(4)
+    snapshot_cols[0].metric(
+        'Market breadth',
+        f'{breadth_pct:.0f}% gainers',
+        delta=f'{n_gainers} up / {n_losers} down / {n_flat} unchanged',
+    )
+    snapshot_cols[1].metric('Median return', f'{med_return:+.2f}%')
+    snapshot_cols[2].metric('Equal-weight return', f'{avg_return:+.2f}%')
+    snapshot_cols[3].metric(
+        'Data coverage',
+        f'{coverage_pct:.0f}%',
+        delta=f'{n_reporting} reporting · {n_unavailable} unavailable',
+        delta_color='off',
+    )
+    st.caption(
+        f'Effective trading date: {date_to_str} · Source: {_data_source} · As of: {_as_of_label}'
+    )
 
     # ── Distribution chart ────────────────────────────────────────────────── #
 
-    with st.expander('📊 Return Distribution', expanded=True):
+    with st.expander('Return distribution', expanded=False):
         import altair as alt
 
         dist_df = returns_df.reset_index(names='stock')[['return_1d_pct']].dropna()
@@ -871,6 +1051,7 @@ else:
                 p98 = float(dist_df['return'].max()) + 0.01
 
             clipped = dist_df[(dist_df['return'] >= p2) & (dist_df['return'] <= p98)]['return']
+            excluded_count = len(dist_df) - len(clipped)
 
             import numpy as np
 
@@ -893,42 +1074,50 @@ else:
                 .encode(
                     x=alt.X('return:Q', title='1D Return (%)',
                             scale=alt.Scale(domain=[p2, p98])),
-                    y=alt.Y('count:Q', title='# Stocks'),
+                    y=alt.Y('count:Q', title='Number of stocks'),
                     color=alt.Color('color:N', scale=None, legend=None),
                     tooltip=[
                         alt.Tooltip('return:Q', title='Return (%)', format='.2f'),
-                        alt.Tooltip('count:Q',  title='# Stocks'),
+                        alt.Tooltip('count:Q',  title='Number of stocks'),
                     ],
                 )
                 .properties(height=260)
             )
 
             st.altair_chart((hist + zero_line), width='stretch')
+            if excluded_count:
+                st.caption(
+                    f'{excluded_count} extreme observation(s) outside the 2nd–98th '
+                    'percentile range are excluded from this histogram only.'
+                )
 
     # ── Top gainers / losers table ────────────────────────────────────────── #
 
-    with st.expander('🏆 Top Gainers & Losers', expanded=True):
+    with st.expander('Top gainers and losers', expanded=False):
         merged_tbl = filtered_uni[['sector', 'industry', 'mktCap_B']].join(
             returns_df[['close', 'prev_close', 'return_1d_pct']], how='inner'
         ).dropna(subset=['return_1d_pct'])
 
         col_g, col_l = st.columns(2)
 
-        top_gainers = merged_tbl.nlargest(20, 'return_1d_pct').reset_index(names='stock')
-        top_losers  = merged_tbl.nsmallest(20, 'return_1d_pct').reset_index(names='stock')
+        top_gainers, top_losers = select_top_movers(merged_tbl)
+        top_gainers = top_gainers.reset_index(names='stock')
+        top_losers = top_losers.reset_index(names='stock')
 
         cfig_g = {
             'stock': st.column_config.TextColumn('Stock'),
             'sector': st.column_config.TextColumn('Sector'),
             'close': st.column_config.NumberColumn('Close', format='%,.2f'),
-            'prev_close': st.column_config.NumberColumn('Prev Close', format='%,.2f'),
+            'prev_close': st.column_config.NumberColumn('Previous close', format='%,.2f'),
             'return_1d_pct': st.column_config.NumberColumn('1D Return %', format='%+.2f%%'),
-            'mktCap_B': st.column_config.NumberColumn('MCap (B)', format='%,.1f'),
+            'mktCap_B': st.column_config.NumberColumn(
+                f'Market cap ({market_cap_currency} bn)', format='%,.1f'
+            ),
             'industry': None,
         }
 
         with col_g:
-            st.markdown('#### 🟢 Top 20 Gainers')
+            st.markdown(f'#### Gainers ({len(top_gainers)})')
             st.dataframe(
                 top_gainers[['stock', 'sector', 'close', 'prev_close', 'return_1d_pct', 'mktCap_B']],
                 column_config=cfig_g,
@@ -936,12 +1125,28 @@ else:
             )
 
         with col_l:
-            st.markdown('#### 🔴 Top 20 Losers')
+            st.markdown(f'#### Losers ({len(top_losers)})')
             st.dataframe(
                 top_losers[['stock', 'sector', 'close', 'prev_close', 'return_1d_pct', 'mktCap_B']],
                 column_config=cfig_g,
                 hide_index=True,
             )
+
+    load_macro_context = st.toggle(
+        'Load global index and currency analysis',
+        value=False,
+        key='mw_load_macro',
+        help=(
+            'These comparisons use additional external requests. Keep this off '
+            'when you only need the stock heatmap.'
+        ),
+    )
+    if not load_macro_context:
+        st.caption(
+            'Global indices and currency pairs are loaded on demand to keep the '
+            'primary heatmap responsive.'
+        )
+        st.stop()
 
     # ── Global Index Comparison ───────────────────────────────────────────── #
 
@@ -973,21 +1178,26 @@ else:
         visible_indices = st.multiselect(
             'Show indices',
             options=list(_INDEX_SYMBOLS.values()),
-            default=list(_INDEX_SYMBOLS.values()),
+            default=['IHSG', 'S&P 500', 'Nikkei 225'],
             key='mw_idx_visible',
         )
 
     # Compute date range for index fetch
     idx_to   = _effective_date
     if period_label == 'YTD':
-        idx_from = date(selected_date.year, 1, 1)
+        idx_from = date(idx_to.year, 1, 1)
     else:
         idx_from = idx_to - timedelta(days=_PERIOD_OPTIONS[period_label])
 
     idx_from_str = idx_from.strftime('%Y-%m-%d')
     idx_to_str   = idx_to.strftime('%Y-%m-%d')
 
-    idx_prices_df = get_index_prices(api_key, idx_from_str, idx_to_str)
+    selected_index_symbols = tuple(
+        symbol for symbol, label in _INDEX_SYMBOLS.items() if label in visible_indices
+    )
+    idx_prices_df = get_index_prices(
+        api_key, idx_from_str, idx_to_str, selected_index_symbols
+    )
 
     with idx_col1:
         if idx_prices_df.empty:
@@ -1001,12 +1211,15 @@ else:
             else:
                 import altair as alt
 
-                # Normalize each index to 100 at its first available date
-                _idx_sorted = idx_prices_df.sort_values(['index', 'date'])
-                _idx_sorted['normalized'] = _idx_sorted.groupby('index')['close'].transform(
-                    lambda g: g / g.iloc[0] * 100 if g.iloc[0] and g.iloc[0] != 0 else g
+                norm_df, idx_shared_start = normalize_on_shared_date(
+                    idx_prices_df, group_col='index'
                 )
-                norm_df = _idx_sorted
+                idx_prices_df = norm_df
+                if idx_shared_start is not None:
+                    st.caption(
+                        f'All selected indices are rebased from their first shared '
+                        f'trading date: {idx_shared_start.date()}.'
+                    )
 
                 # Colour scale
                 domain_idx    = list(_INDEX_COLORS.keys())
@@ -1077,13 +1290,14 @@ else:
         # Fetch a 1-week window around selected_date to compute the 1D return
         all_idx_full = get_index_prices(
             api_key,
-            (selected_date - timedelta(days=7)).strftime('%Y-%m-%d'),
+            (idx_to - timedelta(days=7)).strftime('%Y-%m-%d'),
             idx_to_str,
+            selected_index_symbols,
         )
 
         if not all_idx_full.empty:
             all_idx_full   = all_idx_full[all_idx_full['index'].isin(visible_indices)]
-            target_ts_idx  = pd.Timestamp(selected_date)
+            target_ts_idx  = pd.Timestamp(idx_to)
 
             # Also compute period return from the already-fetched norm_df
             # norm_df is in scope from the block above (inside idx_col1 `with`).
@@ -1167,21 +1381,26 @@ else:
         visible_pairs = st.multiselect(
             'Show pairs',
             options=all_fx_labels,
-            default=all_fx_labels,
+            default=['USD/IDR', 'EUR/IDR', 'SGD/IDR'],
             key='mw_fx_visible',
         )
 
     # Compute date range for FX fetch
     fx_to = _effective_date
     if fx_period_label == 'YTD':
-        fx_from = date(selected_date.year, 1, 1)
+        fx_from = date(fx_to.year, 1, 1)
     else:
         fx_from = fx_to - timedelta(days=_PERIOD_OPTIONS[fx_period_label])
 
     fx_from_str = fx_from.strftime('%Y-%m-%d')
     fx_to_str   = fx_to.strftime('%Y-%m-%d')
 
-    fx_prices_df = get_fx_prices(api_key, fx_from_str, fx_to_str)
+    selected_fx_symbols = tuple(
+        symbol for symbol, label in _FX_LABELS.items() if label in visible_pairs
+    )
+    fx_prices_df = get_fx_prices(
+        api_key, fx_from_str, fx_to_str, selected_fx_symbols
+    )
 
     with fx_col1:
         if fx_prices_df.empty:
@@ -1194,12 +1413,14 @@ else:
             else:
                 import altair as alt
 
-                # Normalize each pair to 100 at its first available date
-                _fx_sorted = fx_filtered.sort_values(['pair', 'date'])
-                _fx_sorted['normalized'] = _fx_sorted.groupby('pair')['close'].transform(
-                    lambda g: g / g.iloc[0] * 100 if g.iloc[0] and g.iloc[0] != 0 else g
+                fx_norm_df, fx_shared_start = normalize_on_shared_date(
+                    fx_filtered, group_col='pair'
                 )
-                fx_norm_df = _fx_sorted
+                if fx_shared_start is not None:
+                    st.caption(
+                        f'All selected pairs are rebased from their first shared '
+                        f'trading date: {fx_shared_start.date()}.'
+                    )
 
                 # Build color scale from label → color
                 fx_domain = [v[0] for v in _FX_SYMBOLS.values()]
@@ -1245,13 +1466,14 @@ else:
         # Fetch a short window around selected_date for 1D return calculation
         fx_full = get_fx_prices(
             api_key,
-            (selected_date - timedelta(days=7)).strftime('%Y-%m-%d'),
+            (fx_to - timedelta(days=7)).strftime('%Y-%m-%d'),
             fx_to_str,
+            selected_fx_symbols,
         )
 
         if not fx_full.empty:
             fx_full = fx_full[fx_full['pair'].isin(visible_pairs)]
-            target_ts_fx = pd.Timestamp(selected_date)
+            target_ts_fx = pd.Timestamp(fx_to)
 
             def _fx_period_return(g):
                 g = g.sort_values('date')
@@ -1310,5 +1532,3 @@ else:
                         delta_color=d_color,
                         help=f'IDR per 1 unit of foreign currency — period return over **{fx_period_label}** | 1-day return on {date_to_str}',
                     )
-
-
