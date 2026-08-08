@@ -1,10 +1,11 @@
 import os
 import io
 import json
+import html
 import time
-import psutil
 import logging
 import concurrent.futures
+from urllib.parse import quote
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import redis
@@ -20,14 +21,20 @@ import harvest.data as hd
 from harvest.utils import setup_logging
 
 
+st.set_page_config(page_title='Dividend Ranking - Panen Dividen', layout='wide')
 st.title('Dividend Ranking')
-st.set_page_config(page_title='Dividend Ranking - Panen Dividen')
 
-api_key = os.environ['FMP_API_KEY']
-redis_url = os.environ['REDIS_URL']
+api_key = os.getenv('FMP_API_KEY')
+redis_url = os.getenv('REDIS_URL')
+missing_config = [name for name, value in {'FMP_API_KEY': api_key, 'REDIS_URL': redis_url}.items() if not value]
+if missing_config:
+    st.error(f"Missing required configuration: {', '.join(missing_config)}.")
+    st.stop()
 
 # Constants for Dividend Score (DScore) calculation
 PROJECTION_HORIZON_YRS = 5   # Number of forecast years for dividend extrapolation
+MIN_VALUATION_OBSERVATIONS = 30
+MIN_SECTOR_PEERS = 3
 ### Start of Function definition
 
 
@@ -289,8 +296,12 @@ def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json
 
     # 5. Sector & Industry Rating
     sector    = stock_data['sector']
-    sector_df = ranking_df[ranking_df['sector'] == sector]
-    if len(sector_df) > 1:
+    sector_df = ranking_df[
+        (ranking_df['sector'] == sector)
+        & np.isfinite(pd.to_numeric(ranking_df['peRatio'], errors='coerce'))
+        & (ranking_df['peRatio'] > 0)
+    ]
+    if len(sector_df) >= MIN_SECTOR_PEERS:
         sector_pos_mask = sector_df['peRatio'] > 0
         sector_scores   = pd.Series(0.0, index=sector_df.index)
         if sector_pos_mask.any():
@@ -306,10 +317,10 @@ def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json
             else:
                 sector_score = 0
     else:
-        sector_score = 50  # Default middle if no sector peers
+        sector_score = np.nan
 
     # 6. Overall Rating
-    overall_score = np.mean([val_score, div_score, growth_score, profit_score, sector_score])
+    overall_score = np.nanmean([val_score, div_score, growth_score, profit_score, sector_score])
 
     return {
         'overall': overall_score,
@@ -326,6 +337,7 @@ def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json
             'net_growth': stock_data['netIncomeGrowth'],
             'margin':     stock_data['medianProfitMargin'],
             'sector':     sector,
+            'sector_peer_count': len(sector_df),
         }
     }
 
@@ -357,6 +369,8 @@ def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=N
     )
 
 def get_rating_color(score):
+    if score is None or not np.isfinite(score):
+        return '#616161'
     if score >= 80:
         return '#1b5e20' # Dark Green
     elif score >= 60:
@@ -377,7 +391,8 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=N
         color = get_rating_color(score)
         
     st.markdown(f"### {title}")
-    st.markdown(f"## <span style='color:{color}'>{score:.0f}/100</span>", unsafe_allow_html=True)
+    score_label = f'{score:.0f}/100' if np.isfinite(score) else 'N/A'
+    st.markdown(f"## <span style='color:{color}'>{score_label}</span>", unsafe_allow_html=True)
     
     for label, value in metrics_dict.items():
         if isinstance(value, float):
@@ -418,7 +433,10 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
         # st.write("Based on average of 5 sub-ratings")
         
         categories = ['Valuation', 'Dividend', 'Growth', 'Profitability', 'Sector']
-        data = [ratings['valuation'], ratings['dividend'], ratings['growth'], ratings['profitability'], ratings['sector']]
+        data = [
+            value if np.isfinite(value) else None
+            for value in [ratings['valuation'], ratings['dividend'], ratings['growth'], ratings['profitability'], ratings['sector']]
+        ]
         radar_option = hp.plot_radar_chart(categories, data, color=color)
         st_echarts(radar_option, height='250px')
         
@@ -449,15 +467,24 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
     
     with r2c1.container(border=True, height=card_height):
         color = get_rating_color(ratings['sector'])
-        sector_df = filtered_df[filtered_df['sector'] == metrics['sector']]
-        if len(sector_df) > 5:
+        sector_df = filtered_df[
+            (filtered_df['sector'] == metrics['sector'])
+            & (filtered_df['peRatio'] > 0)
+        ]
+        if len(sector_df) >= MIN_SECTOR_PEERS:
             dist_chart = hp.plot_card_distribution(sector_df, 'peRatio', metrics['pe'], color=color)
         else:
             dist_chart = None
+
+        sector_assessment = (
+            'Better than {:.0f}% of peers'.format(ratings['sector'])
+            if np.isfinite(ratings['sector'])
+            else f"Insufficient evidence ({metrics['sector_peer_count']} valid peers)"
+        )
             
         render_rating_card('Sector Rating', ratings['sector'], {
             'Sector': metrics['sector'],
-            'In Sector Rank': 'Better than {:.0f}% of peers'.format(ratings['sector'])
+            'In Sector Rank': sector_assessment,
         }, chart=dist_chart, color=color, key=f"chart_sect_{stock_name}")
         
     with r2c2.container(border=True, height=card_height):
@@ -482,12 +509,16 @@ def render_company_profile(cp_df, stock_name, sl):
     _JKSE_LOGO_BASE  = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos'
     _SP500_LOGO_BASE = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos'
 
-    ticker = stock_name.split('.')[0]
+    ticker = quote(stock_name.split('.')[0], safe='')
     logo_url = f'{_JKSE_LOGO_BASE}/{ticker}.svg' if sl == 'JKSE' else f'{_SP500_LOGO_BASE}/{ticker}.svg'
 
     col_logo, col_text = st.columns([1, 3])
     with col_logo:
-        st.markdown(f'<img src="{logo_url}" style="width:100%;max-width:120px;object-fit:contain;"/>', unsafe_allow_html=True)
+        alt_text = html.escape(f'{stock_name} company logo', quote=True)
+        st.markdown(
+            f'<img src="{logo_url}" alt="{alt_text}" style="width:100%;max-width:120px;object-fit:contain;"/>',
+            unsafe_allow_html=True,
+        )
     with col_text:
         st.write(cp_df.loc[stock_name, 'description'])
     
@@ -787,12 +818,12 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
 
     candlestick_chart = hp.plot_candlestick(
         plot_df,
-        width=1000,
+        width=900,
         height=320,
         ma_windows=ma_windows if ma_windows else None,
         show_rsi=show_rsi,
     )
-    st.altair_chart(candlestick_chart, width='content')
+    st.altair_chart(candlestick_chart, width='stretch')
 
     # ── MA legend caption ──────────────────────────────────────────────── #
     if ma_windows:
@@ -832,46 +863,42 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     fin_json_val   = fin.to_json()
 
     if val_metric == 'Price-to-Earnings (P/E) Ratio':
-        ratio = 'P/E'; pratio = 'peRatio'
+        ratio = 'P/E'
         pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'pe', fin_currency, target_currency)
     else:
-        ratio = 'P/S'; pratio = 'psRatio'
+        ratio = 'P/S'
         pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'ps', fin_currency, target_currency)
 
-    pe_df['date'] = pd.to_datetime(pe_df['date'])
-        
-    if stock_name in filtered_df.index:
-        stock_data = filtered_df.loc[stock_name]
-        sector_name = stock_data['sector']
-        industry_name = stock_data['industry']
-        sector_df = filtered_df[filtered_df['sector'] == sector_name]
-        sector_pe = (sector_df['mktCap'] * sector_df[pratio]).sum() / sector_df['mktCap'].sum()
-        industry_df = filtered_df[filtered_df['industry'] == industry_name]
-        industry_pe = (industry_df['mktCap'] * industry_df[pratio]).sum() / industry_df['mktCap'].sum()
-    else:
-        # For stocks not in table, we can't easily calculate sector average from filtered_df 
-        # unless it belongs to one of the sectors in filtered_df
-        stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
-        sector_name = stock_data['sector']
-        industry_name = stock_data['industry']
-        
-        sector_df = filtered_df[filtered_df['sector'] == sector_name]
-        if not sector_df.empty:
-            sector_pe = (sector_df['mktCap'] * sector_df[pratio]).sum() / sector_df['mktCap'].sum()
-        else:
-            sector_pe = -1
-            
-        industry_df = filtered_df[filtered_df['industry'] == industry_name]
-        if not industry_df.empty:
-            industry_pe = (industry_df['mktCap'] * industry_df[pratio]).sum() / industry_df['mktCap'].sum()
-        else:
-            industry_pe = -1
+    pe_df['date'] = pd.to_datetime(pe_df['date'], errors='coerce')
 
-    # ── Clean the ratio series (drop inf/NaN for stats) ─────────────────── #
-    valid_pe = pe_df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna()
+    # Non-positive multiples are not economically comparable and must not
+    # influence historical ranges or valuation labels.
+    pe_df['pe'] = pd.to_numeric(pe_df['pe'], errors='coerce')
+    valid_mask = pe_df['date'].notna() & np.isfinite(pe_df['pe']) & (pe_df['pe'] > 0)
+    pe_df = pe_df.loc[valid_mask].sort_values('date').copy()
+    valid_pe = pe_df['pe']
 
-    pe_ttm        = float(valid_pe.iloc[-1]) if len(valid_pe) else float('nan')
-    current_price = float(price_df['close'].values[0])
+    if len(valid_pe) < MIN_VALUATION_OBSERVATIONS:
+        st.warning(
+            f'Insufficient evidence for {ratio} valuation: {len(valid_pe)} valid observations '
+            f'(minimum {MIN_VALUATION_OBSERVATIONS}).'
+        )
+        return
+
+    price_history = price_df[['date', 'close']].copy()
+    price_history['date'] = pd.to_datetime(price_history['date'], errors='coerce')
+    price_history['close'] = pd.to_numeric(price_history['close'], errors='coerce')
+    price_history = price_history[
+        price_history['date'].notna()
+        & np.isfinite(price_history['close'])
+        & (price_history['close'] > 0)
+    ].sort_values('date')
+    if price_history.empty:
+        st.warning('Current price is unavailable, so fair-value estimates cannot be calculated.')
+        return
+
+    pe_ttm        = float(valid_pe.iloc[-1])
+    current_price = float(price_history['close'].iloc[-1])
     median_pe     = float(valid_pe.median())
     ci            = valid_pe.quantile([.05, .10, .90, .95]).values   # p5, p10, p90, p95
     percentile    = float((valid_pe < pe_ttm).mean() * 100)          # % of days cheaper than today
@@ -880,21 +907,20 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     fair_price_p10 = (ci[1]    / pe_ttm) * current_price if pe_ttm > 0 else current_price
     fair_price_p90 = (ci[2]    / pe_ttm) * current_price if pe_ttm > 0 else current_price
     upside_pct     = (fair_price / current_price - 1) * 100
-    highlight_color = 'green' if pe_ttm <= median_pe else 'red'
-
     fair_threshold = valid_pe.quantile([.45, .55]).values
     if pe_ttm >= fair_threshold[0] and pe_ttm <= fair_threshold[1]:
-        assessment  = '**Fair Valued**'
-        badge_emoji = '⚖️'
+        assessment = 'Fairly valued relative to its history'
     elif pe_ttm < fair_threshold[0]:
-        assessment  = '**:green[Undervalued]** — trading below historical average multiple'
-        badge_emoji = '🟢'
+        assessment = 'Below its historical valuation range'
     else:
-        assessment  = '**:red[Overvalued]** — trading above historical average multiple'
-        badge_emoji = '🔴'
+        assessment = 'Above its historical valuation range'
 
     # ── Hero KPI row ─────────────────────────────────────────────────────── #
-    st.markdown(f"### {badge_emoji} Valuation Assessment: {assessment}")
+    st.markdown(f"### Valuation assessment: {assessment}")
+    st.caption(
+        f'Based on {len(valid_pe):,} positive {ratio} observations over the selected {year}-year period. '
+        'This historical comparison is not an investment recommendation.'
+    )
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric(f'Current {ratio}', f'{pe_ttm:,.2f}',
               delta=f'{pe_ttm - median_pe:+.2f} vs median',
@@ -1148,7 +1174,11 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             chart = (band + best_bar + line + ref).properties(height=280)
             st.altair_chart(chart, width='stretch')
 
-            st.success(f'🏆 **Best month to buy**: **{best_month}** — avg {best_val:.1f}% of annual price')
+            years_observed = pd.to_datetime(price_df['date'], errors='coerce').dt.year.nunique()
+            st.info(
+                f'**Historically lowest-priced month:** {best_month} — average {best_val:.1f}% '
+                f'of the annual price across {years_observed} years. Seasonality may not persist.'
+            )
         else:
             st.info('Insufficient price history for monthly seasonality (need ≥ 2 years).')
 
@@ -1206,12 +1236,15 @@ def render_best_buy_timing(price_df, sdf, stock_name):
                 dip_day = int(best_dip['days_to_ex'])
                 dip_val = best_dip['mean']
                 msg = (
-                    f'🎯 **Best buy window**: ~**{abs(dip_day)} days before** ex-date '
-                    f'(avg {100 - dip_val:.1f}% cheaper than ex-date price)'
+                    f'**Lowest observed pre-ex point:** about **{abs(dip_day)} days before** ex-date '
+                    f'(average {100 - dip_val:.1f}% below the ex-date price)'
                 )
                 if ex_drop_stats:
-                    msg += f"  |  📉 **Median Ex-Date Drop**: **{ex_drop_stats['median']:.1f}%**"
-                st.success(msg)
+                    msg += (
+                        f". Median ex-date move: **{ex_drop_stats['median']:.1f}%** "
+                        f"across {ex_drop_stats['count']} events."
+                    )
+                st.info(msg + ' Historical patterns are descriptive, not a recommendation.')
         else:
             st.info('No dividend history available to compute ex-date trajectory.')
 
@@ -1463,35 +1496,47 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     with st.expander('Company Profile', expanded=False):    
         render_company_profile(cp_df, stock_name, sl)
     
-    currency = cp_df.loc[stock_name, 'currency']
+    currency = (
+        cp_df.loc[stock_name, 'currency']
+        if stock_name in cp_df.index and 'currency' in cp_df.columns
+        else ('IDR' if sl == 'JKSE' else 'USD')
+    )
 
-    add_anchor('dividend')
-    with st.expander(f'Dividend History: {stock_name}', expanded=True):
+    section = st.selectbox(
+        'Research section',
+        options=[
+            'Dividends',
+            'Financials',
+            'Valuation',
+            'Price and technicals',
+            'Buy timing',
+            'Compounding simulation',
+        ],
+        key=f'research_section_{stock_name}',
+        help='Choose one analysis at a time. Your selection is preserved while viewing this stock.',
+    )
+
+    if section == 'Dividends':
+        st.subheader(f'Dividend history: {stock_name}')
         render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
-
-    add_anchor('best-time')
-    with st.expander(f'Best Time to Buy: {stock_name}', expanded=True):
-        render_best_buy_timing(price_df, sdf, stock_name)
-        
-    add_anchor('financial')
-    with st.expander(f'Financial Information: {stock_name}', expanded=True):
+    elif section == 'Financials':
+        st.subheader(f'Financial information: {stock_name}')
         render_financial_info(fin, currency, stock_name, filtered_df)
-        
-    add_anchor('price-movement')
-    with st.expander(f'Price Movement: {stock_name}', expanded=True):
+    elif section == 'Valuation':
+        st.subheader(f'Valuation analysis: {stock_name}')
+        render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
+        st.divider()
+        st.subheader(f'Dividend discount model: {stock_name}')
+        render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
+    elif section == 'Price and technicals':
+        st.subheader(f'Price movement: {stock_name}')
         _stock_row = filtered_df.loc[stock_name] if stock_name in filtered_df.index else None
         render_price_movement(price_df, stock_name=stock_name, stock_row=_stock_row)
-        
-    add_anchor('valuation')
-    with st.expander(f'Valuation Analysis: {stock_name}', expanded=True):
-        render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
-
-    add_anchor('ddm')
-    with st.expander(f'Dividend Discount Model Valuation: {stock_name}', expanded=True):
-        render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
-
-    add_anchor('simulation')
-    with st.expander(f'Compounding Simulation: {stock_name}', expanded=True):
+    elif section == 'Buy timing':
+        st.subheader(f'Historical buy timing: {stock_name}')
+        render_best_buy_timing(price_df, sdf, stock_name)
+    else:
+        st.subheader(f'Compounding simulation: {stock_name}')
         render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df, currency=currency)
 
 
@@ -1528,7 +1573,7 @@ else:
 
 final_df = get_div_score_table(key)
 if sl != 'JKSE':
-    final_df = final_df.drop('GOOGL')
+    final_df = final_df.drop('GOOGL', errors='ignore')
 
 # ---------------------------------------------------------------------------
 # Column pruning — keep only columns actually used in the page
@@ -1549,13 +1594,28 @@ _KEEP_COLS = [
     # Syariah flag (JKSE only)
     'is_syariah',
 ]
+
+_TABLE_PRESETS = {
+    'Essentials': [
+        'Rank', 'sector', 'industry', 'price', 'yield', 'DScore', 'numDividendYear',
+        'peRatio', 'medianProfitMargin', 'total_return_1y',
+    ],
+    'Dividend income': [
+        'Rank', 'price', 'yield', 'lastDiv', 'avgFlatAnnualDivIncrease',
+        'numDividendYear', 'positiveYear', 'max10CutPct', 'DScore',
+    ],
+    'Fundamentals': [
+        'Rank', 'price', 'mktCapDisplay', 'peRatio', 'psRatio',
+        'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin',
+        'earningTTMDisplay', 'revenueTTMDisplay',
+    ],
+    'Returns and risk': [
+        'Rank', 'price', 'beta', 'return_7d', 'return_1m', 'return_1y',
+        'total_return_1y', 'return_10y', 'total_return_10y',
+    ],
+}
 _keep = [c for c in _KEEP_COLS if c in final_df.columns]
 final_df = final_df[_keep]
-
-# Show total app RAM in the sidebar
-_rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
-st.sidebar.caption(f'RAM: {_rss_mb:.0f} MB')
-
 
 # ---------------------------------------------------------------------------
 # Cached compute pipeline — only re-runs when final_df changes
@@ -1837,7 +1897,21 @@ with full_table_section:
 
         }
 
-        event = st.dataframe(display_df, selection_mode=['single-row'], on_select='rerun', column_config=cfig)
+        table_preset = st.segmented_control(
+            'Table view',
+            options=list(_TABLE_PRESETS),
+            default='Essentials',
+            help='Switch between focused column sets. Ranking and row selection remain unchanged.',
+        )
+        column_order = [column for column in _TABLE_PRESETS[table_preset] if column in display_df.columns]
+        event = st.dataframe(
+            display_df,
+            selection_mode=['single-row'],
+            on_select='rerun',
+            column_config=cfig,
+            column_order=column_order,
+            width='stretch',
+        )
 
 
 
@@ -1863,10 +1937,11 @@ if sl == 'JKSE':
         default_idx = None
 
     select_stock = st.selectbox(
-        label='Click the checkbox on the leftside of the table above or select a stock from the list to get detailed information',
+        label='Selected stock',
         options=stock_options,
         index=default_idx,
-        placeholder="Type or select a stock..."
+        placeholder='Select a row above or search by ticker...',
+        help='Selecting a table row updates this field automatically.',
     )
 
     if select_stock:
@@ -1875,8 +1950,10 @@ if sl == 'JKSE':
         st.stop()
 else:
     select_stock = st.text_input(
-        label='Click the checkbox on the leftside of the table above or type the name of the stock to get detailed information',
-        value=stock_name
+        label='Selected stock',
+        value=stock_name or '',
+        placeholder='Enter a ticker, for example AAPL or D05.SI',
+        help='Selecting a table row updates this field automatically.',
     )
 
     if select_stock:
@@ -1884,19 +1961,16 @@ else:
     else:
         st.stop()
 
-progress_bar = st.progress(0, text='Downloading stock data... Please wait')
 try:
-    fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name, sl)
+    with st.spinner(f'Loading data for {stock_name}...'):
+        fin, cp_df, price_df, sdf, n_share = get_specific_stock_detail(stock_name, sl)
 except Exception as e:
-    logger.error(f'Error in downloading data for {stock_name}: {e}')
+    logger.exception(f'Error downloading data for {stock_name}')
     st.error(
-        f'Cannot find the stock {stock_name}. Please check the name again and dont forget to add exchange code at the end. '
-        'For example .JK for Indonesian stock, .SI for Singaporean stock, .T for Japanese Stock, etc.',
-        icon='🚨'
+        f'Could not load {stock_name}. Check the ticker and exchange suffix, then try again. '
+        'Examples: BBCA.JK, D05.SI, or 7203.T.'
     )
-    progress_bar.empty()
     st.stop()
-progress_bar.empty()
 
 # ── Per-stock SEO: dynamic title, meta, and JSON-LD ─────────────────────── #
 _company_name = stock_name  # fallback
@@ -1913,29 +1987,34 @@ if cp_df is not None and not cp_df.empty and stock_name in cp_df.index:
         f'Temukan potensi dividen di Panen Dividen.'
     )
 
-_stock_ticker = stock_name.replace('.JK', '').replace('.', '_')
+_seo_title = f'{_company_name} ({stock_name}) - Analisis Saham | Panen Dividen'
+_seo_url = f"https://panendividen.com/stock_picker?stock={quote(stock_name, safe='')}"
+_schema = json.dumps({
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    'name': f'{_company_name} ({stock_name}) - Analisis Saham',
+    'description': _description_text,
+    'url': _seo_url,
+    'isPartOf': {
+        '@type': 'WebSite',
+        'name': 'Panen Dividen',
+        'url': 'https://panendividen.com',
+    },
+}, ensure_ascii=True).replace('</', '<\\/')
+_seo_title_html = html.escape(_seo_title, quote=True)
+_seo_description_html = html.escape(_description_text, quote=True)
+_seo_url_html = html.escape(_seo_url, quote=True)
 st.html(f"""
-<title>{_company_name} ({stock_name}) - Analisis Saham | Panen Dividen</title>
-<meta name="description" content="{_description_text}">
-<meta property="og:title" content="{_company_name} ({stock_name}) - Analisis Saham | Panen Dividen">
-<meta property="og:description" content="{_description_text}">
-<meta property="og:url" content="https://panendividen.com/stock_picker?stock={stock_name}">
+<title>{_seo_title_html}</title>
+<meta name="description" content="{_seo_description_html}">
+<meta property="og:title" content="{_seo_title_html}">
+<meta property="og:description" content="{_seo_description_html}">
+<meta property="og:url" content="{_seo_url_html}">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="{_company_name} ({stock_name}) | Panen Dividen">
-<meta name="twitter:description" content="{_description_text}">
+<meta name="twitter:title" content="{_seo_title_html}">
+<meta name="twitter:description" content="{_seo_description_html}">
 <script type="application/ld+json">
-{{
-  "@context": "https://schema.org",
-  "@type": "WebPage",
-  "name": "{_company_name} ({stock_name}) - Analisis Saham",
-  "description": "{_description_text}",
-  "url": "https://panendividen.com/stock_picker?stock={stock_name}",
-  "isPartOf": {{
-    "@type": "WebSite",
-    "name": "Panen Dividen",
-    "url": "https://panendividen.com"
-  }}
-}}
+{_schema}
 </script>
 """)
 # ── End SEO ──────────────────────────────────────────────────────────────── #
@@ -1945,10 +2024,15 @@ default_dashboard = False
 if 'overview' in st.query_params and st.query_params['overview'].lower() == 'true':
     default_dashboard = True
 
-stock_view_mode = st.toggle("Dashboard View", value=default_dashboard)
-mode = "Dashboard" if stock_view_mode else "Classic"
+default_view = 'Score overview' if default_dashboard else 'Research'
+mode = st.segmented_control(
+    'Analysis view',
+    options=['Research', 'Score overview'],
+    default=default_view,
+    help='Research shows one detailed analysis at a time. Score overview summarizes relative rankings.',
+)
 
-if mode == "Classic":
-    render_classic_view(stock_name, final_df, fin, cp_df, price_df, sdf, n_share, sl)
+if mode == 'Research':
+    render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl)
 else:
     render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df)
