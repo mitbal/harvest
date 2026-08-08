@@ -887,21 +887,22 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
         series = base_series
 
 
-    title = f'{{boldText|{color_var}}} of Biggest stock for each sector based on {{boldText|{size_var}}}'
+    title = f'{color_var} by {size_var}'
     option = {
+        'aria': {
+            'enabled': True,
+            'decal': {'show': True},
+            'description': (
+                f'Stock market treemap. Tile size represents {size_var}; '
+                f'tile color represents {color_var}.'
+            ),
+        },
         'title': {
         'text': title,
-        'left': 'center',
+        'left': 12,
         'textStyle': {
-            'color': '#333',
-            'fontSize': 20,
-            'rich': {
-                'boldText': {
-                    'fontWeight': 'bold',
-                    'fontSize': 24,
-                    'color': 'green'
-                }
-            }
+            'fontSize': 17,
+            'fontWeight': 600,
         }
     },
         'grid': {
@@ -973,13 +974,45 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
     return option
 
 
-def plot_card_distribution(df, column, current_val=None, color='green', height=180, show_axis=False, comparison_vals=None, x_range=None, fill_opacity=0.3, show_median=False):
+def plot_card_distribution(
+    df,
+    column,
+    current_val=None,
+    color='green',
+    height=180,
+    show_axis=False,
+    comparison_vals=None,
+    comparison_colors=None,
+    x_range=None,
+    fill_opacity=0.3,
+    show_median=False,
+):
+    """Plot a finite distribution with optional, caller-colored comparisons."""
+    if column not in df.columns:
+        valid_df = pd.DataFrame(columns=[column])
+    else:
+        valid_df = df[[column]].copy()
+        valid_df[column] = pd.to_numeric(valid_df[column], errors='coerce')
+        valid_df = valid_df.replace([np.inf, -np.inf], np.nan).dropna()
 
-    # Handle outliers for better visualization: remove top and bottom 5%
-    # This ensures the distribution isn't squashed by extreme values
-    q95 = df[column].quantile(0.95)
-    q05 = df[column].quantile(0.05)
-    plot_df = df[(df[column] <= q95) & (df[column] >= q05)]
+    if valid_df.empty:
+        return alt.Chart(pd.DataFrame({'message': ['No valid data']})).mark_text(
+            color='#6b7280', fontSize=13
+        ).encode(text='message:N').properties(height=height)
+
+    q05 = float(valid_df[column].quantile(0.05))
+    q95 = float(valid_df[column].quantile(0.95))
+    range_min, range_max = x_range if x_range is not None else (q05, q95)
+    if not np.isfinite(range_min) or not np.isfinite(range_max):
+        range_min, range_max = q05, q95
+    if range_min > range_max:
+        range_min, range_max = range_max, range_min
+
+    plot_df = valid_df[
+        (valid_df[column] >= range_min) & (valid_df[column] <= range_max)
+    ]
+    if plot_df.empty:
+        plot_df = valid_df
     
     if color.startswith('#'):
         line_color = color
@@ -988,8 +1021,8 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         line_color = f'dark{color}'
         fill_color_hex = f'dark{color}'
 
-    if x_range:
-        x_scale = alt.Scale(domain=list(x_range), clamp=True)
+    if range_min < range_max:
+        x_scale = alt.Scale(domain=[range_min, range_max], clamp=True)
     else:
         x_scale = alt.Undefined
 
@@ -1038,8 +1071,8 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
     layers = [kde]
 
     if show_median:
-        median_val = df[column].median()
-        mean_val = df[column].mean()
+        median_val = valid_df[column].median()
+        mean_val = valid_df[column].mean()
         
         median_df = pd.DataFrame({column: [median_val], 'label': ['Median']})
         mean_df = pd.DataFrame({column: [mean_val], 'label': ['Mean']})
@@ -1074,10 +1107,8 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
 
         layers.extend([median_rule, mean_rule, median_text, mean_text])
 
-    if current_val is not None:
-        # We create a dataframe for the rule. 
-        # If the current value is outside the plot range, we clip it to the edge so the user sees it's extreme
-        display_val = max(min(current_val, q95), q05)
+    if current_val is not None and np.isfinite(current_val):
+        display_val = max(min(current_val, range_max), range_min)
         
         rule = alt.Chart(pd.DataFrame({column: [display_val]})).mark_rule(color=color, strokeWidth=3).encode(
             x=column
@@ -1086,26 +1117,26 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         )
         layers.append(rule)
 
-    if comparison_vals is not None:
-        # Distinct color palette for comparison stocks
-        _PALETTE = [
-            '#e41a1c', '#377eb8', '#ff7f00', '#984ea3',
-            '#a65628', '#f781bf', '#4daf4a', '#999999',
-        ]
-
-        # comparison_vals is a dict of {label: value}
+    if comparison_vals:
+        comparison_colors = comparison_colors or {}
         comp_data = []
-        # Sort by value to handle proximity in sequence
-        sorted_comp = sorted(comparison_vals.items(), key=lambda x: x[1])
+        sorted_comp = sorted(
+            (
+                (label, float(value))
+                for label, value in comparison_vals.items()
+                if value is not None and np.isfinite(value)
+            ),
+            key=lambda item: item[1],
+        )
 
         last_val = -float('inf')
         current_level = 0
         # Determine a proximity threshold based on the displayed range
         # If values are within 8% of the range, we stagger them
-        threshold = (q95 - q05) * 0.08 if q95 > q05 else 1.0
+        threshold = (range_max - range_min) * 0.08 if range_max > range_min else 1.0
 
         for i, (label, val) in enumerate(sorted_comp):
-            display_val = max(min(val, q95), q05)
+            display_val = max(min(val, range_max), range_min)
 
             if display_val - last_val < threshold:
                 current_level = (current_level + 1) % 4  # Cycle through 4 vertical levels
@@ -1113,8 +1144,18 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
                 current_level = 0
 
             y_pos = 10 + (current_level * 20)  # 20px spacing between levels
-            stock_color = _PALETTE[i % len(_PALETTE)]
-            comp_data.append({column: display_val, 'label': label, 'y_pos': y_pos, 'color': stock_color})
+            stock_color = comparison_colors.get(label, color)
+            outlier = 'Below displayed p5-p95 range' if val < range_min else (
+                'Above displayed p5-p95 range' if val > range_max else 'Within displayed range'
+            )
+            comp_data.append({
+                column: display_val,
+                'actual_value': val,
+                'label': label,
+                'y_pos': y_pos,
+                'color': stock_color,
+                'range_status': outlier,
+            })
             last_val = display_val
 
         comp_df = pd.DataFrame(comp_data)
@@ -1123,12 +1164,22 @@ def plot_card_distribution(df, column, current_val=None, color='green', height=1
         # Note: use iterrows() instead of itertuples() because column names that are
         # Python reserved keywords (e.g. 'yield') get silently renamed by itertuples().
         for _, row in comp_df.iterrows():
-            row_df = pd.DataFrame([{column: row[column], 'label': row['label'], 'y_pos': row['y_pos']}])
+            row_df = pd.DataFrame([{
+                column: row[column],
+                'actual_value': row['actual_value'],
+                'label': row['label'],
+                'y_pos': row['y_pos'],
+                'range_status': row['range_status'],
+            }])
             rule = alt.Chart(row_df).mark_rule(
                 color=row.color, strokeWidth=2
             ).encode(
                 x=alt.X(f'{column}:Q'),
-                tooltip=[alt.Tooltip('label:N'), alt.Tooltip(f'{column}:Q', format='.2f')]
+                tooltip=[
+                    alt.Tooltip('label:N', title='Stock'),
+                    alt.Tooltip('actual_value:Q', title='Value', format='.2f'),
+                    alt.Tooltip('range_status:N', title='Range'),
+                ]
             )
             text = alt.Chart(row_df).mark_text(
                 align='left',
