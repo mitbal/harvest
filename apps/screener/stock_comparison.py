@@ -1,40 +1,96 @@
 import io
-import os
-import time
+import json
 import logging
 import mimetypes
+import os
+from typing import NamedTuple
 
-# Streamlit's Tornado static server uses mimetypes.guess_type() at request time.
-# Register SVG so logos are served as image/svg+xml (not text/plain).
-mimetypes.add_type('image/svg+xml', '.svg')
-
-import redis
+import altair as alt
 import numpy as np
 import pandas as pd
-import altair as alt
+import redis
 import streamlit as st
-from datetime import datetime
 
-import harvest.plot as hp
 import harvest.data as hd
+import harvest.plot as hp
 from harvest.utils import setup_logging
 
 
-st.title('Stock Comparison ⚖️')
-st.set_page_config(page_title='Stock Comparison - Panen Dividen')
+mimetypes.add_type('image/svg+xml', '.svg')
 
-# ── Constants ────────────────────────────────────────────────────────────────
-PROJECTION_HORIZON_YRS = 5
+st.title('Stock Comparison')
+st.caption(
+    'Compare 2-5 stocks across income, valuation, quality, growth, returns, and risk. '
+    'Unavailable or financially invalid values are excluded rather than treated as zero.'
+)
 
-# Colour palette for up to 10 selected stocks
-_STOCK_PALETTE = [
-    '#e41a1c', '#377eb8', '#ff7f00', '#984ea3',
-    '#4daf4a', '#a65628', '#f781bf', '#999999',
-    '#17becf', '#bcbd22',
-]
+MAX_STOCKS = 5
+_STOCK_PALETTE = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00']
+_VIEW_LABELS = {'table': 'Table', 'dist': 'Distribution', 'scatter': 'Scatter'}
+_VIEW_KEYS = {label: key for key, label in _VIEW_LABELS.items()}
+_MARKET_QP_MAP = {'jkse': 'Indonesian Stock', 'sp500': 'S&P 500 (US and World Stock)'}
+_MARKET_QP_REV = {value: key for key, value in _MARKET_QP_MAP.items()}
 
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+class MetricSpec(NamedTuple):
+    source: str
+    group: str
+    format: str
+    unit: str
+    description: str
+    direction: str
+    validity: str = 'finite'
+
+
+METRIC_OPTIONS = {
+    'Dividend Yield (%)': MetricSpec('yield', 'Dividend', '{:.2f}%', '%', 'Latest annual dividend yield.', 'higher_better', 'nonnegative'),
+    'Last Dividend': MetricSpec('lastDiv', 'Dividend', '{:,.2f}', 'currency/share', 'Latest annual dividend per share. Compare dividend yield instead when share prices differ.', 'neutral', 'nonnegative'),
+    'Div Growth (Annual)': MetricSpec('avgFlatAnnualDivIncrease', 'Dividend', '{:,.2f}', 'currency/year', 'Average annual dividend increase.', 'higher_better'),
+    'Years Paying Dividend': MetricSpec('numDividendYear', 'Dividend', '{:.0f}', 'years', 'Number of years with a dividend payment.', 'higher_better', 'nonnegative'),
+    'Years Raised Dividend': MetricSpec('positiveYear', 'Dividend', '{:.0f}', 'years', 'Number of years the dividend increased.', 'higher_better', 'nonnegative'),
+    'Dividend Payout Ratio (%)': MetricSpec('dividendPayoutRatio', 'Dividend', '{:.1f}%', '%', 'Dividend as a share of trailing earnings. Sustainability depends on sector and cash flow.', 'neutral', 'positive'),
+    'PE Ratio': MetricSpec('peRatio', 'Valuation', '{:.1f}x', 'x', 'Price divided by trailing earnings. Non-positive values are not comparable.', 'lower_better', 'positive'),
+    'PS Ratio': MetricSpec('psRatio', 'Valuation', '{:.2f}x', 'x', 'Price divided by trailing sales. Non-positive values are not comparable.', 'lower_better', 'positive'),
+    'Revenue Growth (5Y)': MetricSpec('revenueGrowth', 'Growth', '{:+.1f}%', '%', 'Revenue growth over the five-year measurement period.', 'higher_better'),
+    'Revenue CAGR (5Y)': MetricSpec('revenueCAGR5Y', 'Growth', '{:+.1f}%', '%', 'Compound annual revenue growth over five years.', 'higher_better'),
+    'Net Income Growth (5Y)': MetricSpec('netIncomeGrowth', 'Growth', '{:+.1f}%', '%', 'Net income growth over the five-year measurement period.', 'higher_better'),
+    'Revenue Growth (TTM)': MetricSpec('revenueGrowthTTM', 'Growth', '{:+.1f}%', '%', 'Trailing-twelve-month revenue growth.', 'higher_better'),
+    'Net Income Growth (TTM)': MetricSpec('netIncomeGrowthTTM', 'Growth', '{:+.1f}%', '%', 'Trailing-twelve-month net income growth.', 'higher_better'),
+    'Revenue (TTM)': MetricSpec('revenueTTM', 'Growth', '{:,.2f}', 'currency', 'Revenue reported over the trailing twelve months.', 'higher_better'),
+    'Net Income (TTM)': MetricSpec('earningTTM', 'Profitability', '{:,.2f}', 'currency', 'Net income reported over the trailing twelve months.', 'higher_better'),
+    'Profit Margin (Median)': MetricSpec('medianProfitMargin', 'Profitability', '{:.1f}%', '%', 'Median historical profit margin.', 'higher_better'),
+    'Profit Margin (TTM)': MetricSpec('marginTTM', 'Profitability', '{:.1f}%', '%', 'Trailing-twelve-month net profit margin.', 'higher_better'),
+    '1M Return': MetricSpec('return_1m', 'Returns', '{:+.1f}%', '%', 'Price return over one month.', 'higher_better'),
+    '1Y Return': MetricSpec('return_1y', 'Returns', '{:+.1f}%', '%', 'Price return over one year.', 'higher_better'),
+    'Total 1Y Return': MetricSpec('total_return_1y', 'Returns', '{:+.1f}%', '%', 'One-year return including dividends.', 'higher_better'),
+    '10Y Return': MetricSpec('return_10y', 'Returns', '{:+.1f}%', '%', 'Price return over ten years.', 'higher_better'),
+    'Price': MetricSpec('price', 'General', '{:,.2f}', 'currency/share', 'Latest market price per share.', 'neutral', 'positive'),
+    'Market Cap': MetricSpec('mktCap', 'General', '{:,.2f}', 'currency', 'Latest equity market capitalization.', 'neutral', 'positive'),
+    'Beta': MetricSpec('beta', 'Risk', '{:.2f}', 'ratio', 'Price sensitivity relative to the broad market.', 'neutral'),
+}
+
+METRIC_PRESETS = {
+    'Balanced': [
+        'Dividend Yield (%)', 'Dividend Payout Ratio (%)', 'PE Ratio',
+        'Profit Margin (TTM)', 'Revenue CAGR (5Y)', 'Total 1Y Return', 'Beta',
+    ],
+    'Dividend income': [
+        'Dividend Yield (%)', 'Last Dividend', 'Years Paying Dividend',
+        'Years Raised Dividend', 'Dividend Payout Ratio (%)',
+    ],
+    'Quality & growth': [
+        'Profit Margin (Median)', 'Profit Margin (TTM)', 'Revenue CAGR (5Y)',
+        'Revenue Growth (TTM)', 'Net Income Growth (TTM)',
+    ],
+    'Valuation': ['PE Ratio', 'PS Ratio', 'Dividend Yield (%)', 'Profit Margin (TTM)'],
+}
+TABLE_DEFAULT_METRICS = METRIC_PRESETS['Balanced']
+CHART_METRIC_OPTIONS = {
+    label: spec.source for label, spec in METRIC_OPTIONS.items()
+    if spec.direction != 'neutral' or label in ('Dividend Payout Ratio (%)', 'Beta', 'Market Cap')
+}
+
+
 @st.cache_resource
 def get_logger(name, level=logging.INFO):
     return setup_logging(name, level)
@@ -42,9 +98,6 @@ def get_logger(name, level=logging.INFO):
 
 logger = get_logger('comparison')
 
-
-# ── Redis connection ─────────────────────────────────────────────────────────
-import os
 
 @st.cache_resource
 def connect_redis(redis_url):
@@ -57,982 +110,590 @@ def connect_redis(redis_url):
     )
 
 
-# ── Data loading (mirrors stock_picker.py) ───────────────────────────────────
-@st.cache_data(max_entries=4, ttl=60 * 10, show_spinner='Downloading stock universe…')
+@st.cache_data(max_entries=4, ttl=60 * 10, show_spinner='Loading stock universe...')
 def get_div_score_table(key='jkse_div_score'):
     redis_url = os.environ['REDIS_URL']
-    r = connect_redis(redis_url)
-    rjson = r.get(key)
-
-    if rjson is not None:
-        if isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
-            final_df = pd.read_parquet(io.BytesIO(rjson))
-        else:
-            import json
-            div_score_json = json.loads(rjson)
-            if 'date' in div_score_json:
-                final_df = pd.DataFrame(json.loads(div_score_json['content']))
-            else:
-                final_df = pd.DataFrame(div_score_json)
-    else:
+    rjson = connect_redis(redis_url).get(key)
+    if rjson is None:
         final_df = pd.read_csv('dividend_historical.csv')
+    elif isinstance(rjson, bytes) and rjson.startswith(b'PAR1'):
+        final_df = pd.read_parquet(io.BytesIO(rjson))
+    else:
+        raw = json.loads(rjson)
+        final_df = pd.DataFrame(json.loads(raw['content'])) if isinstance(raw, dict) and 'content' in raw else pd.DataFrame(raw)
 
     final_df.rename(columns={'symbol': 'stock'}, inplace=True)
     cp_df = hd.get_company_profile(final_df['stock'].to_list())
-    final_df.drop(columns=['price'], inplace=True)
-    final_df = final_df.merge(cp_df[['price', 'changes', 'beta']], left_on='stock', right_on='symbol')
+    final_df.drop(columns=['price'], inplace=True, errors='ignore')
+    final_df = final_df.merge(
+        cp_df[['price', 'changes', 'beta']], left_on='stock', right_on='symbol', how='left'
+    )
     return final_df.set_index('stock')
 
 
 _KEEP_COLS = [
-    'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate',
-    'yield', 'lastDiv', 'avgFlatAnnualDivIncrease', 'numDividendYear',
-    'positiveYear', 'numOfYear', 'maximumCutPct', 'max10CutPct',
-    'peRatio', 'psRatio', 'revenueGrowth', 'revenueCAGR5Y', 'netIncomeGrowth',
-    'medianProfitMargin', 'earningTTM', 'revenueTTM',
-    'revenueGrowthTTM', 'netIncomeGrowthTTM', 'beta',
-    'return_7d', 'return_1m', 'return_1y', 'return_10y',
-    'total_return_1y', 'total_return_10y',
-    'is_syariah',
+    'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate', 'yield', 'lastDiv',
+    'avgFlatAnnualDivIncrease', 'numDividendYear', 'positiveYear', 'numOfYear',
+    'maximumCutPct', 'max10CutPct', 'peRatio', 'psRatio', 'revenueGrowth',
+    'revenueCAGR5Y', 'netIncomeGrowth', 'medianProfitMargin', 'earningTTM', 'revenueTTM',
+    'revenueGrowthTTM', 'netIncomeGrowthTTM', 'beta', 'return_7d', 'return_1m',
+    'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y', 'is_syariah',
 ]
 
 
 @st.cache_data(max_entries=16, show_spinner=False)
 def get_processed_df(df):
     df = df.copy()
-    df['marginTTM'] = df['earningTTM'] / df['revenueTTM'] * 100
-    # Dividend Payout Ratio = (lastDiv per share) / (EPS TTM)
-    # EPS TTM = earningTTM / shares = earningTTM / (mktCap / price)
-    # => payoutRatio = lastDiv * mktCap / (price * earningTTM) * 100
-    eps_ttm = df['earningTTM'] / (df['mktCap'] / df['price'])
+    revenue = pd.to_numeric(df['revenueTTM'], errors='coerce')
+    earnings = pd.to_numeric(df['earningTTM'], errors='coerce')
+    df['marginTTM'] = np.where(revenue != 0, earnings / revenue * 100, np.nan)
+
+    market_cap = pd.to_numeric(df['mktCap'], errors='coerce')
+    price = pd.to_numeric(df['price'], errors='coerce')
+    eps_ttm = np.where((market_cap > 0) & (price > 0), earnings / (market_cap / price), np.nan)
     df['dividendPayoutRatio'] = np.where(
         eps_ttm > 0,
-        df['lastDiv'] / eps_ttm * 100,
+        pd.to_numeric(df['lastDiv'], errors='coerce') / eps_ttm * 100,
         np.nan,
     )
-    df['mc_penalty'] = df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
-    df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
-    df['max10CutPct'] = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
+    df['mc_penalty'] = 1 / (1 + np.exp(-2 * (market_cap / 3_000_000_000_000 - 1)))
 
-    for col in ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']:
+    for col in ('maximumCutPct', 'max10CutPct'):
         if col in df.columns:
-            df[col] = df[col] * 100
+            df[col] = pd.to_numeric(df[col], errors='coerce').clip(upper=0) * -1
+    for col in ('return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y'):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce') * 100
 
-    payout_ratio = df['dividendPayoutRatio'].copy()
-    df = df.fillna(0)
-    df['dividendPayoutRatio'] = payout_ratio
     df.insert(0, 'Rank', range(1, len(df) + 1))
     return df
 
 
-# ── Metric definitions ────────────────────────────────────────────────────────
-METRIC_OPTIONS = {
-    # ── Dividend ──
-    'Dividend Yield (%)':        ('yield',                  'higher_better', '{:.2f}%'),
-    'Last Dividend':             ('lastDiv',                'higher_better', '{:,.2f}'),
-    'Div Growth (Annual)':       ('avgFlatAnnualDivIncrease','higher_better','{:,.2f}'),
-    'Years Paying Dividend':     ('numDividendYear',        'higher_better', '{:.0f}'),
-    'Years Raised Dividend':     ('positiveYear',           'higher_better', '{:.0f}'),
-    'Dividend Payout Ratio (%)': ('dividendPayoutRatio',    'lower_better',  '{:.1f}%'),
-    # ── Valuation ──
-    'PE Ratio':                  ('peRatio',                'lower_better',  '{:.1f}x'),
-    'PS Ratio':                  ('psRatio',                'lower_better',  '{:.2f}x'),
-    # ── Growth ──
-    'Revenue Growth (5Y)':       ('revenueGrowth',          'higher_better', '{:.1f}%'),
-    'Revenue CAGR (5Y)':         ('revenueCAGR5Y',          'higher_better', '{:.1f}%'),
-    'Net Income Growth (5Y)':    ('netIncomeGrowth',        'higher_better', '{:.1f}%'),
-    'Revenue Growth (TTM)':      ('revenueGrowthTTM',       'higher_better', '{:.1f}%'),
-    'Net Income Growth (TTM)':   ('netIncomeGrowthTTM',     'higher_better', '{:.1f}%'),
-    'Revenue (TTM)':             ('revenueTTM',             'higher_better', '{:.2e}'),
-    'Net Income (TTM)':          ('earningTTM',              'higher_better', '{:.2e}'),
-    # ── Profitability ──
-    'Profit Margin (Median)':    ('medianProfitMargin',     'higher_better', '{:.1f}%'),
-    'Profit Margin (TTM)':       ('marginTTM',              'higher_better', '{:.1f}%'),
-    # ── Price Return ──
-    '1M Return':                 ('return_1m',              'higher_better', '{:+.1f}%'),
-    '1Y Return':                 ('return_1y',              'higher_better', '{:+.1f}%'),
-    'Total 1Y Return':           ('total_return_1y',        'higher_better', '{:+.1f}%'),
-    '10Y Return':                ('return_10y',             'higher_better', '{:+.1f}%'),
-    # ── General ──
-    'Price':                     ('price',                  'neutral',       '{:,.2f}'),
-    'Market Cap':                ('mktCap',                 'neutral',       '{:.2e}'),
-    'Beta':                      ('beta',                   'neutral',       '{:.2f}'),
-}
-
-# Subset shown by default in the Table tab
-TABLE_DEFAULT_METRICS = [
-    'Dividend Yield (%)', 'Last Dividend', 'Years Paying Dividend',
-    'Years Raised Dividend',
-    'PE Ratio', 'PS Ratio',
-    'Revenue Growth (5Y)', 'Revenue CAGR (5Y)', 'Net Income Growth (5Y)',
-    'Profit Margin (Median)', 'Profit Margin (TTM)',
-    'Revenue (TTM)', 'Net Income (TTM)',
-    '1Y Return', 'Total 1Y Return',
-]
-
-# Metrics available in the distribution / scatter selectors
-CHART_METRIC_OPTIONS = {k: v[0] for k, v in METRIC_OPTIONS.items() if v[1] != 'neutral' or k in ('PE Ratio', 'PS Ratio', 'Beta', 'Market Cap')}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ── URL query-param helpers ───────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-_qp = st.query_params
-
-# Supported params:
-#   market       → "jkse" | "sp500"          (default: jkse)
-#   stocks       → comma-separated codes      (e.g. "BBCA,BMRI")
-#   tab          → "table" | "dist" | "scatter" (default: table)
-#   dist_metric  → label key in METRIC_OPTIONS
-#   dist_sector  → sector name or "All"
-#   sc_x         → label key in METRIC_OPTIONS
-#   sc_y         → label key in METRIC_OPTIONS
-#   sc_size      → label key in METRIC_OPTIONS
-
-_MARKET_QP_MAP = {'jkse': 'Indonesian Stock', 'sp500': 'S&P 500 (US and World Stock)'}
-_MARKET_QP_REV = {v: k for k, v in _MARKET_QP_MAP.items()}
-_TAB_QP = ['table', 'dist', 'scatter']
-
-
-def _qp_get(key, default=None):
-    return _qp.get(key, default)
-
-
-# ── Resolve initial market from URL ──────────────────────────────────────────
-_market_qp = _qp_get('market', 'jkse').lower()
-if _market_qp not in _MARKET_QP_MAP:
-    _market_qp = 'jkse'
-_market_label_default = _MARKET_QP_MAP[_market_qp]
-_market_index_default = list(_MARKET_QP_MAP.values()).index(_market_label_default)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ── Market selection sidebar (same as stock_picker.py) ───────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-stock_select = st.sidebar.radio(
-    'Stock List Selection',
-    ['Indonesian Stock', 'S&P 500 (US and World Stock)'],
-    horizontal=False,
-    key='comp_sl',
-    index=_market_index_default,
-)
-
-sl = 'JKSE' if stock_select == 'Indonesian Stock' else 'S&P500'
-
-# Sync market → URL
-_market_qp_val = _MARKET_QP_REV.get(stock_select, 'jkse')
-if _qp_get('market') != _market_qp_val:
-    _qp['market'] = _market_qp_val
-
-# Log market selection changes
-_prev_market = st.session_state.get('_comp_logged_market')
-if _prev_market != sl:
-    logger.info('COMPARISON | event=market_select | market=%s', sl)
-    st.session_state['_comp_logged_market'] = sl
-
-if sl == 'JKSE':
-    key = 'div_score_jkse'
-    currency = 'IDR'
-    divisor = 1_000_000_000_000
-    mcap_suffix = 'T IDR'
-else:
-    key = 'div_score_sp500'
-    currency = 'USD'
-    divisor = 1_000_000_000
-    mcap_suffix = 'B USD'
-
-
-def format_comparison_value(label, value, fmt):
-    """Format financial totals in the selected market's readable currency unit."""
-    if label in ('Revenue (TTM)', 'Net Income (TTM)'):
-        return f'{value / divisor:,.2f} {mcap_suffix}'
-    return fmt.format(value)
-
-final_df = get_div_score_table(key)
-if sl != 'JKSE':
+def is_valid_metric_value(value, spec):
     try:
-        final_df = final_df.drop('GOOGL')
-    except KeyError:
-        pass
-
-if sl == 'JKSE' and 'is_syariah' in final_df.columns:
-    is_syariah = st.sidebar.toggle('Syariah Only?', key='comp_syariah')
-    if is_syariah:
-        final_df = final_df[final_df['is_syariah'] == True]
-
-_keep = [c for c in _KEEP_COLS if c in final_df.columns]
-final_df = final_df[_keep]
-
-filtered_df = get_processed_df(final_df)
-
-stock_options = sorted(filtered_df.index.tolist())
-
-# ── Resolve initial stocks from URL ──────────────────────────────────────────
-_stocks_qp_raw = _qp_get('stocks', '')
-_stocks_default = [
-    s.strip().upper()
-    for s in _stocks_qp_raw.split(',')
-    if s.strip().upper() in stock_options
-] if _stocks_qp_raw else []
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(numeric):
+        return False
+    if spec.validity == 'positive':
+        return numeric > 0
+    if spec.validity == 'nonnegative':
+        return numeric >= 0
+    return True
 
 
-# ── Stock multiselect ────────────────────────────────────────────────────────
-st.markdown('### 🔍 Select Stocks to Compare')
-selected_stocks = st.multiselect(
-    label='Choose 2 or more stocks from the universe',
-    options=stock_options,
-    default=_stocks_default,
-    placeholder='Type or pick stock codes…',
-    key='comp_stocks',
+def valid_metric_series(df, spec):
+    if spec.source not in df.columns:
+        return pd.Series(dtype=float)
+    values = pd.to_numeric(df[spec.source], errors='coerce').replace([np.inf, -np.inf], np.nan)
+    if spec.validity == 'positive':
+        values = values.where(values > 0)
+    elif spec.validity == 'nonnegative':
+        values = values.where(values >= 0)
+    return values.dropna()
+
+
+def format_metric_value(label, value, divisor=1, currency_suffix=''):
+    spec = METRIC_OPTIONS[label]
+    if not is_valid_metric_value(value, spec):
+        return 'N/A'
+    numeric = float(value)
+    if spec.unit == 'currency':
+        return f'{numeric / divisor:,.2f} {currency_suffix}'.strip()
+    if spec.unit in ('currency/share', 'currency/year'):
+        return f'{spec.format.format(numeric)} {currency_suffix.split()[-1] if currency_suffix else ""}'.strip()
+    return spec.format.format(numeric)
+
+
+def direction_aware_percentile(peers, value, direction):
+    valid = pd.to_numeric(pd.Series(peers), errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
+    if not np.isfinite(value) or valid.empty:
+        return {'percent': None, 'peer_count': 0, 'tie_count': 0, 'text': 'No valid peer comparison'}
+    tie_count = int(np.isclose(valid.to_numpy(dtype=float), float(value)).sum())
+    if direction == 'higher_better':
+        percent = float((valid < value).mean() * 100)
+        text = f'Better than {percent:.0f}% of {len(valid)} valid peers'
+    elif direction == 'lower_better':
+        percent = float((valid > value).mean() * 100)
+        text = f'Better than {percent:.0f}% of {len(valid)} valid peers'
+    else:
+        percent = float((valid <= value).mean() * 100)
+        text = f'At or below the {percent:.0f}th percentile among {len(valid)} valid peers'
+    if tie_count > 1:
+        text += f'; tied with {tie_count - 1}'
+    return {'percent': percent, 'peer_count': len(valid), 'tie_count': tie_count, 'text': text}
+
+
+def comparison_states(values, spec):
+    valid = {key: float(value) for key, value in values.items() if is_valid_metric_value(value, spec)}
+    if spec.direction == 'neutral' or not valid:
+        return {key: '' for key in values}
+    target_best = max(valid.values()) if spec.direction == 'higher_better' else min(valid.values())
+    target_worst = min(valid.values()) if spec.direction == 'higher_better' else max(valid.values())
+    if np.isclose(target_best, target_worst):
+        return {key: 'Tied' if key in valid else '' for key in values}
+    states = {}
+    for key, value in values.items():
+        if key not in valid:
+            states[key] = ''
+        elif np.isclose(valid[key], target_best):
+            states[key] = 'Best'
+        elif np.isclose(valid[key], target_worst):
+            states[key] = 'Weakest'
+        else:
+            states[key] = ''
+    return states
+
+
+def comparison_cell_style(value):
+    text = str(value)
+    if text.endswith(' - Best'):
+        return 'background-color: rgba(22, 163, 74, 0.09); font-weight: 600;'
+    if text.endswith(' - Weakest'):
+        return 'background-color: rgba(220, 38, 38, 0.07); font-weight: 600;'
+    if text.endswith(' - Tied'):
+        return 'background-color: rgba(100, 116, 139, 0.06); font-weight: 600;'
+    return ''
+
+
+def normalize_view(value):
+    value = str(value or '').lower()
+    return value if value in _VIEW_LABELS else 'table'
+
+
+def parse_stock_query(raw, valid_stocks, limit=MAX_STOCKS):
+    valid_set = set(valid_stocks)
+    stocks = []
+    for item in str(raw or '').split(','):
+        stock = item.strip().upper()
+        if stock and stock in valid_set and stock not in stocks:
+            stocks.append(stock)
+    return stocks[:limit], len(stocks) > limit
+
+
+def _sync_query(key, value, remove_empty=False):
+    current = st.query_params.get(key)
+    if remove_empty and not value:
+        if key in st.query_params:
+            del st.query_params[key]
+    elif current != value:
+        st.query_params[key] = value
+
+
+def _metric_hint(label):
+    spec = METRIC_OPTIONS[label]
+    direction = {'higher_better': 'Higher is generally more favorable.', 'lower_better': 'Lower positive values are generally more favorable.', 'neutral': 'Contextual; no automatic best or weakest.'}[spec.direction]
+    return f'{spec.description} {direction}'
+
+
+market_key = str(st.query_params.get('market', 'jkse')).lower()
+market_key = market_key if market_key in _MARKET_QP_MAP else 'jkse'
+if st.session_state.get('_comp_last_qp_market') != market_key:
+    st.session_state['comp_sl'] = _MARKET_QP_MAP[market_key]
+    st.session_state['_comp_last_qp_market'] = market_key
+
+
+def _market_changed():
+    selected = st.session_state.get('comp_sl', _MARKET_QP_MAP['jkse'])
+    query_value = _MARKET_QP_REV.get(selected, 'jkse')
+    _sync_query('market', query_value)
+    st.session_state['_comp_last_qp_market'] = query_value
+
+
+stock_select = st.sidebar.radio(
+    'Stock market',
+    list(_MARKET_QP_MAP.values()),
+    key='comp_sl',
+    on_change=_market_changed,
 )
+market = 'JKSE' if stock_select == _MARKET_QP_MAP['jkse'] else 'S&P500'
+_sync_query('market', _MARKET_QP_REV[stock_select])
+st.session_state['_comp_last_qp_market'] = _MARKET_QP_REV[stock_select]
 
-# Sync stocks → URL
-_stocks_qp_val = ','.join(selected_stocks)
-if _qp_get('stocks', '') != _stocks_qp_val:
-    if _stocks_qp_val:
-        _qp['stocks'] = _stocks_qp_val
-    elif 'stocks' in _qp:
-        del _qp['stocks']
+previous_market = st.session_state.get('_comp_logged_market')
+if previous_market != market:
+    logger.info('COMPARISON | event=market_select | market=%s', market)
+    st.session_state['_comp_logged_market'] = market
 
-if len(selected_stocks) < 2:
-    st.info('👆 Select at least **2 stocks** above to start comparing.')
+if market == 'JKSE':
+    data_key, divisor, currency_suffix = 'div_score_jkse', 1_000_000_000_000, 'T IDR'
+else:
+    data_key, divisor, currency_suffix = 'div_score_sp500', 1_000_000_000, 'B USD'
+
+try:
+    final_df = get_div_score_table(data_key)
+except Exception as exc:
+    logger.exception('COMPARISON | event=universe_load_error | market=%s', market)
+    st.error('The stock universe could not be loaded. Your URL selection is unchanged; retry in a moment.')
+    st.caption(f'Data service response: {exc}')
     st.stop()
 
-# Log stock selection when it changes
-_prev_selection = st.session_state.get('_comp_logged_stocks')
-_cur_selection = tuple(sorted(selected_stocks))
-if _prev_selection != _cur_selection:
-    logger.info(
-        'COMPARISON | event=stock_select | market=%s | stocks=%s | count=%d',
-        sl, ','.join(selected_stocks), len(selected_stocks),
-    )
-    st.session_state['_comp_logged_stocks'] = _cur_selection
+if market != 'JKSE':
+    final_df = final_df.drop('GOOGL', errors='ignore')
+if market == 'JKSE' and 'is_syariah' in final_df.columns:
+    if st.sidebar.toggle('Syariah only', key='comp_syariah'):
+        final_df = final_df[final_df['is_syariah'].eq(True)]
 
-# Build colour mapping for selected stocks
-stock_colors = {s: _STOCK_PALETTE[i % len(_STOCK_PALETTE)] for i, s in enumerate(selected_stocks)}
+filtered_df = get_processed_df(final_df[[col for col in _KEEP_COLS if col in final_df.columns]])
+stock_options = sorted(filtered_df.index.tolist())
+query_stocks, query_was_limited = parse_stock_query(st.query_params.get('stocks', ''), stock_options)
+if query_was_limited:
+    st.warning('This shared comparison contained more than five valid stocks. The first five were kept in URL order for readability.')
+    _sync_query('stocks', ','.join(query_stocks))
+
+canonical_query_stocks = ','.join(query_stocks)
+if st.session_state.get('_comp_last_qp_stocks') != canonical_query_stocks:
+    st.session_state['comp_stocks'] = query_stocks
+    st.session_state['_comp_last_qp_stocks'] = canonical_query_stocks
+
+
+def _stocks_changed():
+    selected = [stock for stock in st.session_state.get('comp_stocks', []) if stock in stock_options][:MAX_STOCKS]
+    query_value = ','.join(selected)
+    _sync_query('stocks', query_value, remove_empty=True)
+    st.session_state['_comp_last_qp_stocks'] = query_value
+
+
+def _clear_selection():
+    st.session_state['comp_stocks'] = []
+    st.session_state['_comp_last_qp_stocks'] = ''
+    if 'stocks' in st.query_params:
+        del st.query_params['stocks']
+
+
+select_col, clear_col = st.columns([5, 1])
+clear_col.button('Clear selection', on_click=_clear_selection, use_container_width=True)
+selected_stocks = select_col.multiselect(
+    'Stocks to compare',
+    options=stock_options,
+    max_selections=MAX_STOCKS,
+    placeholder='Search ticker symbols',
+    key='comp_stocks',
+    on_change=_stocks_changed,
+    help='Choose at least two and no more than five stocks. Selection order sets a stable chart color.',
+)
+_sync_query('stocks', ','.join(selected_stocks), remove_empty=True)
+st.session_state['_comp_last_qp_stocks'] = ','.join(selected_stocks)
+
+if len(selected_stocks) < 2:
+    st.info('Select at least two stocks to start. A focused comparison supports up to five.')
+    st.stop()
+
+selection_tuple = tuple(selected_stocks)
+if st.session_state.get('_comp_logged_stocks') != selection_tuple:
+    logger.info('COMPARISON | event=stock_select | market=%s | stocks=%s | count=%d', market, ','.join(selected_stocks), len(selected_stocks))
+    st.session_state['_comp_logged_stocks'] = selection_tuple
+
+stock_colors = {stock: _STOCK_PALETTE[index] for index, stock in enumerate(selected_stocks)}
 comp_df = filtered_df.loc[selected_stocks].copy()
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ── Tabs ─────────────────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Resolve active tab from URL
-_tab_qp = _qp_get('tab', 'table').lower()
-_tab_default_idx = _TAB_QP.index(_tab_qp) if _tab_qp in _TAB_QP else 0
-
-tab_table, tab_dist, tab_scatter = st.tabs(['📋 Table', '📊 Distribution', '🔵 Scatter Plot'])
-
-# Log which tab is being viewed (tracks tab switches across reruns)
-_active_tab_key = 'comp_active_tab'
-_tab_map = {0: 'Table', 1: 'Distribution', 2: 'Scatter'}
-# Each tab block syncs `tab` URL param when it renders, enabling shareability.
+view_key = normalize_view(st.query_params.get('tab', 'table'))
+if st.query_params.get('tab') != view_key:
+    _sync_query('tab', view_key)
+if st.session_state.get('_comp_last_qp_view') != view_key:
+    st.session_state['comp_view'] = _VIEW_LABELS[view_key]
+    st.session_state['_comp_last_qp_view'] = view_key
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 1 — Table
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_table:
-    _prev_tab = st.session_state.get('_comp_logged_tab')
-    if _prev_tab != 'Table':
-        logger.info(
-            'COMPARISON | event=tab_view | tab=Table | stocks=%s',
-            ','.join(selected_stocks),
+def _view_changed():
+    selected = st.session_state.get('comp_view', _VIEW_LABELS['table'])
+    query_value = _VIEW_KEYS.get(selected, 'table')
+    _sync_query('tab', query_value)
+    st.session_state['_comp_last_qp_view'] = query_value
+
+
+view_label = st.segmented_control(
+    'Comparison view',
+    list(_VIEW_LABELS.values()),
+    key='comp_view',
+    on_change=_view_changed,
+)
+active_view = _VIEW_KEYS.get(view_label, 'table')
+_sync_query('tab', active_view)
+st.session_state['_comp_last_qp_view'] = active_view
+if st.session_state.get('_comp_logged_tab') != active_view:
+    logger.info('COMPARISON | event=view_change | view=%s | stocks=%s', active_view, ','.join(selected_stocks))
+    st.session_state['_comp_logged_tab'] = active_view
+
+
+if active_view == 'table':
+    control_a, control_b = st.columns(2)
+    preset = control_a.selectbox('Metric preset', [*METRIC_PRESETS, 'Custom'], key='comp_metric_preset')
+    if preset == 'Custom':
+        selected_metrics = control_b.multiselect(
+            'Custom metrics',
+            list(METRIC_OPTIONS),
+            default=TABLE_DEFAULT_METRICS,
+            format_func=lambda label: f'{METRIC_OPTIONS[label].group} - {label}',
+            key='comp_table_metrics',
         )
-        st.session_state['_comp_logged_tab'] = 'Table'
-    # Sync tab → URL (only update when tab actually changes to avoid extra reruns)
-    if _qp_get('tab') != 'table':
-        _qp['tab'] = 'table'
-    st.markdown('#### Select metrics to compare')
-    selected_metrics = st.multiselect(
-        'Metrics',
-        options=list(METRIC_OPTIONS.keys()),
-        default=TABLE_DEFAULT_METRICS,
-        key='comp_table_metrics',
-        label_visibility='collapsed',
-    )
+    else:
+        selected_metrics = METRIC_PRESETS[preset]
+        control_b.caption(f'{len(selected_metrics)} recommended metrics. Choose Custom to build a different set.')
 
     if not selected_metrics:
-        st.info('Pick at least one metric above.')
+        st.info('Choose at least one metric to compare.')
     else:
-        # Build a rows = metrics, cols = stocks DataFrame
         rows = []
         for label in selected_metrics:
-            col_name, direction, fmt = METRIC_OPTIONS[label]
-            if col_name not in comp_df.columns:
+            spec = METRIC_OPTIONS[label]
+            if spec.source not in comp_df.columns:
                 continue
+            values = {stock: comp_df.loc[stock, spec.source] for stock in selected_stocks}
+            states = comparison_states(values, spec)
             row = {'Metric': label}
-            vals = {}
-            for stock in selected_stocks:
-                v = comp_df.loc[stock, col_name]
-                vals[stock] = v
-                try:
-                    row[stock] = format_comparison_value(label, v, fmt)
-                except (ValueError, TypeError):
-                    row[stock] = str(v)
-
-            # Determine best / worst for highlighting
-            numeric_vals = {k: v for k, v in vals.items() if isinstance(v, (int, float)) and not np.isnan(v)}
-            if numeric_vals and direction != 'neutral':
-                best = max(numeric_vals, key=numeric_vals.get) if direction == 'higher_better' else min(numeric_vals, key=numeric_vals.get)
-                worst = min(numeric_vals, key=numeric_vals.get) if direction == 'higher_better' else max(numeric_vals, key=numeric_vals.get)
-                row['_best'] = best
-                row['_worst'] = worst
-            else:
-                row['_best'] = None
-                row['_worst'] = None
-
+            for stock, value in values.items():
+                formatted = format_metric_value(label, value, divisor, currency_suffix)
+                row[stock] = f'{formatted} - {states[stock]}' if states[stock] else formatted
             rows.append(row)
-
-        table_df = pd.DataFrame(rows).set_index('Metric')
-
-        # Render with color styling using HTML
-        def _cell(val, stock, row_meta):
-            best = row_meta.get('_best')
-            worst = row_meta.get('_worst')
-            stock_color = stock_colors[stock]
-            if stock == best:
-                bg = 'rgba(46, 125, 50, 0.18)'
-                outline = 'inset 0 0 0 2px #2e7d32'
-            elif stock == worst:
-                bg = 'rgba(183, 28, 28, 0.13)'
-                outline = 'inset 0 0 0 2px #b71c1c'
-            else:
-                bg = 'transparent'
-                outline = f'inset 0 0 0 2px {stock_color}20'
-            return f'<td style="text-align:center;background:{bg};box-shadow:{outline};padding:6px 12px;font-weight:500">{val}</td>'
-
-        # Build the HTML table
-        html_rows_meta = {r['Metric']: r for r in rows}
-        
-        header_cols = ''.join(
-            f'<th style="text-align:center;padding:8px 14px;background:{stock_colors[s]}22;'
-            f'border-bottom:3px solid {stock_colors[s]};color:{stock_colors[s]};font-size:1.05rem">{s}</th>'
-            for s in selected_stocks
-        )
-        header = f'<tr><th style="text-align:left;padding:8px 14px;min-width:200px">Metric</th>{header_cols}</tr>'
-
-        body_html = ''
-        for i, metric_label in enumerate(selected_metrics):
-            col_name, direction, fmt = METRIC_OPTIONS[metric_label]
-            if col_name not in comp_df.columns:
-                continue
-            meta = html_rows_meta.get(metric_label, {})
-            row_bg = '#f8f9fa' if i % 2 == 0 else 'white'
-            cells = ''.join(_cell(table_df.loc[metric_label, s], s, meta) for s in selected_stocks if s in table_df.columns)
-            body_html += (
-                f'<tr style="background:{row_bg}">'
-                f'<td style="padding:6px 14px;font-weight:600;color:#374151">{metric_label}</td>'
-                f'{cells}</tr>'
-            )
-
-        table_html = f"""
-        <style>
-            .comp-table {{ border-collapse: collapse; width: 100%; font-size: 0.9rem; border-radius: 8px; overflow: hidden; }}
-            .comp-table th {{ font-weight: 700; white-space: nowrap; }}
-            .comp-table td, .comp-table th {{ border: 1px solid #e5e7eb; }}
-        </style>
-        <div style="overflow-x:auto;border-radius:10px;border:1px solid #e5e7eb;box-shadow:0 1px 6px rgba(0,0,0,0.06)">
-            <table class="comp-table">
-                <thead style="background:#f3f4f6">{header}</thead>
-                <tbody>{body_html}</tbody>
-            </table>
-        </div>
-        <p style="font-size:0.78rem;color:#6b7280;margin-top:6px">
-            🟢 <b>Green border</b> = best value for that metric &nbsp;|&nbsp;
-            🔴 <b>Red border</b> = worst value for that metric
-        </p>
-        """
-        st.markdown(table_html, unsafe_allow_html=True)
+        if not rows:
+            st.warning('None of the selected metrics are available in this dataset.')
+        else:
+            table_df = pd.DataFrame(rows).set_index('Metric')
+            st.dataframe(table_df.style.map(comparison_cell_style), width='stretch')
+            st.caption('Best and Weakest use only valid values. Tied marks equal valid values. N/A means missing or financially invalid data.')
+            with st.expander('Metric definitions and comparison rules'):
+                for label in selected_metrics:
+                    st.markdown(f'**{label}** ({METRIC_OPTIONS[label].group}): {_metric_hint(label)}')
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 2 — Distribution
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_dist:
-    _prev_tab = st.session_state.get('_comp_logged_tab')
-    if _prev_tab != 'Distribution':
-        logger.info(
-            'COMPARISON | event=tab_view | tab=Distribution | stocks=%s',
-            ','.join(selected_stocks),
-        )
-        st.session_state['_comp_logged_tab'] = 'Distribution'
-    # Sync tab → URL
-    if _qp_get('tab') != 'dist':
-        _qp['tab'] = 'dist'
+elif active_view == 'dist':
+    metric_labels = list(CHART_METRIC_OPTIONS)
+    default_metric = st.query_params.get('dist_metric', 'Dividend Yield (%)')
+    default_metric = default_metric if default_metric in metric_labels else 'Dividend Yield (%)'
+    ctrl_a, ctrl_b = st.columns(2)
+    selected_label = ctrl_a.selectbox('Metric', metric_labels, index=metric_labels.index(default_metric), key='comp_dist_metric')
+    spec = METRIC_OPTIONS[selected_label]
+    _sync_query('dist_metric', selected_label)
 
-    dist_label_options = {k: v[0] for k, v in METRIC_OPTIONS.items()}
-    _dist_metric_keys = list(dist_label_options.keys())
+    sectors = ['All']
+    if 'sector' in filtered_df.columns:
+        sectors += sorted(filtered_df['sector'].dropna().astype(str).unique().tolist())
+    requested_sector = st.query_params.get('dist_sector', 'All')
+    requested_sector = requested_sector if requested_sector in sectors else 'All'
+    selected_sector = ctrl_b.selectbox('Peer sector', sectors, index=sectors.index(requested_sector), key='comp_dist_sector')
+    _sync_query('dist_sector', selected_sector)
 
-    # Resolve dist_metric from URL
-    _dist_metric_qp = _qp_get('dist_metric', 'Dividend Yield (%)')
-    _dist_metric_default_idx = (
-        _dist_metric_keys.index(_dist_metric_qp)
-        if _dist_metric_qp in _dist_metric_keys
-        else _dist_metric_keys.index('Dividend Yield (%)')
+    toggle_a, toggle_b = st.columns(2)
+    show_universe = toggle_a.toggle('Show peer distribution', value=True, key='comp_dist_universe')
+    exclude_zero_yield = toggle_b.toggle(
+        'Exclude 0% yield', value=False, disabled=selected_label != 'Dividend Yield (%)', key='comp_dist_excl_zero'
     )
 
-    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([2, 2, 2, 2])
-    selected_dist_label = ctrl1.selectbox(
-        'Metric', options=_dist_metric_keys,
-        index=_dist_metric_default_idx,
-        key='comp_dist_metric',
-    )
-    dist_col = dist_label_options[selected_dist_label]
-
-    # Sync dist_metric → URL
-    if _qp_get('dist_metric') != selected_dist_label:
-        _qp['dist_metric'] = selected_dist_label
-        if 'tab' not in _qp or _qp.get('tab') != 'dist':
-            _qp['tab'] = 'dist'
-
-    sector_opts = ['All'] + sorted(filtered_df['sector'].dropna().unique().tolist())
-
-    # Resolve dist_sector from URL
-    _dist_sector_qp = _qp_get('dist_sector', 'All')
-    _dist_sector_default_idx = (
-        sector_opts.index(_dist_sector_qp)
-        if _dist_sector_qp in sector_opts
-        else 0
-    )
-    selected_sector = ctrl2.selectbox(
-        'Filter by Sector', options=sector_opts,
-        index=_dist_sector_default_idx,
-        key='comp_dist_sector',
-    )
-
-    # Sync dist_sector → URL
-    if _qp_get('dist_sector') != selected_sector:
-        _qp['dist_sector'] = selected_sector
-
-    show_universe = ctrl3.toggle('Show Full Universe', value=True, key='comp_dist_universe',
-                                  help='Overlay the full population distribution behind the selected stocks')
-
-    # Dividend Yield-specific toggle: exclude stocks that never paid a dividend
-    is_yield_metric = (selected_dist_label == 'Dividend Yield (%)')
-    exclude_zero_yield = ctrl4.toggle(
-        'Exclude 0% Yield',
-        value=False,
-        key='comp_dist_excl_zero',
-        disabled=not is_yield_metric,
-        help='Only visible for Dividend Yield — removes non-dividend-paying stocks from the distribution',
-    )
-
-    plot_universe_df = filtered_df.copy()
+    universe_df = filtered_df
     if selected_sector != 'All':
-        plot_universe_df = plot_universe_df[plot_universe_df['sector'] == selected_sector]
+        universe_df = universe_df[universe_df['sector'].astype(str).eq(selected_sector)]
+    if exclude_zero_yield and selected_label == 'Dividend Yield (%)':
+        before = len(universe_df)
+        universe_df = universe_df[universe_df['yield'] > 0]
+        st.caption(f'{before - len(universe_df)} zero-yield stocks excluded from this peer group.')
 
-    # Apply zero-yield filter and report how many were removed
-    n_removed = 0
-    if is_yield_metric and exclude_zero_yield:
-        before = len(plot_universe_df)
-        plot_universe_df = plot_universe_df[plot_universe_df['yield'] > 0]
-        n_removed = before - len(plot_universe_df)
+    valid_peers = valid_metric_series(universe_df, spec)
+    comparison_vals = {
+        stock: float(comp_df.loc[stock, spec.source])
+        for stock in selected_stocks
+        if spec.source in comp_df.columns and is_valid_metric_value(comp_df.loc[stock, spec.source], spec)
+    }
+    invalid_selected = [stock for stock in selected_stocks if stock not in comparison_vals]
+    filtered_selected = [stock for stock in comparison_vals if stock not in universe_df.index]
+    if invalid_selected:
+        st.warning(f'No valid {selected_label} value for: {", ".join(invalid_selected)}.')
+    if filtered_selected:
+        st.info(f'Outside the selected peer filter: {", ".join(filtered_selected)}. Their values remain listed but are not part of the peer distribution.')
 
-    # Build comparison_vals dict for highlighting
-    comparison_vals = {}
-    for s in selected_stocks:
-        if s in plot_universe_df.index and dist_col in plot_universe_df.columns:
-            comparison_vals[s] = float(plot_universe_df.loc[s, dist_col])
-        elif dist_col in comp_df.columns:
-            comparison_vals[s] = float(comp_df.loc[s, dist_col])
-
-    if dist_col not in plot_universe_df.columns or plot_universe_df.empty:
-        st.warning('Metric not available for the current filter.')
+    if valid_peers.empty:
+        st.warning('No valid peer values remain for this metric and filter.')
     else:
-        # Show removed-stock banner when zero-yield filter is active
-        if is_yield_metric and exclude_zero_yield and n_removed > 0:
-            total_before = n_removed + len(plot_universe_df)
-            st.caption(
-                f'🚫 **{n_removed} stocks with 0% dividend yield** removed from the distribution '
-                f'({n_removed} of {total_before} · {n_removed/total_before*100:.1f}% of universe). '
-                f'Showing **{len(plot_universe_df)} dividend-paying stocks** only.'
-            )
+        kpi_cols = st.columns(4)
+        for col, label, value in zip(
+            kpi_cols,
+            ('Peer mean', 'Peer median', '25th percentile', '75th percentile'),
+            (valid_peers.mean(), valid_peers.median(), valid_peers.quantile(.25), valid_peers.quantile(.75)),
+        ):
+            col.metric(label, format_metric_value(selected_label, value, divisor, currency_suffix))
 
-        # KPIs
-        valid_vals = plot_universe_df[dist_col].replace([float('inf'), -float('inf')], float('nan')).dropna()
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric('Universe Mean',   f'{valid_vals.mean():.2f}')
-        k2.metric('Universe Median', f'{valid_vals.median():.2f}')
-        k3.metric('25th Pct',        f'{valid_vals.quantile(0.25):.2f}')
-        k4.metric('75th Pct',        f'{valid_vals.quantile(0.75):.2f}')
-
-        st.markdown(f'#### 📊 Distribution of {selected_dist_label}')
-
-        q05 = float(valid_vals.quantile(0.05))
-        q95 = float(valid_vals.quantile(0.95))
+        q05, q95 = float(valid_peers.quantile(.05)), float(valid_peers.quantile(.95))
+        outliers = [stock for stock, value in comparison_vals.items() if value < q05 or value > q95]
+        st.subheader(f'{selected_label} distribution')
+        st.caption(f'Peer chart shows the 5th-95th percentile range across {len(valid_peers)} valid values. {_metric_hint(selected_label)}')
+        if outliers:
+            st.info(f'Clipped to the chart edge as outliers: {", ".join(outliers)}. Tooltips retain actual values.')
 
         if show_universe:
-            # Full distribution with selected stocks as vertical rules
-            dist_chart = hp.plot_card_distribution(
-                plot_universe_df,
-                dist_col,
-                current_val=None,
-                color='#6366f1',
+            chart_df = universe_df.loc[valid_peers.index]
+            chart = hp.plot_card_distribution(
+                chart_df,
+                spec.source,
+                color='#64748B',
                 height=420,
                 show_axis=True,
-                comparison_vals=comparison_vals if comparison_vals else None,
+                comparison_vals=comparison_vals,
+                comparison_colors=stock_colors,
                 x_range=(q05, q95),
-                fill_opacity=0.25,
+                fill_opacity=.2,
                 show_median=True,
             )
-            st.altair_chart(dist_chart, width='stretch')
         else:
-            # Only selected stocks — bar chart showing their individual values
-            bar_data = pd.DataFrame({
-                'Stock': list(comparison_vals.keys()),
-                'Value': list(comparison_vals.values()),
-            })
-            _, direction, fmt = METRIC_OPTIONS[selected_dist_label]
-
-            color_scale = alt.Scale(
-                domain=list(stock_colors.keys()),
-                range=list(stock_colors.values()),
-            )
-
-            bars = alt.Chart(bar_data).mark_bar(
-                cornerRadiusTopLeft=6,
-                cornerRadiusTopRight=6,
-            ).encode(
-                x=alt.X('Stock:N', sort=None, axis=alt.Axis(labelAngle=0, labelFontSize=13)),
-                y=alt.Y('Value:Q', title=selected_dist_label),
-                color=alt.Color('Stock:N', scale=color_scale, legend=None),
-                tooltip=[
-                    alt.Tooltip('Stock:N', title='Stock'),
-                    alt.Tooltip('Value:Q', title=selected_dist_label, format='.2f'),
-                ],
-            ).properties(height=380)
-
-            # Value labels on bars
-            labels = alt.Chart(bar_data).mark_text(
-                dy=-8, fontSize=13, fontWeight='bold',
-            ).encode(
+            bar_df = pd.DataFrame({'Stock': list(comparison_vals), 'Value': list(comparison_vals.values())})
+            color_scale = alt.Scale(domain=selected_stocks, range=[stock_colors[stock] for stock in selected_stocks])
+            chart = alt.Chart(bar_df).mark_bar().encode(
                 x=alt.X('Stock:N', sort=None),
-                y=alt.Y('Value:Q'),
-                text=alt.Text('Value:Q', format='.2f'),
+                y=alt.Y('Value:Q', title=selected_label),
                 color=alt.Color('Stock:N', scale=color_scale, legend=None),
-            )
+                tooltip=['Stock:N', alt.Tooltip('Value:Q', title=selected_label, format='.2f')],
+            ).properties(height=380)
+        st.altair_chart(chart, width='stretch')
 
-            st.altair_chart((bars + labels).properties(height=380), width='stretch')
-
-        # Stock-by-stock value summary below chart
-        if comparison_vals:
-            st.markdown('##### Selected Stock Values')
-            cols = st.columns(min(len(comparison_vals), 5))
-            for i, (stock, val) in enumerate(comparison_vals.items()):
-                _, direction, fmt = METRIC_OPTIONS[selected_dist_label]
-                pct_rank = (valid_vals < val).mean() * 100
-                direction_text = 'higher' if direction == 'higher_better' else 'lower'
-                cols[i % len(cols)].metric(
-                    label=stock,
-                    value=fmt.format(val),
-                    delta=f'Top {100 - pct_rank:.0f}% ({direction_text} is better)' if direction != 'neutral' else f'{pct_rank:.0f}th percentile',
-                    delta_color='normal' if (direction == 'higher_better' and pct_rank >= 50) or
-                                           (direction == 'lower_better' and pct_rank <= 50) else 'inverse',
-                )
+        summary = []
+        for stock in selected_stocks:
+            value = comparison_vals.get(stock)
+            rank = direction_aware_percentile(valid_peers, value, spec.direction) if value is not None else None
+            summary.append({
+                'Stock': stock,
+                'Value': format_metric_value(selected_label, value, divisor, currency_suffix) if value is not None else 'N/A',
+                'Peer context': rank['text'] if rank else 'No valid peer comparison',
+            })
+        st.dataframe(pd.DataFrame(summary).set_index('Stock'), width='stretch')
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 3 — Scatter Plot
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_scatter:
-    _prev_tab = st.session_state.get('_comp_logged_tab')
-    if _prev_tab != 'Scatter':
-        logger.info(
-            'COMPARISON | event=tab_view | tab=Scatter | stocks=%s',
-            ','.join(selected_stocks),
-        )
-        st.session_state['_comp_logged_tab'] = 'Scatter'
-    # Sync tab → URL
-    if _qp_get('tab') != 'scatter':
-        _qp['tab'] = 'scatter'
+else:
+    metric_labels = list(CHART_METRIC_OPTIONS)
+    default_x = st.query_params.get('sc_x', 'Dividend Yield (%)')
+    default_y = st.query_params.get('sc_y', 'PE Ratio')
+    default_x = default_x if default_x in metric_labels else 'Dividend Yield (%)'
+    default_y = default_y if default_y in metric_labels else 'PE Ratio'
+    size_none = 'None (uniform size)'
+    size_logo = 'Company logo'
+    size_options = [size_none, size_logo, *metric_labels]
+    default_size = st.query_params.get('sc_size', 'Market Cap')
+    default_size = default_size if default_size in size_options else 'Market Cap'
 
-    scatter_options = {k: v[0] for k, v in METRIC_OPTIONS.items() if v[0] in filtered_df.columns or v[0] == 'DScore'}
-    scatter_keys = list(scatter_options.keys())
+    ctrl_a, ctrl_b = st.columns(2)
+    x_label = ctrl_a.selectbox('X axis', metric_labels, index=metric_labels.index(default_x), key='comp_sc_x')
+    y_label = ctrl_b.selectbox('Y axis', metric_labels, index=metric_labels.index(default_y), key='comp_sc_y')
+    ctrl_c, ctrl_d = st.columns(2)
+    size_label = ctrl_c.selectbox('Point size', size_options, index=size_options.index(default_size), key='comp_sc_size')
+    show_universe = ctrl_d.toggle('Show peer universe', value=False, key='comp_sc_universe')
+    _sync_query('sc_x', x_label)
+    _sync_query('sc_y', y_label)
+    _sync_query('sc_size', size_label)
 
-    # Special sentinel values for bubble-size selector
-    _SIZE_NONE   = '— None (uniform size) —'
-    _SIZE_SYMBOL = '★ Symbol (company logo)'
-    _size_special = [_SIZE_NONE, _SIZE_SYMBOL]
-    size_keys_extended = _size_special + scatter_keys
-
-    # Resolve scatter axes from URL
-    _sc_x_qp    = _qp_get('sc_x',    'Dividend Yield (%)')
-    _sc_y_qp    = _qp_get('sc_y',    'PE Ratio')
-    _sc_size_qp = _qp_get('sc_size', 'Market Cap')
-
-    def _sc_idx(label, default):
-        if label in scatter_keys:
-            return scatter_keys.index(label)
-        return scatter_keys.index(default) if default in scatter_keys else 0
-
-    def _sc_size_idx(label, default):
-        if label in size_keys_extended:
-            return size_keys_extended.index(label)
-        if default in size_keys_extended:
-            return size_keys_extended.index(default)
-        return size_keys_extended.index(_SIZE_NONE)
-
-    sc1, sc2, sc3, sc4 = st.columns(4)
-    x_label    = sc1.selectbox('X Axis',      options=scatter_keys,
-                               index=_sc_idx(_sc_x_qp, 'Dividend Yield (%)'),
-                               key='comp_sc_x')
-    y_label    = sc2.selectbox('Y Axis',      options=scatter_keys,
-                               index=_sc_idx(_sc_y_qp, 'PE Ratio'),
-                               key='comp_sc_y')
-    size_label = sc3.selectbox('Bubble Size', options=size_keys_extended,
-                               index=_sc_size_idx(_sc_size_qp, 'Market Cap'),
-                               key='comp_sc_size')
-
-    # Sync scatter axes → URL
-    _sc_updates = {}
-    if _qp_get('sc_x')    != x_label:    _sc_updates['sc_x']    = x_label
-    if _qp_get('sc_y')    != y_label:    _sc_updates['sc_y']    = y_label
-    if _qp_get('sc_size') != size_label: _sc_updates['sc_size'] = size_label
-    if _sc_updates:
-        _qp.update(_sc_updates)
-        if _qp.get('tab') != 'scatter':
-            _qp['tab'] = 'scatter'
-
-    show_universe_scatter = sc4.toggle(
-        'Show Universe', value=False,
-        key='comp_sc_universe',
-        help='Show all stocks as grey background dots',
-    )
-
-    # Determine size mode
-    _size_is_none   = (size_label == _SIZE_NONE)
-    _size_is_symbol = (size_label == _SIZE_SYMBOL)
-    size_col = scatter_options.get(size_label) if not _size_is_none and not _size_is_symbol else None
-
-    x_col = scatter_options[x_label]
-    y_col = scatter_options[y_label]
-
-    # ── Helper: return a logo URL for the company ────────────────────────── #
-    _JKSE_LOGO_BASE  = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos'
-    _SP500_LOGO_BASE = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos'
-
-    @st.cache_data(max_entries=512, show_spinner=False)
-    def _load_logo_b64(stock: str, market: str) -> str | None:
-        """Return a direct SVG URL for the stock's logo.
-
-        JKSE  → GitHub raw CDN under jkse/logos/{ticker}.svg
-        Other → GitHub raw CDN under sp500/logos/{ticker}.svg
-        """
-        ticker = stock.split('.')[0]   # strip .JK / exchange suffix
-
-        if market == 'JKSE':
-            return f'{_JKSE_LOGO_BASE}/{ticker}.svg'
-
-        return f'{_SP500_LOGO_BASE}/{ticker}.svg'
-
-
-    # Validate columns exist
-    missing = [c for c in [x_col, y_col] if c not in filtered_df.columns]
-    if size_col and size_col not in filtered_df.columns:
-        missing.append(size_col)
-    if missing:
-        st.warning(f'Some selected metrics are not available in the data: {missing}')
-    elif x_col == y_col:
-        st.warning(
-            f'⚠️ **X Axis** and **Y Axis** are both set to **{x_label}**. '
-            'Please choose two different metrics to plot a meaningful scatter chart.'
-        )
+    x_spec, y_spec = METRIC_OPTIONS[x_label], METRIC_OPTIONS[y_label]
+    if x_spec.source == y_spec.source:
+        st.warning('Choose different metrics for the X and Y axes.')
     else:
-        # ── Columns needed for selected-stocks frame ───────────────────────── #
-        _cols_needed = [c for c in [x_col, y_col, size_col, 'sector'] if c]
-        sc_comp = comp_df[_cols_needed].copy().dropna(subset=[x_col, y_col])
-        sc_comp = sc_comp.reset_index()  # index → 'stock' column
-
-        # ══════════════════════════════════════════════════════════════════════
-        # MODE A — Symbol (company logos via Altair mark_image)
-        # JKSE: logos are fetched directly from GitHub raw-content CDN (SVG).
-        # Other markets: PNG data-URLs converted from local SVG via ImageMagick.
-        # ══════════════════════════════════════════════════════════════════════
-        if _size_is_symbol:
-            # Attach logo URL to each row
-            sc_comp['_logo_url'] = sc_comp['stock'].apply(
-                lambda s: _load_logo_b64(s, sl) or ''
-            )
-            sc_with_logo    = sc_comp[sc_comp['_logo_url'] != ''].copy()
-            sc_without_logo = sc_comp[sc_comp['_logo_url'] == ''].copy()
-
-            color_scale_sel_sym = alt.Scale(
-                domain=selected_stocks,
-                range=[stock_colors[s] for s in selected_stocks],
-            )
-
-            # y-offset for labels in data-unit space
-            _logo_px = 28
-            _y_vals_sym  = sc_comp[y_col].values
-            _y_range_sym = float(_y_vals_sym.max() - _y_vals_sym.min()) or abs(float(_y_vals_sym.mean())) * 0.1 or 1.0
-            _dpp_sym     = (_y_range_sym * 1.1) / 520
-            sc_comp = sc_comp.copy()
-            sc_comp['_label_y'] = sc_comp[y_col] + (_logo_px + 6) * _dpp_sym
-
-            sym_layers = []
-
-            # Universe background dots (if toggled)
-            if show_universe_scatter:
-                _uni_cols_sym = [c for c in [x_col, y_col, 'sector'] if c]
-                sc_universe_sym = filtered_df[_uni_cols_sym].copy().dropna().reset_index()
-                q95_x = sc_universe_sym[x_col].quantile(0.95)
-                q05_x = sc_universe_sym[x_col].quantile(0.05)
-                q95_y = sc_universe_sym[y_col].quantile(0.95)
-                q05_y = sc_universe_sym[y_col].quantile(0.05)
-                sc_universe_sym = sc_universe_sym[
-                    (sc_universe_sym[x_col] <= q95_x) & (sc_universe_sym[x_col] >= q05_x) &
-                    (sc_universe_sym[y_col] <= q95_y) & (sc_universe_sym[y_col] >= q05_y)
-                ]
-                x_med_sym = float(sc_universe_sym[x_col].median())
-                y_med_sym = float(sc_universe_sym[y_col].median())
-                bg_sym = alt.Chart(sc_universe_sym).mark_circle(
-                    opacity=0.18, color='#9ca3af', size=60,
-                ).encode(
-                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-                    tooltip=[
-                        alt.Tooltip('stock:N',  title='Stock'),
-                        alt.Tooltip('sector:N', title='Sector'),
-                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
-                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
-                    ],
-                )
-                vline_sym = alt.Chart(pd.DataFrame({x_col: [x_med_sym]})).mark_rule(
-                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5,
-                ).encode(x=f'{x_col}:Q')
-                hline_sym = alt.Chart(pd.DataFrame({y_col: [y_med_sym]})).mark_rule(
-                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5,
-                ).encode(y=f'{y_col}:Q')
-                sym_layers += [bg_sym, vline_sym, hline_sym]
-
-            # Logo layer — mark_image with static-served SVG URLs
-            if not sc_with_logo.empty:
-                logo_layer = alt.Chart(sc_with_logo).mark_image(
-                    width=44, height=44,
-                ).encode(
-                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-                    url='_logo_url:N',
-                    tooltip=[
-                        alt.Tooltip('stock:N',  title='Stock'),
-                        alt.Tooltip('sector:N', title='Sector'),
-                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
-                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
-                    ],
-                )
-                sym_layers.append(logo_layer)
-
-            # Fallback circles for stocks with no logo
-            if not sc_without_logo.empty:
-                fallback_layer = alt.Chart(sc_without_logo).mark_circle(
-                    size=800, opacity=0.85, stroke='white', strokeWidth=1.5,
-                ).encode(
-                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-                    color=alt.Color('stock:N', scale=color_scale_sel_sym, legend=None),
-                    tooltip=[
-                        alt.Tooltip('stock:N',  title='Stock'),
-                        alt.Tooltip('sector:N', title='Sector'),
-                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
-                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
-                    ],
-                )
-                sym_layers.append(fallback_layer)
-
-            # Ticker labels floating above each logo
-            sym_label_layer = alt.Chart(sc_comp).mark_text(
-                align='center', baseline='bottom',
-                fontSize=11, fontWeight='bold',
-            ).encode(
-                x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-                y=alt.Y('_label_y:Q', title=y_label, scale=alt.Scale(zero=False)),
-                text=alt.Text('stock:N'),
-                color=alt.Color('stock:N', scale=color_scale_sel_sym,
-                                legend=alt.Legend(orient='right')),
-            )
-            sym_layers.append(sym_label_layer)
-
-            sym_chart = alt.layer(*sym_layers).properties(height=520).interactive()
-            st.altair_chart(sym_chart, width='stretch')
-
-
-
-        # ══════════════════════════════════════════════════════════════════════
-        # MODE B — Altair (None or metric-based bubble size)
-        # ══════════════════════════════════════════════════════════════════════
+        x_valid = valid_metric_series(filtered_df, x_spec)
+        y_valid = valid_metric_series(filtered_df, y_spec)
+        valid_index = x_valid.index.intersection(y_valid.index)
+        plot_df = filtered_df.loc[valid_index].copy()
+        selected_plot = plot_df.loc[plot_df.index.intersection(selected_stocks)].reset_index()
+        excluded = [stock for stock in selected_stocks if stock not in selected_plot['stock'].tolist()]
+        if excluded:
+            st.warning(f'Excluded because an axis value is missing or invalid: {", ".join(excluded)}.')
+        if selected_plot.empty:
+            st.warning('No selected stocks have valid values for both axes.')
         else:
-            color_scale_sel = alt.Scale(
-                domain=selected_stocks,
-                range=[stock_colors[s] for s in selected_stocks],
-            )
+            x_hint = 'right' if x_spec.direction == 'higher_better' else ('left' if x_spec.direction == 'lower_better' else 'contextual')
+            y_hint = 'up' if y_spec.direction == 'higher_better' else ('down' if y_spec.direction == 'lower_better' else 'contextual')
+            st.caption(f'Preferred direction: X is {x_hint}; Y is {y_hint}. Contextual axes should not be read as automatic recommendations.')
 
-            # ── Build size encoding ──────────────────────────────────────────
-            if _size_is_none:
-                # Uniform size — no encoding, fixed pixel area
-                _fixed_area = 600
-                size_encoding = alt.value(_fixed_area)
-                _px_radius_arr = np.full(len(sc_comp), np.sqrt(_fixed_area) / 2)
+            if show_universe and not plot_df.empty:
+                x05, x95 = plot_df[x_spec.source].quantile([.05, .95])
+                y05, y95 = plot_df[y_spec.source].quantile([.05, .95])
+                peer_plot = plot_df[
+                    plot_df[x_spec.source].between(x05, x95) & plot_df[y_spec.source].between(y05, y95)
+                ].reset_index()
             else:
-                # Metric-based bubble size
-                size_encoding = alt.Size(f'{size_col}:Q', title=size_label,
-                                         scale=alt.Scale(range=[200, 1800]))
-                _sc_size_vals = sc_comp[size_col].values
-                _sc_min, _sc_max = _sc_size_vals.min(), _sc_size_vals.max()
-                if _sc_max > _sc_min:
-                    _sc_norm = (_sc_size_vals - _sc_min) / (_sc_max - _sc_min)
-                else:
-                    _sc_norm = np.full(len(_sc_size_vals), 0.5)
-                _px_area_arr   = 200 + _sc_norm * (1800 - 200)
-                _px_radius_arr = np.sqrt(_px_area_arr) / 2
+                peer_plot = pd.DataFrame()
 
-            # ── Tooltip list ─────────────────────────────────────────────────
-            _tooltip = [
-                alt.Tooltip('stock:N',    title='Stock'),
-                alt.Tooltip('sector:N',   title='Sector'),
-                alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
-                alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
-            ]
-            if not _size_is_none:
-                _tooltip.append(alt.Tooltip(f'{size_col}:Q', title=size_label, format='.2f'))
-
-            # ── Base scatter for selected stocks ─────────────────────────── #
-            selected_scatter = alt.Chart(sc_comp).mark_circle(
-                opacity=1.0, stroke='white', strokeWidth=1.5,
-            ).encode(
-                x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-                y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-                size=size_encoding,
-                color=alt.Color('stock:N', title='Stock',
-                                scale=color_scale_sel,
-                                legend=alt.Legend(orient='right')),
-                tooltip=_tooltip,
-            )
-
-            # ── Stock name labels ─────────────────────────────────────────── #
-            _y_vals   = sc_comp[y_col].values
-            _y_range  = float(_y_vals.max() - _y_vals.min()) or abs(float(_y_vals.mean())) * 0.1 or 1.0
-            _data_per_px = (_y_range * 1.1) / 520
-
-            sc_comp = sc_comp.copy()
-            sc_comp['_label_y'] = sc_comp[y_col] + (_px_radius_arr + 6) * _data_per_px
-
-            stock_labels = alt.Chart(sc_comp).mark_text(
-                align='center',
-                baseline='bottom',
-                fontSize=12,
-                fontWeight='bold',
-            ).encode(
-                x=alt.X(f'{x_col}:Q', scale=alt.Scale(zero=False)),
-                y=alt.Y('_label_y:Q', scale=alt.Scale(zero=False)),
-                text=alt.Text('stock:N'),
-                color=alt.Color('stock:N', scale=color_scale_sel, legend=None),
-            )
-
+            color_scale = alt.Scale(domain=selected_stocks, range=[stock_colors[stock] for stock in selected_stocks])
             layers = []
+            if not peer_plot.empty:
+                layers.append(alt.Chart(peer_plot).mark_circle(size=45, color='#94A3B8', opacity=.25).encode(
+                    x=alt.X(f'{x_spec.source}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_spec.source}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    tooltip=[alt.Tooltip('stock:N', title='Stock')],
+                ))
+                x_median, y_median = peer_plot[x_spec.source].median(), peer_plot[y_spec.source].median()
+                layers.extend([
+                    alt.Chart(pd.DataFrame({x_spec.source: [x_median]})).mark_rule(color='#94A3B8', strokeDash=[5, 5]).encode(x=f'{x_spec.source}:Q'),
+                    alt.Chart(pd.DataFrame({y_spec.source: [y_median]})).mark_rule(color='#94A3B8', strokeDash=[5, 5]).encode(y=f'{y_spec.source}:Q'),
+                ])
 
-            if show_universe_scatter:
-                _uni_cols_b = [c for c in [x_col, y_col, size_col, 'sector'] if c]
-                sc_universe = filtered_df[_uni_cols_b].copy().dropna(subset=[x_col, y_col]).reset_index()
-                q95_x = sc_universe[x_col].quantile(0.95)
-                q05_x = sc_universe[x_col].quantile(0.05)
-                q95_y = sc_universe[y_col].quantile(0.95)
-                q05_y = sc_universe[y_col].quantile(0.05)
-                sc_universe = sc_universe[
-                    (sc_universe[x_col] <= q95_x) & (sc_universe[x_col] >= q05_x) &
-                    (sc_universe[y_col] <= q95_y) & (sc_universe[y_col] >= q05_y)
-                ]
+            tooltip = [
+                alt.Tooltip('stock:N', title='Stock'),
+                alt.Tooltip(f'{x_spec.source}:Q', title=x_label, format='.2f'),
+                alt.Tooltip(f'{y_spec.source}:Q', title=y_label, format='.2f'),
+            ]
+            size_encoding = alt.value(500)
+            if size_label not in (size_none, size_logo):
+                size_spec = METRIC_OPTIONS[size_label]
+                selected_plot[size_spec.source] = pd.to_numeric(selected_plot[size_spec.source], errors='coerce').clip(lower=0)
+                size_encoding = alt.Size(f'{size_spec.source}:Q', title=size_label, scale=alt.Scale(range=[180, 1400]))
+                tooltip.append(alt.Tooltip(f'{size_spec.source}:Q', title=size_label, format='.2f'))
 
-                background = alt.Chart(sc_universe).mark_circle(
-                    opacity=0.18, color='#9ca3af', size=60,
-                ).encode(
-                    x=alt.X(f'{x_col}:Q', title=x_label, scale=alt.Scale(zero=False)),
-                    y=alt.Y(f'{y_col}:Q', title=y_label, scale=alt.Scale(zero=False)),
-                    tooltip=[
-                        alt.Tooltip('stock:N',    title='Stock'),
-                        alt.Tooltip('sector:N',   title='Sector'),
-                        alt.Tooltip(f'{x_col}:Q', title=x_label, format='.2f'),
-                        alt.Tooltip(f'{y_col}:Q', title=y_label, format='.2f'),
-                    ],
+            if size_label == size_logo:
+                logo_base = 'jkse' if market == 'JKSE' else 'sp500'
+                selected_plot['_logo_url'] = selected_plot['stock'].map(
+                    lambda stock: f'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/{logo_base}/logos/{stock.split(".")[0]}.svg'
                 )
-
-                # Median lines from full universe
-                x_med = float(sc_universe[x_col].median())
-                y_med = float(sc_universe[y_col].median())
-                vline = alt.Chart(pd.DataFrame({x_col: [x_med]})).mark_rule(
-                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5
-                ).encode(x=f'{x_col}:Q')
-                hline = alt.Chart(pd.DataFrame({y_col: [y_med]})).mark_rule(
-                    color='#d1d5db', strokeDash=[5, 5], opacity=0.8, strokeWidth=1.5
-                ).encode(y=f'{y_col}:Q')
-
-                layers = [background, vline, hline, selected_scatter, stock_labels]
+                selected_layer = alt.Chart(selected_plot).mark_image(width=42, height=42).encode(
+                    x=alt.X(f'{x_spec.source}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_spec.source}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    url='_logo_url:N', tooltip=tooltip,
+                )
             else:
-                layers = [selected_scatter, stock_labels]
+                selected_layer = alt.Chart(selected_plot).mark_circle(stroke='white', strokeWidth=1.5).encode(
+                    x=alt.X(f'{x_spec.source}:Q', title=x_label, scale=alt.Scale(zero=False)),
+                    y=alt.Y(f'{y_spec.source}:Q', title=y_label, scale=alt.Scale(zero=False)),
+                    size=size_encoding,
+                    color=alt.Color('stock:N', title='Stock', scale=color_scale),
+                    tooltip=tooltip,
+                )
+            labels = alt.Chart(selected_plot).mark_text(dy=-24, fontWeight='bold').encode(
+                x=f'{x_spec.source}:Q', y=f'{y_spec.source}:Q', text='stock:N',
+                color=alt.Color('stock:N', scale=color_scale, legend=None),
+            )
+            layers.extend([selected_layer, labels])
 
-            chart = alt.layer(*layers).properties(height=520).interactive()
-            st.altair_chart(chart, width='stretch')
+            if x_spec.direction != 'neutral' and y_spec.direction != 'neutral':
+                quadrant_source = peer_plot if not peer_plot.empty else selected_plot
+                x_low, x_high = quadrant_source[x_spec.source].quantile([.1, .9])
+                y_low, y_high = quadrant_source[y_spec.source].quantile([.1, .9])
+                x_mid = quadrant_source[x_spec.source].median()
+                y_mid = quadrant_source[y_spec.source].median()
+                if peer_plot.empty:
+                    layers.extend([
+                        alt.Chart(pd.DataFrame({x_spec.source: [x_mid]})).mark_rule(color='#94A3B8', strokeDash=[5, 5]).encode(x=f'{x_spec.source}:Q'),
+                        alt.Chart(pd.DataFrame({y_spec.source: [y_mid]})).mark_rule(color='#94A3B8', strokeDash=[5, 5]).encode(y=f'{y_spec.source}:Q'),
+                    ])
+                quadrant_rows = []
+                for x_value, x_is_high in ((x_low, False), (x_high, True)):
+                    for y_value, y_is_high in ((y_low, False), (y_high, True)):
+                        x_favorable = x_is_high == (x_spec.direction == 'higher_better')
+                        y_favorable = y_is_high == (y_spec.direction == 'higher_better')
+                        if x_favorable and y_favorable:
+                            quadrant = 'More favorable on both'
+                        elif x_favorable:
+                            quadrant = 'X more favorable'
+                        elif y_favorable:
+                            quadrant = 'Y more favorable'
+                        else:
+                            quadrant = 'Less favorable on both'
+                        quadrant_rows.append({x_spec.source: x_value, y_spec.source: y_value, 'quadrant': quadrant})
+                layers.append(alt.Chart(pd.DataFrame(quadrant_rows)).mark_text(
+                    color='#64748B', fontSize=11, opacity=.8
+                ).encode(x=f'{x_spec.source}:Q', y=f'{y_spec.source}:Q', text='quadrant:N'))
+            st.altair_chart(alt.layer(*layers).properties(height=520).interactive(), width='stretch')
 
-        # ── Quick stats table below scatter ──────────────────────────────── #
-        def _safe_isnan(v):
-            """Return True when v is a missing / non-finite numeric value."""
-            try:
-                return np.isnan(float(v))
-            except (TypeError, ValueError):
-                return v is None or v == ''
-
-        def _fmt_val(fmt, v):
-            if _safe_isnan(v):
-                return 'N/A'
-            try:
-                return fmt.format(v)
-            except (TypeError, ValueError):
-                return str(v)
-
-        st.markdown('##### Selected Stocks — Key Values')
-        quick_cols = st.columns(len(selected_stocks))
-        for i, stock in enumerate(selected_stocks):
-            if stock not in comp_df.index:
-                continue
-            try:
-                row = comp_df.loc[stock]
-                x_val = row[x_col] if x_col in row.index else float('nan')
-                y_val = row[y_col] if y_col in row.index else float('nan')
-
-                _, _, x_fmt = METRIC_OPTIONS[x_label]
-                _, _, y_fmt = METRIC_OPTIONS[y_label]
-
-                # Size value line (only for metric modes)
-                if not _size_is_none and not _size_is_symbol and size_col in row.index:
-                    sz_val  = row[size_col]
-                    _, _, sz_fmt = METRIC_OPTIONS[size_label]
-                    size_line = (
-                        f'<div style="font-size:0.8rem;color:#6b7280">'
-                        f'{size_label}: <b>{_fmt_val(sz_fmt, sz_val)}</b></div>'
-                    )
-                else:
-                    size_line = ''
-
-                # Logo thumbnail (for Symbol mode)
-                if _size_is_symbol:
-                    logo_url = _load_logo_b64(stock, sl)
-                    logo_html = (
-                        f'<img src="{logo_url}" style="height:36px;margin-bottom:6px;object-fit:contain"/>'
-                        if logo_url else ''
-                    )
-                else:
-                    logo_html = ''
-
-                card_html = f"""
-<div style="border:2px solid {stock_colors[stock]};border-radius:10px;padding:12px 14px;text-align:center;">
-    {logo_html}
-    <div style="font-size:1.1rem;font-weight:800;color:{stock_colors[stock]}">{stock}</div>
-    <div style="font-size:0.8rem;color:#6b7280;margin-top:4px">{x_label}: <b>{_fmt_val(x_fmt, x_val)}</b></div>
-    <div style="font-size:0.8rem;color:#6b7280">{y_label}: <b>{_fmt_val(y_fmt, y_val)}</b></div>
-    {size_line}
-</div>
-""".strip()
-                quick_cols[i].html(card_html)
-            except Exception as e:
-                logger.warning('COMPARISON | event=key_values_error | stock=%s | error=%s', stock, e)
-                quick_cols[i].warning(f'Could not render key values for {stock}.')
+            summary = []
+            for stock in selected_stocks:
+                if stock not in comp_df.index:
+                    continue
+                summary.append({
+                    'Stock': stock,
+                    x_label: format_metric_value(x_label, comp_df.loc[stock, x_spec.source], divisor, currency_suffix),
+                    y_label: format_metric_value(y_label, comp_df.loc[stock, y_spec.source], divisor, currency_suffix),
+                })
+            st.dataframe(pd.DataFrame(summary).set_index('Stock'), width='stretch')
