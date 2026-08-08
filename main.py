@@ -24,7 +24,7 @@ logging.getLogger('streamlit.web.server.media_file_handler').setLevel(logging.CR
 page_home = st.Page('home.py', title='Home', icon='🪙')
 page_screener = st.Page('apps/screener/stock_picker.py', title='Ranking Screener', icon='💸')
 page_comparison = st.Page('apps/screener/stock_comparison.py', title='Stock Comparison', icon='⚖️')
-page_market_watch = st.Page('apps/screener/market_watch.py', title='Stock Heatmap', icon='📡')
+page_market_watch = st.Page('apps/screener/market_watch.py', title='Market Heatmap', icon='📡')
 # page_market_animation = st.Page('apps/screener/market_watch_animation.py', title='Market Animation', icon='📽️')
 page_porto = st.Page('apps/porto/porto_overview.py', title='Portfolio Analytics', icon='💰')
 page_history = st.Page('apps/history/history_overview.py', title='Historical Breakdown', icon='🧭')
@@ -33,9 +33,9 @@ page_best_timing = st.Page('apps/calendar/best_timing.py', title='Best Timing', 
 page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
-# page_backtester = st.Page('apps/trading/backtester.py', title='Position Trading - Long Term', icon='📈')
-# page_day_trading = st.Page('apps/trading/day_trading.py', title='Day Trading Lab', icon='⚡')
-# page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Swing Trading Lab', icon='🏄')
+page_backtester = st.Page('apps/trading/backtester.py', title='Position Trading - Long Term', icon='📈')
+page_day_trading = st.Page('apps/trading/day_trading.py', title='Day Trading Lab', icon='⚡')
+page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Swing Trading Lab', icon='🏄')
 
 
 pages = st.navigation(
@@ -55,11 +55,11 @@ pages = st.navigation(
                 page_market_watch,
                 page_comparison,
             ],
-        # 'Trading': [
-        #         page_backtester,
-        #         page_day_trading,
-        #         page_swing_trading,
-        # ]
+        'Trading': [
+                page_backtester,
+                page_day_trading,
+                # page_swing_trading,
+        ]
     }
 )
 
