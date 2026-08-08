@@ -1,841 +1,859 @@
-import itertools
-import hashlib
-import streamlit as st
+import concurrent.futures
 import datetime
-import pandas as pd
+
+import altair as alt
 import numpy as np
-import vectorbt as vbt
-from st_supabase_connection import SupabaseConnection
+import pandas as pd
+import streamlit as st
 
 import harvest.data as hd
-import harvest.plot as hp
 
-st.title('Strategy Backtester')
+
+CACHE_TTL = 6 * 60 * 60
+SCAN_SCHEMA_VERSION = 3
+PROFILE_BATCH_SIZE = 30
+SCAN_WORKERS = 5
+MIN_PROJECTION_GROWTH = -20.0
+MAX_PROJECTION_GROWTH = 30.0
+RESULT_COLUMNS = [
+    "Symbol",
+    "Company",
+    "Sector",
+    "Market Cap",
+    "Current PE",
+    "PE Mean",
+    "PE Median",
+    "PE Discount",
+    "PE Percentile",
+    "Current PS",
+    "PS Mean",
+    "PS Median",
+    "PS Discount",
+    "PS Percentile",
+    "Revenue Growth 5Y",
+    "Revenue Growth TTM",
+    "Earnings Growth 5Y",
+    "Earnings Growth TTM",
+    "Margin TTM",
+    "Valuation Score",
+    "Growth Score",
+    "Quality Score",
+    "Score",
+    "Upside to Mean",
+    "Potential Upside 1Y",
+    "Potential Upside 5Y",
+    "Implied Price 1Y",
+    "Implied Price 5Y",
+    "Statement Date",
+]
+
+
+st.set_page_config(page_title='Position Trading - Panen Dividen')
+st.title("Growth at a Discount")
+st.caption(
+    "Find profitable IDX businesses whose earnings and revenue multiples are below "
+    "their own history while revenue and earnings continue to grow."
+)
+
+st.sidebar.markdown("### Research method")
 st.sidebar.markdown(
+    "The screen compares each company with itself. P/E measures the price paid for "
+    "earnings, P/S measures the price paid for revenue, and growth confirms that a "
+    "low multiple is not simply the result of a shrinking business."
+)
+
+st.html(
     """
-    Explore specific trading strategies across different time horizons.
-    Choose a strategy, enter a ticker from the exchange, and set the timeframe
-    to view cumulative performance, win margins, and recent trade logs.
+    <style>
+        [data-testid="stMetric"] {
+            background: color-mix(in srgb, #064e3b 4%, transparent);
+            border-top: 2px solid #0f766e;
+            padding: 0.8rem 0.9rem;
+        }
+        [data-testid="stMetricLabel"] { color: #36534a; }
+        [data-testid="stMetricValue"] { color: #123c31; }
+        .method-note {
+            color: #36534a;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            max-width: 72ch;
+        }
+    </style>
     """
 )
 
-# Initialize Supabase explicitly inside Streamlit
-@st.cache_resource(show_spinner=False)
-def get_db_connection() -> SupabaseConnection:
-    conn = st.connection("supabase", type=SupabaseConnection)
+
+def _empty_results() -> pd.DataFrame:
+    return pd.DataFrame(columns=RESULT_COLUMNS)
+
+
+def _series(df: pd.DataFrame, column: str, default=None) -> pd.Series:
+    if column in df.columns:
+        return df[column]
+    return pd.Series(default, index=df.index)
+
+
+def _finite(value, default=np.nan) -> float:
     try:
-         conn.auth.sign_in_with_password({
-             "email": st.secrets["connections"]["supabase"]["EMAIL_ADDRESS"],
-             "password": st.secrets["connections"]["supabase"]["PASSWORD"],
-         })
-    except Exception:
-         pass
-    return conn
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+    return value if np.isfinite(value) else default
 
-conn = get_db_connection()
 
-# --- Top Ranked Valuation Shortlist ---
-with st.container():
-    st.subheader("Top Ranked Shortlist", divider='blue')
-    filter_cols = st.columns(4)
-    min_mcap_trill = filter_cols[0].number_input("Min Market Cap (Trillion IDR)", value=1.0, step=1.0)
-    min_pe = filter_cols[1].number_input("Minimum PE", value=5.0, step=1.0)
-    max_pe = filter_cols[2].number_input("Maximum PE", value=50.0, step=1.0)
-    max_stocks = filter_cols[3].number_input("Max Stocks Output", min_value=10, max_value=200, value=50, step=10)
-    include_blue_chips = st.checkbox("Pin Major Blue-chips (Banks, Consumer, Telecom, Astra, Energy, Mining)", value=True, help="Always show major blue-chip stocks at the top of the list, regardless of filters")
+def _text(value, default: str) -> str:
+    if value is None or pd.isna(value):
+        return default
+    text = str(value).strip()
+    return text if text else default
 
-    final_df = pd.DataFrame()
-    try:
-        val_df = pd.read_csv('data/jkse/valuation.csv')
-        
+
+def _median_comparison(discount: float, multiple: str) -> str:
+    direction = "below" if discount >= 0 else "above"
+    return f"{multiple} is {abs(discount):.1f}% {direction} its median"
+
+
+def _bounded_growth(value: float) -> float:
+    """Convert a percentage to a conservative annual projection rate."""
+    return np.clip(_finite(value, 0.0), MIN_PROJECTION_GROWTH, MAX_PROJECTION_GROWTH) / 100
+
+
+def _project_upside(
+    pe_current: float,
+    pe_mean: float,
+    ps_current: float,
+    ps_mean: float,
+    earnings_growth: float,
+    revenue_growth: float,
+    years: int,
+) -> dict:
+    earnings_rate = _bounded_growth(earnings_growth)
+    revenue_rate = _bounded_growth(revenue_growth)
+    pe_factor = pe_mean / pe_current * (1 + earnings_rate) ** years
+    ps_factor = ps_mean / ps_current * (1 + revenue_rate) ** years
+    blended_factor = np.mean([pe_factor, ps_factor])
+    return {
+        "blended": (blended_factor - 1) * 100,
+        "earnings": (pe_factor - 1) * 100,
+        "revenue": (ps_factor - 1) * 100,
+        "earnings_growth": earnings_rate * 100,
+        "revenue_growth": revenue_rate * 100,
+    }
+
+
+def _pct_rank(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().sum() <= 1:
+        return pd.Series(50.0, index=series.index)
+    return numeric.rank(pct=True, method="average") * 100
+
+
+def _format_idr(value: float) -> str:
+    if not np.isfinite(value):
+        return "N/A"
+    if abs(value) >= 1_000_000_000_000:
+        return f"IDR {value / 1_000_000_000_000:.1f}T"
+    if abs(value) >= 1_000_000_000:
+        return f"IDR {value / 1_000_000_000:.1f}B"
+    return f"IDR {value:,.0f}"
+
+
+def _fetch_profiles(symbols: list[str]) -> pd.DataFrame:
+    frames = []
+    for start in range(0, len(symbols), PROFILE_BATCH_SIZE):
         try:
-            cp_df = pd.read_csv('data/jkse/company_profiles.csv')
-            val_df = val_df.merge(cp_df[['symbol', 'mktCap']], left_on='stock', right_on='symbol', how='inner')
+            frame = hd.get_company_profile(symbols[start : start + PROFILE_BATCH_SIZE])
+            if frame is not None and not frame.empty:
+                frames.append(frame)
         except Exception:
-            pass
-        
-        # 1. Calculate avg_pe and Discount for all stocks before filtering
-        if 'last_1y_mean' in val_df.columns and 'last_5y_mean' in val_df.columns:
-            val_df['avg_pe'] = val_df[['last_1y_mean', 'last_3y_mean', 'last_5y_mean']].mean(axis=1)
-        else:
-            val_df['avg_pe'] = val_df[['last_2y_mean', 'last_3y_mean', 'last_10y_mean']].mean(axis=1)
-            
-        val_df['Discount'] = (1 - (val_df['current_pe'] / val_df['avg_pe'])) * 100
-        
-        # 2. Apply dynamic filters to create the base shortlist
-        mask = pd.Series(True, index=val_df.index)
-        if 'mktCap' in val_df.columns:
-            mask &= (val_df['mktCap'] >= (min_mcap_trill * 1_000_000_000_000))
-        
-        mask &= (val_df['current_pe'] >= min_pe) & (val_df['current_pe'] <= max_pe)
-        mask &= (val_df['avg_pe'] > 0) & (val_df['avg_pe'] < 100)
-        
-        filtered_df = val_df[mask].copy().sort_values(by='Discount', ascending=False)
-        
-        # 3. Handle Special Pinning (Blue Chips) & trim to max_stocks
-        special_stocks_df = pd.DataFrame()
-        
-        if include_blue_chips:
-            blue_chips = [
-                'BBCA.JK', 'BMRI.JK', 'BBRI.JK', 'BBNI.JK', # Banks
-                'INDF.JK', 'ICBP.JK', 'UNVR.JK', 'AMRT.JK', # Consumer/Retail
-                'TLKM.JK', 'EXCL.JK', 'ISAT.JK',            # Telecom
-                'ASII.JK', 'UNTR.JK',                      # Astra Group
-                'ADRO.JK', 'PTBA.JK', 'ITMG.JK',           # Mining/Energy
-                'BRIS.JK', 'KLBF.JK', 'GOTO.JK'            # Others
-            ]
-            special_stocks_df = val_df[val_df['stock'].isin(blue_chips)].copy()
-            
-        if not special_stocks_df.empty:
-            # Deduplicate and sort by Discount
-            special_stocks_df = special_stocks_df.drop_duplicates(subset=['stock']).sort_values(by='Discount', ascending=False)
-            # Remove special stocks from the filtered list to avoid duplicates
-            filtered_df = filtered_df[~filtered_df['stock'].isin(special_stocks_df['stock'])]
-            # Prepend special stocks to the shortlist
-            final_df = pd.concat([special_stocks_df, filtered_df]).head(int(max_stocks))
-        else:
-            final_df = filtered_df.head(int(max_stocks))
-            
-        top_stocks = final_df[['stock', 'current_pe', 'avg_pe', 'Discount']].rename(
-            columns={
-                'stock': 'Symbol',
-                'current_pe': 'Current PE',
-                'avg_pe': 'Historical Avg PE',
-            }
-        )
-        
-        st.dataframe(
-            top_stocks,
-            column_config={
-                "Discount": st.column_config.NumberColumn(
-                    "Discount vs Avg PE",
-                    format="%.2f%%",
-                    help="Calculated as (1 - (Current PE / Historical Average PE)) * 100"
-                ),
-                "Current PE": st.column_config.NumberColumn("Current PE", format="%.2f"),
-                "Historical Avg PE": st.column_config.NumberColumn("Historical Avg PE", format="%.2f")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-    except Exception as e:
-        st.warning(f"Could not load valuation data: {e}")
+            continue
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames).loc[lambda frame: ~frame.index.duplicated(keep="first")]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RSI PARAMETER GRID SEARCH OPTIMIZER
-# ─────────────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_idx_universe() -> pd.DataFrame:
+    listed = hd.get_all_idx_stocks()
+    symbols = listed["symbol"].dropna().astype(str).unique().tolist()
+    profiles = _fetch_profiles(symbols)
+    if profiles.empty:
+        return profiles
 
-def _run_rsi_backtest(price_series: pd.Series, period: int, buy_thresh: int, sell_thresh: int, max_hold: int, buy_fee: float, sell_fee: float, sell_tax: float):
-    """Run RSI day-trading backtest and return (total_return, win_rate, max_drawdown, num_trades)."""
-    if len(price_series) < period + 5:
-        return None
+    profiles = profiles.copy()
+    profiles["mktCap"] = pd.to_numeric(_series(profiles, "mktCap"), errors="coerce")
+    profiles["price"] = pd.to_numeric(_series(profiles, "price"), errors="coerce")
+    profiles["isActivelyTrading"] = (
+        _series(profiles, "isActivelyTrading", False).fillna(False).astype(bool)
+    )
+    profiles["isEtf"] = _series(profiles, "isEtf", False).fillna(False).astype(bool)
+    profiles["isFund"] = _series(profiles, "isFund", False).fillna(False).astype(bool)
+    profiles = profiles[
+        profiles["isActivelyTrading"]
+        & ~profiles["isEtf"]
+        & ~profiles["isFund"]
+        & (profiles["mktCap"] > 0)
+        & (profiles["price"] > 0)
+    ]
+    profiles.index.name = "symbol"
+    return profiles.sort_values("mktCap", ascending=False)
 
-    # Wilder's RSI calculation (matches TradingView RMA)
-    # Using alpha=1/period and adjust=False in ewm replicates Wilder's recursive smoothing
-    delta = price_series.diff()
-    up    = delta.clip(lower=0)
-    down  = -delta.clip(upper=0)
-    ema_up   = up.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    ema_down = down.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    rs  = ema_up / ema_down
-    rsi = 100 - (100 / (1 + rs))
 
-    raw_entries = (rsi < buy_thresh).to_numpy()
-    raw_exits   = (rsi > sell_thresh).to_numpy()
+def _prepare_financials(financials: pd.DataFrame) -> pd.DataFrame:
+    required = {"date", "revenue", "netIncome", "reportedCurrency"}
+    if financials is None or financials.empty or not required.issubset(financials.columns):
+        return pd.DataFrame()
 
-    clean_entries = np.zeros_like(raw_entries, dtype=bool)
-    clean_exits   = np.zeros_like(raw_exits, dtype=bool)
+    frame = financials.copy()
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    for column in ("revenue", "netIncome"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame = frame.dropna(subset=["date", "revenue", "netIncome"])
+    return frame.sort_values("date", ascending=False).reset_index(drop=True)
 
-    in_pos = False
-    days_held = 0
-    for i in range(len(raw_entries)):
-        if not in_pos:
-            if raw_entries[i]:
-                clean_entries[i] = True
-                in_pos = True
-                days_held = 0
-        else:
-            days_held += 1
-            if raw_exits[i] or days_held >= max_hold:
-                clean_exits[i] = True
-                in_pos = False
 
-    entries = pd.Series(clean_entries, index=price_series.index)
-    exits   = pd.Series(clean_exits, index=price_series.index)
+def _financial_history(financials: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    ordered = financials.sort_values("date").copy()
+    ordered["Revenue TTM"] = ordered["revenue"].rolling(4, min_periods=4).sum()
+    ordered["Earnings TTM"] = ordered["netIncome"].rolling(4, min_periods=4).sum()
+    ordered["Revenue Growth"] = ordered["Revenue TTM"].pct_change(4) * 100
+    ordered["Earnings Growth"] = ordered["Earnings TTM"].pct_change(4) * 100
+    ordered["Margin"] = ordered["Earnings TTM"] / ordered["Revenue TTM"] * 100
+    valid = ordered.dropna(subset=["Revenue TTM", "Earnings TTM"])
+    if valid.empty:
+        return ordered, {}
 
-    # Create a fee series that applies the correct fee at the point of entry and exit
-    fees = pd.Series(0.0, index=price_series.index)
-    fees[entries] = buy_fee / 100.0
-    fees[exits]  = (sell_fee + sell_tax) / 100.0
+    recent_growth = valid.tail(20)
+    stats = {
+        "revenue_ttm": _finite(valid["Revenue TTM"].iloc[-1]),
+        "earnings_ttm": _finite(valid["Earnings TTM"].iloc[-1]),
+        "revenue_growth_ttm": _finite(valid["Revenue Growth"].iloc[-1]),
+        "earnings_growth_ttm": _finite(valid["Earnings Growth"].iloc[-1]),
+        "revenue_growth_5y": _finite(recent_growth["Revenue Growth"].median()),
+        "earnings_growth_5y": _finite(recent_growth["Earnings Growth"].median()),
+        "margin_ttm": _finite(valid["Margin"].iloc[-1]),
+        "margin_median": _finite(valid.tail(20)["Margin"].median()),
+        "statement_date": valid["date"].iloc[-1],
+    }
+    return ordered, stats
 
+
+def _ratio_summary(
+    prices: pd.DataFrame,
+    financials: pd.DataFrame,
+    shares: float,
+    ratio: str,
+    history_years: int,
+) -> tuple[pd.DataFrame, dict]:
+    reported_currency = str(financials["reportedCurrency"].dropna().iloc[0])
+    history = hd.calc_ratio_history(
+        prices,
+        financials.copy(),
+        n_shares=shares,
+        ratio=ratio,
+        reported_currency=reported_currency,
+        target_currency="IDR",
+    )
+    history = history.rename(columns={"pe": "ratio"})[["date", "ratio"]].copy()
+    history["date"] = pd.to_datetime(history["date"], errors="coerce")
+    history["ratio"] = pd.to_numeric(history["ratio"], errors="coerce")
+    history = history.replace([np.inf, -np.inf], np.nan).dropna()
+    history = history[history["ratio"] > 0].sort_values("date")
+    if history.empty:
+        return history, {}
+
+    cutoff = history["date"].max() - pd.DateOffset(years=history_years)
+    window = history[history["date"] >= cutoff]
+    if len(window) < 60:
+        return history, {}
+
+    current = _finite(history["ratio"].iloc[-1])
+    mean = _finite(window["ratio"].mean())
+    median = _finite(window["ratio"].median())
+    percentile = _finite((window["ratio"] <= current).mean() * 100)
+    discount = _finite((median / current - 1) * 100) if current > 0 else np.nan
+    return history, {
+        "current": current,
+        "mean": mean,
+        "median": median,
+        "percentile": percentile,
+        "discount": discount,
+        "observations": len(window),
+    }
+
+
+def _analyze_stock(
+    symbol: str,
+    profile: dict,
+    history_years: int,
+    include_history: bool = False,
+):
     try:
-        pf = vbt.Portfolio.from_signals(price_series, entries, exits, freq='1D', fees=fees)
-        num_trades = len(pf.trades)
-        if num_trades == 0:
+        price = _finite(profile.get("price"))
+        market_cap = _finite(profile.get("mktCap"))
+        shares = market_cap / price if price > 0 and market_cap > 0 else np.nan
+        if not np.isfinite(shares) or shares <= 0:
             return None
-        tot_ret  = float(pf.total_return() * 100)
-        win_rate = float(pf.trades.win_rate() * 100)
-        max_dd   = float(pf.max_drawdown() * 100)
-        return tot_ret, win_rate, max_dd, num_trades
+
+        start = (datetime.date.today() - datetime.timedelta(days=(history_years + 1) * 366)).isoformat()
+        prices = hd.get_daily_stock_price(symbol, start_from=start)
+        financials = _prepare_financials(hd.get_financial_data(symbol, period="quarter"))
+        if prices is None or prices.empty or len(financials) < 8:
+            return None
+
+        financial_history, growth = _financial_history(financials)
+        pe_history, pe = _ratio_summary(prices, financials, shares, "pe", history_years)
+        ps_history, ps = _ratio_summary(prices, financials, shares, "ps", history_years)
+        if not growth or not pe or not ps:
+            return None
+
+        mean_reversion = np.mean(
+            [pe["mean"] / pe["current"], ps["mean"] / ps["current"]]
+        )
+        one_year = _project_upside(
+            pe["current"],
+            pe["mean"],
+            ps["current"],
+            ps["mean"],
+            growth["earnings_growth_ttm"],
+            growth["revenue_growth_ttm"],
+            1,
+        )
+        five_year = _project_upside(
+            pe["current"],
+            pe["mean"],
+            ps["current"],
+            ps["mean"],
+            growth["earnings_growth_5y"],
+            growth["revenue_growth_5y"],
+            5,
+        )
+
+        row = {
+            "Symbol": symbol,
+            "Company": _text(profile.get("companyName"), symbol),
+            "Sector": _text(profile.get("sector"), "Unknown"),
+            "Market Cap": market_cap,
+            "Current Price": price,
+            "Current PE": pe["current"],
+            "PE Mean": pe["mean"],
+            "PE Median": pe["median"],
+            "PE Discount": pe["discount"],
+            "PE Percentile": pe["percentile"],
+            "Current PS": ps["current"],
+            "PS Mean": ps["mean"],
+            "PS Median": ps["median"],
+            "PS Discount": ps["discount"],
+            "PS Percentile": ps["percentile"],
+            "Revenue Growth 5Y": growth["revenue_growth_5y"],
+            "Revenue Growth TTM": growth["revenue_growth_ttm"],
+            "Earnings Growth 5Y": growth["earnings_growth_5y"],
+            "Earnings Growth TTM": growth["earnings_growth_ttm"],
+            "Margin TTM": growth["margin_ttm"],
+            "Margin Median": growth["margin_median"],
+            "Revenue TTM": growth["revenue_ttm"],
+            "Earnings TTM": growth["earnings_ttm"],
+            "Upside to Mean": (mean_reversion - 1) * 100,
+            "Potential Upside 1Y": one_year["blended"],
+            "Potential Upside 5Y": five_year["blended"],
+            "Earnings Upside 1Y": one_year["earnings"],
+            "Revenue Upside 1Y": one_year["revenue"],
+            "Earnings Upside 5Y": five_year["earnings"],
+            "Revenue Upside 5Y": five_year["revenue"],
+            "Earnings Growth Assumption 1Y": one_year["earnings_growth"],
+            "Revenue Growth Assumption 1Y": one_year["revenue_growth"],
+            "Earnings Growth Assumption 5Y": five_year["earnings_growth"],
+            "Revenue Growth Assumption 5Y": five_year["revenue_growth"],
+            "Implied Price 1Y": price * (1 + one_year["blended"] / 100),
+            "Implied Price 5Y": price * (1 + five_year["blended"] / 100),
+            "Statement Date": growth["statement_date"],
+        }
+        if not include_history:
+            return row
+        return {
+            "row": row,
+            "pe_history": pe_history,
+            "ps_history": ps_history,
+            "financial_history": financial_history,
+        }
     except Exception:
         return None
 
 
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("🔍 RSI Grid Search Optimizer", divider='violet')
-st.caption(
-    "Sweep multiple RSI parameter combinations across the entire shortlist. "
-    "All price data is fetched in a single batch; backtesting runs fully in-memory."
-)
-
-with st.expander("⚙️ Configure Grid Parameters", expanded=True):
-    g_col1, g_col2, g_col3, g_col4 = st.columns(4)
-
-    with g_col1:
-        st.markdown("**RSI Period**")
-        rsi_period_min  = st.number_input("Period Min",  min_value=3,  max_value=50, value=7,  step=1,  key="opt_period_min")
-        rsi_period_max  = st.number_input("Period Max",  min_value=3,  max_value=50, value=14, step=1,  key="opt_period_max")
-        rsi_period_step = st.number_input("Period Step", min_value=1,  max_value=20, value=7,  step=1,  key="opt_period_step")
-
-    with g_col2:
-        st.markdown("**Buy if RSI <**")
-        buy_min  = st.number_input("Buy Min",  min_value=5,  max_value=49, value=20, step=1, key="opt_buy_min")
-        buy_max  = st.number_input("Buy Max",  min_value=5,  max_value=49, value=35, step=1, key="opt_buy_max")
-        buy_step = st.number_input("Buy Step", min_value=1,  max_value=20, value=10,  step=1, key="opt_buy_step")
-
-    with g_col3:
-        st.markdown("**Sell if RSI >**")
-        sell_min  = st.number_input("Sell Min",  min_value=51, max_value=95, value=60, step=1, key="opt_sell_min")
-        sell_max  = st.number_input("Sell Max",  min_value=51, max_value=95, value=80, step=1, key="opt_sell_max")
-        sell_step = st.number_input("Sell Step", min_value=1,  max_value=20, value=20,  step=1, key="opt_sell_step")
-
-    with g_col4:
-        st.markdown("**Other Settings**")
-        opt_max_hold = st.number_input("Max Hold Days", min_value=1, max_value=20, value=3, step=1, key="opt_max_hold")
-        opt_rank_by  = st.selectbox(
-            "Rank By",
-            options=["Win Rate", "Total Return", "Least Drawdown"],
-            key="opt_rank_by"
-        )
-        opt_top_n = st.number_input("Show Top N Rows", min_value=5, max_value=300, value=30, step=5, key="opt_top_n")
-
-    st.markdown("---")
-    c_col1, c_col2, c_col3, c_col4 = st.columns(4)
-    with c_col1:
-        st.markdown("**Trading Costs (%)**")
-        opt_buy_fee  = st.number_input("Buy Fee %",  min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="opt_buy_fee")
-    with c_col2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        opt_sell_fee = st.number_input("Sell Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="opt_sell_fee")
-    with c_col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        opt_sell_tax = st.number_input("Sell Tax %", min_value=0.0, max_value=5.0, value=0.1,  step=0.01, key="opt_sell_tax")
-
-    g_date_col1, g_date_col2 = st.columns(2)
-    opt_start = g_date_col1.date_input("Start Date", value=datetime.date(2023, 1, 1), key="opt_start")
-    opt_end   = g_date_col2.date_input("End Date",   value=datetime.date.today(),     key="opt_end")
-
-# Build the parameter grid and compute size
-periods        = list(range(int(rsi_period_min), int(rsi_period_max) + 1, int(rsi_period_step)))
-buy_thresholds = list(range(int(buy_min),  int(buy_max)  + 1, int(buy_step)))
-sell_thresholds= list(range(int(sell_min), int(sell_max) + 1, int(sell_step)))
-param_combos   = list(itertools.product(periods, buy_thresholds, sell_thresholds))
-
-shortlist_tickers = final_df['stock'].tolist() if not final_df.empty else []
-total_combos = len(param_combos) * len(shortlist_tickers)
-
-# Info line
-info_cols = st.columns(4)
-info_cols[0].metric("RSI Periods",    f"{periods}")
-info_cols[1].metric("Buy Thresholds", f"{buy_thresholds}")
-info_cols[2].metric("Sell Thresholds",f"{sell_thresholds}")
-info_cols[3].metric("Total Runs",     f"{total_combos:,}")
-
-if total_combos > 1000:
-    st.warning(
-        f"⚠️ **Large grid**: {total_combos:,} combinations across {len(shortlist_tickers)} stocks "
-        "may take several minutes. Consider narrowing the ranges."
-    )
-
-run_optimizer = st.button("🚀 Run RSI Grid Search", type="primary", disabled=(total_combos == 0 or len(shortlist_tickers) == 0))
-
-# Two separate cache keys:
-# - price_cache_key: depends only on (tickers, dates) — changing RSI params won't re-fetch
-# - results_cache_key: depends on everything — changing any param clears results
-price_cache_key = hashlib.md5(
-    f"{sorted(shortlist_tickers)}{opt_start}{opt_end}".encode()
-).hexdigest()
-results_cache_key = hashlib.md5(
-    f"{periods}{buy_thresholds}{sell_thresholds}{opt_max_hold}{opt_start}{opt_end}{shortlist_tickers}{opt_buy_fee}{opt_sell_fee}{opt_sell_tax}".encode()
-).hexdigest()
-
-if run_optimizer:
-    st.session_state.pop('optimizer_results', None)
-    st.session_state.pop('optimizer_results_cache_key', None)
-
-    # --- Price data: reuse cached copy if stocks & dates haven't changed ---
-    if st.session_state.get('optimizer_price_cache_key') == price_cache_key and \
-       'optimizer_prices' in st.session_state:
-        all_prices_df = st.session_state['optimizer_prices']
-        st.info(f"💾 Using cached price data ({len(all_prices_df):,} rows). Only RSI params changed.")
-    else:
-        fetch_progress = st.progress(0, text="Fetching price data from Supabase…")
-        all_rows = []
-        try:
-            start_str = opt_start.strftime('%Y-%m-%d')
-
-            # Supabase has a hard server-side row cap (~1000 rows per request).
-            # Fetching each ticker individually guarantees we get all rows
-            # (each stock has ~500 rows, well within the per-request limit).
-            for i, ticker in enumerate(shortlist_tickers):
-                fetch_progress.progress(
-                    (i + 1) / len(shortlist_tickers),
-                    text=f"Fetching {ticker}  ({i+1}/{len(shortlist_tickers)})…"
-                )
-                try:
-                    res = (
-                        conn.table("historical_prices")
-                            .select("symbol,date,close")
-                            .eq("symbol", ticker)
-                            .gte("date", start_str)
-                            .execute()
-                    )
-                    all_rows.extend(res.data or [])
-                except Exception:
-                    pass  # skip failed tickers silently
-
-            fetch_progress.empty()
-
-            all_prices_df = pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
-            if not all_prices_df.empty:
-                all_prices_df['date']  = pd.to_datetime(all_prices_df['date'])
-                all_prices_df['close'] = pd.to_numeric(all_prices_df['close'], errors='coerce')
-                all_prices_df = all_prices_df[all_prices_df['date'] <= pd.to_datetime(opt_end)]
-                all_prices_df = all_prices_df.sort_values(['symbol', 'date'])
-
-            # Cache for reuse when only RSI params change
-            st.session_state['optimizer_prices'] = all_prices_df
-            st.session_state['optimizer_price_cache_key'] = price_cache_key
-
-        except Exception as e:
-            fetch_progress.empty()
-            st.error(f"Failed to fetch price data: {e}")
-            all_prices_df = pd.DataFrame()
-
-
-
-    if all_prices_df.empty:
-        st.error("No price data returned. Make sure the shortlist is non-empty and Supabase is reachable.")
-    else:
-        # Show fetch diagnostics so we can verify all stocks were retrieved
-        fetch_cols = st.columns(3)
-        fetch_cols[0].metric("Rows Fetched", f"{len(all_prices_df):,}")
-        fetch_cols[1].metric("Stocks with Data", f"{all_prices_df['symbol'].nunique()}")
-        fetch_cols[2].metric("Expected Stocks", f"{len(shortlist_tickers)}")
-
-        results = []
-        progress_bar  = st.progress(0, text="Running grid search…")
-        status_text   = st.empty()
-        processed     = 0
-
-        grouped = {sym: grp.set_index('date')['close'] for sym, grp in all_prices_df.groupby('symbol')}
-
-        for ticker in shortlist_tickers:
-            if ticker not in grouped:
-                processed += len(param_combos)
-                continue
-            price_series = grouped[ticker]
-
-            for (period, buy_thresh, sell_thresh) in param_combos:
-                # skip invalid combos
-                if buy_thresh >= sell_thresh:
-                    processed += 1
-                    continue
-
-                result = _run_rsi_backtest(
-                    price_series, period, buy_thresh, sell_thresh, int(opt_max_hold),
-                    opt_buy_fee, opt_sell_fee, opt_sell_tax
-                )
-
-                if result is not None:
-                    tot_ret, win_rate, max_dd, num_trades = result
-
-                    results.append({
-                        'Symbol':        ticker,
-                        'RSI Period':    period,
-                        'Buy <':         buy_thresh,
-                        'Sell >':        sell_thresh,
-                        'Total Return':  tot_ret,
-                        'Win Rate':      win_rate,
-                        'Max Drawdown':  max_dd,
-                        '# Trades':      num_trades,
-                    })
-
-                processed += 1
-                pct = processed / total_combos
-                progress_bar.progress(pct, text=f"Running grid search… {processed:,}/{total_combos:,}")
-
-        progress_bar.empty()
-        status_text.empty()
-
-        if results:
-            results_df = pd.DataFrame(results)
-            st.session_state['optimizer_results']   = results_df
-            st.session_state['optimizer_results_cache_key'] = results_cache_key
-            st.success(f"✅ Grid search complete — {len(results_df):,} valid combinations found across {results_df['Symbol'].nunique()} stocks.")
-        else:
-            st.warning("No trades were generated for any combination. Try loosening the RSI thresholds or broadening the date range.")
-
-
-# ── Display Results ────────────────────────────────────────────────────────────
-if 'optimizer_results' in st.session_state:
-    results_df = st.session_state['optimizer_results'].copy()
-
-    # Filter rows with at least 1 trade (exclude combos that never triggered)
-    results_df = results_df[results_df['# Trades'] >= 1]
-
-    # Sorting
-    rank_by = st.session_state.get('opt_rank_by', 'Win Rate')
-    if rank_by == 'Win Rate':
-        sort_col, ascending = 'Win Rate', False
-    elif rank_by == 'Total Return':
-        sort_col, ascending = 'Total Return', False
-    else:  # Least Drawdown
-        sort_col, ascending = 'Max Drawdown', True
-
-    top_n = int(st.session_state.get('opt_top_n', 30))
-
-    tab_best, tab_all = st.tabs(["🥇 Best Per Stock", "📋 All Combinations"])
-
-    with tab_best:
-        st.caption("For each stock, only the single best-performing parameter combination is shown.")
-        if rank_by == 'Least Drawdown':
-            best_df = results_df.loc[results_df.groupby('Symbol')['Max Drawdown'].idxmin()].copy()
-        elif rank_by == 'Total Return':
-            best_df = results_df.loc[results_df.groupby('Symbol')['Total Return'].idxmax()].copy()
-        else:
-            best_df = results_df.loc[results_df.groupby('Symbol')['Win Rate'].idxmax()].copy()
-
-        best_df = best_df.sort_values(sort_col, ascending=ascending).reset_index(drop=True)
-        best_df.index += 1
-        best_df.index.name = 'Rank'
-
-        st.dataframe(
-            best_df.head(top_n),
-            column_config={
-                "Symbol":       st.column_config.TextColumn("Symbol"),
-                "RSI Period":   st.column_config.NumberColumn("Period", format="%d"),
-                "Buy <":        st.column_config.NumberColumn("Buy RSI <", format="%d"),
-                "Sell >":       st.column_config.NumberColumn("Sell RSI >", format="%d"),
-                "Win Rate":     st.column_config.ProgressColumn(
-                                    "Win Rate",
-                                    help="Percentage of winning trades",
-                                    format="%.1f%%",
-                                    min_value=0, max_value=100,
-                                ),
-                "Total Return": st.column_config.NumberColumn("Total Return", format="%.2f%%"),
-                "Max Drawdown": st.column_config.NumberColumn("Max Drawdown", format="%.2f%%"),
-                "# Trades":     st.column_config.NumberColumn("# Trades", format="%d"),
-            },
-            use_container_width=True,
-        )
-
-    with tab_all:
-        st.caption(f"All valid (stock, params) combinations globally ranked by **{rank_by}**. Showing top {top_n}.")
-        all_df = results_df.sort_values(sort_col, ascending=ascending).reset_index(drop=True)
-        all_df.index += 1
-        all_df.index.name = 'Rank'
-
-        st.dataframe(
-            all_df.head(top_n),
-            column_config={
-                "Symbol":       st.column_config.TextColumn("Symbol"),
-                "RSI Period":   st.column_config.NumberColumn("Period", format="%d"),
-                "Buy <":        st.column_config.NumberColumn("Buy RSI <", format="%d"),
-                "Sell >":       st.column_config.NumberColumn("Sell RSI >", format="%d"),
-                "Win Rate":     st.column_config.ProgressColumn(
-                                    "Win Rate",
-                                    help="Percentage of winning trades",
-                                    format="%.1f%%",
-                                    min_value=0, max_value=100,
-                                ),
-                "Total Return": st.column_config.NumberColumn("Total Return", format="%.2f%%"),
-                "Max Drawdown": st.column_config.NumberColumn("Max Drawdown", format="%.2f%%"),
-                "# Trades":     st.column_config.NumberColumn("# Trades", format="%d"),
-            },
-            use_container_width=True,
-        )
-
-    st.download_button(
-        "⬇️ Download Full Results CSV",
-        data=results_df.sort_values(sort_col, ascending=ascending).to_csv(index=False),
-        file_name="rsi_grid_search_results.csv",
-        mime="text/csv",
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SINGLE STOCK BACKTEST
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("Run Strategy on specific ticker", divider='red')
-
-main_col1, main_col2 = st.columns([1, 2])
-
-with main_col1:
-    try:
-        _val_data = pd.read_csv('data/jkse/valuation.csv')
-        stock_list = sorted(_val_data['stock'].unique().tolist())
-    except:
-        stock_list = ['BBCA.JK']
-        
-    try:
-        default_idx = stock_list.index('BBCA.JK')
-    except ValueError:
-        default_idx = 0
-        
-    stock = st.selectbox('Stock Ticker', options=stock_list, index=default_idx)
-    strategy = st.selectbox('Strategy Time Frame & Metric', options=[
-        'Short-Term: RSI Day Trading (Max 3 Days)',
-        'Medium-Term: MACD Crossover (1-4 Weeks)', 
-        'Medium-Term: SMA 20/50 Crossover (1-3 Months)'
-    ])
-
-with main_col2:
-    start_date = st.date_input('Start Date', value=datetime.date(2023, 1, 1))
-    end_date = st.date_input('End Date', value=datetime.date.today())
-
-# RSI parameters — shown only when RSI strategy is selected
-if strategy == 'Short-Term: RSI Day Trading (Max 3 Days)':
-    st.markdown("**RSI Parameters**")
-    rsi_cols = st.columns(4)
-    bt_rsi_period   = rsi_cols[0].number_input("RSI Period",      min_value=3,  max_value=50, value=14, step=1,  key="bt_rsi_period")
-    bt_buy_thresh   = rsi_cols[1].number_input("Buy if RSI <",    min_value=5,  max_value=49, value=30, step=1,  key="bt_buy_thresh")
-    bt_sell_thresh  = rsi_cols[2].number_input("Sell if RSI >",   min_value=51, max_value=95, value=70, step=1,  key="bt_sell_thresh")
-    bt_max_hold     = rsi_cols[3].number_input("Max Hold Days",   min_value=1,  max_value=20, value=3,  step=1,  key="bt_max_hold")
-
-st.markdown("**Trading Costs (%)**")
-cost_cols = st.columns(4)
-bt_buy_fee  = cost_cols[0].number_input("Buy Fee %",  min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="bt_buy_fee")
-bt_sell_fee = cost_cols[1].number_input("Sell Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="bt_sell_fee")
-bt_sell_tax = cost_cols[2].number_input("Sell Tax %", min_value=0.0, max_value=5.0, value=0.1,  step=0.01, key="bt_sell_tax")
-
-st.divider()
-
-
-if st.button('Run Backtest'):
-    if stock:
-        with st.spinner("Fetching data from Supabase..."):
-            start_date_str = start_date.strftime('%Y-%m-%d')
-            try:
-                # Query Supabase historical_prices table
-                res = conn.table("historical_prices").select("date,close").eq("symbol", stock).gte("date", start_date_str).execute()
-                
-                if res.data and len(res.data) > 0:
-                    price_df = pd.DataFrame(res.data).sort_values("date").reset_index(drop=True)
-                    price_df['date'] = pd.to_datetime(price_df['date'])
-                else:
-                    st.warning("Insufficient data available in Supabase for the selected date range.")
-                    price_df = pd.DataFrame() # Create empty to abort safely
-            except Exception as e:
-                st.error(f"Error fetching data from Supabase: {e}")
-                price_df = pd.DataFrame()
-
-            if not price_df.empty:
-                # Prepare data
-                price_df = price_df.sort_values('date').set_index('date')
-                price_df = price_df[price_df.index <= pd.to_datetime(end_date)]
-                
-                if len(price_df) > 50:
-                    entries = pd.Series(False, index=price_df.index)
-                    exits = pd.Series(False, index=price_df.index)
-
-                    if strategy == 'Short-Term: RSI Day Trading (Max 3 Days)':
-                        # Wilder's RSI calculation (matches TradingView RMA)
-                        delta = price_df['close'].diff()
-                        up    = delta.clip(lower=0)
-                        down  = -delta.clip(upper=0)
-                        ema_up   = up.ewm(alpha=1/bt_rsi_period, adjust=False, min_periods=bt_rsi_period).mean()
-                        ema_down = down.ewm(alpha=1/bt_rsi_period, adjust=False, min_periods=bt_rsi_period).mean()
-                        rs = ema_up / ema_down
-                        price_df['RSI'] = 100 - (100 / (1 + rs))
-                        
-                        raw_entries = (price_df['RSI'] < bt_buy_thresh).to_numpy()
-                        raw_exits   = (price_df['RSI'] > bt_sell_thresh).to_numpy()
-                        
-                        clean_entries = np.zeros_like(raw_entries, dtype=bool)
-                        clean_exits   = np.zeros_like(raw_exits, dtype=bool)
-                        
-                        in_pos = False
-                        days_held = 0
-                        
-                        for i in range(len(raw_entries)):
-                            if not in_pos:
-                                if raw_entries[i]:
-                                    clean_entries[i] = True
-                                    in_pos = True
-                                    days_held = 0
-                            else:
-                                days_held += 1
-                                if raw_exits[i] or days_held >= bt_max_hold:
-                                    clean_exits[i] = True
-                                    in_pos = False
-                                    
-                        entries = pd.Series(clean_entries, index=price_df.index)
-                        exits   = pd.Series(clean_exits,   index=price_df.index)
-                        
-                    elif strategy == 'Medium-Term: MACD Crossover (1-4 Weeks)':
-                        # MACD Crossover using native pandas EWM
-                        ema_fast = price_df['close'].ewm(span=12, adjust=False).mean()
-                        ema_slow = price_df['close'].ewm(span=26, adjust=False).mean()
-                        macd_line = ema_fast - ema_slow
-                        signal_line = macd_line.ewm(span=9, adjust=False).mean()
-                        
-                        entries = (macd_line > signal_line) & (macd_line.shift(1) <= signal_line.shift(1))
-                        exits = (macd_line < signal_line) & (macd_line.shift(1) >= signal_line.shift(1))
-                            
-                    elif strategy == 'Medium-Term: SMA 20/50 Crossover (1-3 Months)':
-                        # SMA Crossover using native pandas rolling mean
-                        price_df['SMA20'] = price_df['close'].rolling(window=20).mean()
-                        price_df['SMA50'] = price_df['close'].rolling(window=50).mean()
-                        
-                        entries = (price_df['SMA20'] > price_df['SMA50']) & (price_df['SMA20'].shift(1) <= price_df['SMA50'].shift(1))
-                        exits = (price_df['SMA20'] < price_df['SMA50']) & (price_df['SMA20'].shift(1) >= price_df['SMA50'].shift(1))
-
-                    # Prepare fees
-                    fees = pd.Series(0.0, index=price_df.index)
-                    fees[entries] = bt_buy_fee / 100.0
-                    fees[exits]  = (bt_sell_fee + bt_sell_tax) / 100.0
-
-                    # Perform VectorBT backtesting
-                    pf = vbt.Portfolio.from_signals(price_df['close'], entries, exits, freq='1D', fees=fees)
-                    
-                    st.subheader('Performance Outline')
-                    metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-                    
-                    # Compute metrics. Provide safe defaults if no trades occurred.
-                    tot_ret = pf.total_return() * 100 if pf.total_return() is not None else 0.0
-                    idx_ret = ((price_df['close'].iloc[-1] / price_df['close'].iloc[0]) - 1) * 100
-                    
-                    try:
-                        win_r = pf.trades.win_rate() * 100 if len(pf.trades) > 0 else 0.0
-                    except:
-                        win_r = 0.0
-
-                    try:
-                        max_dd = pf.max_drawdown() * 100 if pf.max_drawdown() is not None else 0.0
-                    except:
-                        max_dd = 0.0
-
-                    metrics_col1.metric("Total Return", f"{tot_ret:.2f}%", delta=f"vs idx {idx_ret:.2f}%")
-                    metrics_col2.metric("Win Rate", f"{win_r:.2f}%")
-                    metrics_col3.metric("Max Drawdown", f"{max_dd:.2f}%")
-
-                    # Plotting chart
-                    st.plotly_chart(pf.plot())
-                    
-                    with st.expander('View Trade Log'):
-                        if len(pf.trades) > 0:
-                            st.dataframe(pf.trades.records_readable)
-                        else:
-                            st.info("No trades executed within this time window.")
-                else:
-                    st.warning("Not enough data to run strategies. Try selecting a broader date range.")
-            else:
-                st.error("No historical data found for the given stock and timeframe.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RSI LIVE ALERT SCANNER
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("🚨 RSI Buy Signal Scanner", divider='orange')
-st.caption(
-    "Check which shortlisted stocks are currently oversold (RSI below buy threshold) "
-    "using the latest available price data."
-)
-
-alert_col1, alert_col2, alert_col3, alert_col4 = st.columns(4)
-alert_period     = alert_col1.number_input("RSI Period",    min_value=3,  max_value=50, value=14, step=1,  key="alert_period")
-alert_buy_thresh = alert_col2.number_input("Buy if RSI <",  min_value=5,  max_value=49, value=30, step=1,  key="alert_buy")
-alert_watch_band = alert_col3.number_input("Watch Band (+)",min_value=1,  max_value=20, value=10, step=1,  key="alert_watch",
-                                            help="Stocks with RSI between Buy threshold and Buy+Watch are flagged as 'Watch'")
-alert_lookback   = alert_col4.number_input("Days of History",min_value=30, max_value=365, value=120, step=10, key="alert_lookback")
-
-scan_button = st.button("🔍 Scan for Buy Signals", type="primary", disabled=len(shortlist_tickers) == 0)
-
-def _compute_current_rsi(price_series: pd.Series, period: int) -> float | None:
-    """Return the most recent RSI value for a price series."""
-    if len(price_series) < period + 5:
-        return None
-    # Wilder's RSI calculation (matches TradingView RMA)
-    delta = price_series.diff()
-    up    = delta.clip(lower=0)
-    down  = -delta.clip(upper=0)
-    ema_up   = up.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    ema_down = down.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    rs  = ema_up / ema_down
-    rsi_val = (100 - (100 / (1 + rs))).iloc[-1]
-    return float(rsi_val) if not pd.isna(rsi_val) else None
-
-if scan_button:
-    alert_start = (datetime.date.today() - datetime.timedelta(days=int(alert_lookback))).strftime('%Y-%m-%d')
-
-    with st.spinner("Fetching live prices..."):
-        try:
-            # Batch fetch live prices for all shortlisted stocks
-            cp_df = hd.get_company_profile(shortlist_tickers)
-        except Exception as e:
-            st.warning(f"Could not fetch live prices via get_company_profile: {e}")
-            cp_df = pd.DataFrame()
-
-    scan_progress = st.progress(0, text="Scanning shortlist…")
-    scan_rows = []
-
-    # Prefer cached optimizer prices if they cover enough bars, else fetch fresh
-    cached_prices = st.session_state.get('optimizer_prices', pd.DataFrame())
-    use_cache = (
-        not cached_prices.empty
-        and (cached_prices.groupby('symbol')['date'].count() >= (int(alert_period) + 5)).all()
-    )
-
-    if use_cache:
-        grouped_alert = {
-            sym: grp.set_index('date')['close']
-            for sym, grp in cached_prices.groupby('symbol')
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def run_fundamental_scan(
+    profile_records: tuple[tuple[str, tuple[tuple[str, object], ...]], ...],
+    history_years: int,
+    schema_version: int,
+) -> pd.DataFrame:
+    del schema_version  # Included in the cache key to invalidate older result schemas.
+    profiles = {symbol: dict(values) for symbol, values in profile_records}
+    rows = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as executor:
+        futures = {
+            executor.submit(_analyze_stock, symbol, profile, history_years): symbol
+            for symbol, profile in profiles.items()
         }
-        # run RSI calc on each cached ticker
-        for i, ticker in enumerate(shortlist_tickers):
-            scan_progress.progress((i + 1) / len(shortlist_tickers), text=f"Checking {ticker}…")
-            series = grouped_alert.get(ticker)
-            if series is None or series.empty:
-                continue
-            
-            series = series.copy()
-            
-            # Incorporate live price from cp_df
-            if ticker in cp_df.index:
-                live_price = float(cp_df.loc[ticker, 'price'])
-                today_ts = pd.Timestamp(datetime.date.today())
-                if series.index[-1].date() == today_ts.date():
-                    series.iloc[-1] = live_price
-                else:
-                    series[today_ts] = live_price
-                series = series.sort_index()
-
-            current_price = float(series.iloc[-1])
-            rsi_val = _compute_current_rsi(series, int(alert_period))
-            if rsi_val is not None:
-                scan_rows.append({'Symbol': ticker, 'Current Price': current_price, 'RSI': rsi_val})
-    else:
-        # Fetch last N days for each ticker individually
-        for i, ticker in enumerate(shortlist_tickers):
-            scan_progress.progress((i + 1) / len(shortlist_tickers), text=f"Fetching {ticker}…")
+        for future in concurrent.futures.as_completed(futures):
             try:
-                res = (
-                    conn.table("historical_prices")
-                        .select("symbol,date,close")
-                        .eq("symbol", ticker)
-                        .order("date", desc=True)
-                        .limit(int(alert_period) + 100) # Ensure enough bars for RSI stability
-                        .execute()
-                )
-                rows = res.data or []
-                if rows:
-                    series = (
-                        pd.DataFrame(rows)
-                          .assign(date=lambda d: pd.to_datetime(d['date']),
-                                  close=lambda d: pd.to_numeric(d['close'], errors='coerce'))
-                          .sort_values('date')
-                          .set_index('date')['close']
-                    )
-                    
-                    # Incorporate live price from cp_df
-                    if ticker in cp_df.index:
-                        live_price = float(cp_df.loc[ticker, 'price'])
-                        today_ts = pd.Timestamp(datetime.date.today()).normalize()
-                        
-                        if not series.empty:
-                            last_date = series.index[-1].normalize()
-                            if last_date == today_ts:
-                                series.iloc[-1] = live_price
-                            else:
-                                series[today_ts] = live_price
-                        else:
-                            series[today_ts] = live_price
-                        series = series.sort_index()
-
-                    if len(series) > 0:
-                        current_price = float(series.iloc[-1])
-                        rsi_val = _compute_current_rsi(series, int(alert_period))
-                        if rsi_val is not None:
-                            scan_rows.append({'Symbol': ticker, 'Current Price': current_price, 'RSI': rsi_val})
+                row = future.result()
             except Exception:
-                pass
+                row = None
+            if row:
+                rows.append(row)
 
-    scan_progress.empty()
+    if not rows:
+        return _empty_results()
 
-    if not scan_rows:
-        st.warning("Could not compute RSI for any stock. Try increasing 'Days of History'.")
+    result = pd.DataFrame(rows)
+    result["Valuation Score"] = 100 - result[["PE Percentile", "PS Percentile"]].mean(axis=1)
+    growth_columns = [
+        "Revenue Growth 5Y",
+        "Revenue Growth TTM",
+        "Earnings Growth 5Y",
+        "Earnings Growth TTM",
+    ]
+    result["Growth Score"] = pd.concat(
+        [_pct_rank(result[column]).rename(column) for column in growth_columns], axis=1
+    ).mean(axis=1)
+    result["Quality Score"] = _pct_rank(result["Margin TTM"])
+    result["Score"] = (
+        result["Valuation Score"] * 0.55
+        + result["Growth Score"] * 0.35
+        + result["Quality Score"] * 0.10
+    )
+    result["Statement Date"] = pd.to_datetime(result["Statement Date"]).dt.date
+    return result.sort_values("Score", ascending=False).reset_index(drop=True)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_stock_detail(
+    symbol: str,
+    profile_values: tuple,
+    history_years: int,
+    schema_version: int,
+):
+    del schema_version  # Included in the cache key to invalidate older detail schemas.
+    return _analyze_stock(symbol, dict(profile_values), history_years, include_history=True)
+
+
+def _profile_records(profiles: pd.DataFrame) -> tuple:
+    fields = ["price", "mktCap", "companyName", "sector", "industry"]
+    records = []
+    for symbol, row in profiles.iterrows():
+        values = tuple((field, row.get(field)) for field in fields)
+        records.append((str(symbol), values))
+    return tuple(records)
+
+
+def _ratio_chart(history: pd.DataFrame, label: str, years: int):
+    chart_data = history.copy()
+    cutoff = chart_data["date"].max() - pd.DateOffset(years=years)
+    chart_data = chart_data[chart_data["date"] >= cutoff]
+    mean = chart_data["ratio"].mean()
+    lower_bound = chart_data["ratio"].quantile(0.05)
+    upper_bound = chart_data["ratio"].quantile(0.95)
+    chart_data["lower_bound"] = lower_bound
+    chart_data["upper_bound"] = upper_bound
+    interval = (
+        alt.Chart(chart_data)
+        .mark_area(color="#b45309", opacity=0.12)
+        .encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y("lower_bound:Q", title=label, scale=alt.Scale(zero=False)),
+            y2="upper_bound:Q",
+        )
+    )
+    line = (
+        alt.Chart(chart_data)
+        .mark_line(color="#0f766e", strokeWidth=2)
+        .encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y("ratio:Q", title=label, scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip("date:T", title="Date"), alt.Tooltip("ratio:Q", title=label, format=".2f")],
+        )
+    )
+    mean_rule = (
+        alt.Chart(pd.DataFrame({"mean": [mean]}))
+        .mark_rule(color="#b45309", strokeDash=[6, 5])
+        .encode(y="mean:Q")
+    )
+    return (interval + line + mean_rule).properties(height=290)
+
+
+try:
+    with st.spinner("Loading the IDX company universe..."):
+        universe = load_idx_universe()
+except Exception as exc:
+    universe = pd.DataFrame()
+    st.error(f"The IDX universe could not be loaded: {exc}")
+
+
+st.subheader("Build the research universe", divider="green")
+with st.form("fundamental_screen"):
+    filter_cols = st.columns(4)
+    min_market_cap = filter_cols[0].number_input(
+        "Minimum market cap (IDR T)", min_value=0.1, max_value=500.0, value=2.0, step=0.5
+    )
+    max_companies = filter_cols[1].number_input(
+        "Companies to analyze", min_value=10, max_value=300, value=100, step=10
+    )
+    history_years = filter_cols[2].selectbox(
+        "Valuation history", options=[3, 5, 10], index=1, format_func=lambda value: f"{value} years"
+    )
+    max_pe = filter_cols[3].number_input(
+        "Maximum current P/E", min_value=5.0, max_value=100.0, value=40.0, step=5.0
+    )
+
+    growth_cols = st.columns(4)
+    min_revenue_growth = growth_cols[0].number_input(
+        "Minimum 5Y revenue growth (%)", min_value=-50.0, max_value=100.0, value=3.0, step=1.0
+    )
+    min_earnings_growth = growth_cols[1].number_input(
+        "Minimum 5Y earnings growth (%)", min_value=-100.0, max_value=200.0, value=0.0, step=1.0
+    )
+    require_recent_growth = growth_cols[2].checkbox(
+        "Require positive TTM growth", value=True,
+        help="Both latest revenue and latest earnings must be above the prior trailing twelve months.",
+    )
+    require_both_discounts = growth_cols[3].checkbox(
+        "Require P/E and P/S discounts", value=True,
+        help="Both multiples must be below their historical medians.",
+    )
+    submitted = st.form_submit_button(
+        "Run fundamental screen", type="primary", disabled=universe.empty, use_container_width=True
+    )
+
+
+if submitted:
+    market_cap_floor = min_market_cap * 1_000_000_000_000
+    selected_profiles = universe[universe["mktCap"] >= market_cap_floor].head(int(max_companies))
+    if selected_profiles.empty:
+        st.warning("No active companies meet the selected market-cap floor.")
     else:
-        alert_df = pd.DataFrame(scan_rows)
-
-        buy_thresh  = int(alert_buy_thresh)
-        watch_upper = buy_thresh + int(alert_watch_band)
-
-        def _classify(rsi):
-            if rsi < buy_thresh:
-                return "🟢 Buy Signal"
-            elif rsi < watch_upper:
-                return "🟡 Watch"
-            else:
-                return "⚪ Neutral"
-
-        alert_df['Signal']   = alert_df['RSI'].apply(_classify)
-        alert_df['RSI']      = alert_df['RSI'].round(2)
-        alert_df = alert_df.sort_values('RSI')  # lowest RSI (most oversold) first
-
-        # Summary metrics
-        n_buy   = (alert_df['Signal'] == "🟢 Buy Signal").sum()
-        n_watch = (alert_df['Signal'] == "🟡 Watch").sum()
-        n_total = len(alert_df)
-
-        sum_cols = st.columns(3)
-        sum_cols[0].metric("🟢 Buy Signals",  n_buy,   help=f"RSI < {buy_thresh}")
-        sum_cols[1].metric("🟡 Watch",        n_watch, help=f"RSI {buy_thresh}–{watch_upper}")
-        sum_cols[2].metric("Stocks Scanned",  n_total)
-
-        if n_buy > 0:
-            st.success(f"**{n_buy} stock(s) currently in oversold territory** (RSI < {buy_thresh})!")
-
-        # Show buy signals and watch stocks prominently, then neutrals collapsed
-        buy_signal_df  = alert_df[alert_df['Signal'] == "🟢 Buy Signal"]
-        watch_df       = alert_df[alert_df['Signal'] == "🟡 Watch"]
-        neutral_df     = alert_df[alert_df['Signal'] == "⚪ Neutral"]
-
-        col_config = {
-            "Symbol":        st.column_config.TextColumn("Symbol"),
-            "Current Price": st.column_config.NumberColumn("Price", format="%.0f"),
-            "RSI":           st.column_config.ProgressColumn(
-                                 "RSI",
-                                 help="Current RSI value",
-                                 format="%.1f",
-                                 min_value=0, max_value=100,
-                             ),
-            "Signal":        st.column_config.TextColumn("Signal"),
+        with st.spinner(
+            f"Analyzing earnings, revenue, and valuation history for {len(selected_profiles)} companies..."
+        ):
+            raw_results = run_fundamental_scan(
+                _profile_records(selected_profiles),
+                int(history_years),
+                SCAN_SCHEMA_VERSION,
+            )
+        st.session_state["fundamental_scan"] = {
+            "schema_version": SCAN_SCHEMA_VERSION,
+            "results": raw_results,
+            "profiles": selected_profiles,
+            "history_years": int(history_years),
+            "filters": {
+                "max_pe": float(max_pe),
+                "min_revenue_growth": float(min_revenue_growth),
+                "min_earnings_growth": float(min_earnings_growth),
+                "require_recent_growth": bool(require_recent_growth),
+                "require_both_discounts": bool(require_both_discounts),
+            },
+            "requested": len(selected_profiles),
         }
 
-        if not buy_signal_df.empty:
-            st.markdown("#### 🟢 Buy Signals")
-            st.dataframe(buy_signal_df, column_config=col_config, hide_index=True, use_container_width=True)
 
-        if not watch_df.empty:
-            st.markdown("#### 🟡 Approaching Buy Zone")
-            st.dataframe(watch_df, column_config=col_config, hide_index=True, use_container_width=True)
+scan_state = st.session_state.get("fundamental_scan")
+required_projection_columns = {
+    "Current Price",
+    "Upside to Mean",
+    "Potential Upside 1Y",
+    "Potential Upside 5Y",
+    "Implied Price 1Y",
+    "Implied Price 5Y",
+}
+if scan_state and (
+    scan_state.get("schema_version") != SCAN_SCHEMA_VERSION
+    or not required_projection_columns.issubset(scan_state.get("results", pd.DataFrame()).columns)
+):
+    st.session_state.pop("fundamental_scan", None)
+    scan_state = None
+    st.info("The valuation model was updated. Run the fundamental screen again to calculate the new projections.")
 
-        with st.expander(f"⚪ Neutral stocks ({len(neutral_df)})"):
-            st.dataframe(neutral_df, column_config=col_config, hide_index=True, use_container_width=True)
+if not scan_state:
+    st.info(
+        "Choose the universe and run the screen. The first scan fetches historical prices and quarterly "
+        "statements; results are cached for six hours."
+    )
+    st.stop()
 
+
+raw_results = scan_state["results"].copy()
+filters = scan_state["filters"]
+history_years = scan_state["history_years"]
+if raw_results.empty:
+    st.warning("No companies had enough valid price and quarterly financial history for comparison.")
+    st.stop()
+
+mask = (
+    (raw_results["Current PE"] > 0)
+    & (raw_results["Current PE"] <= filters["max_pe"])
+    & (raw_results["Current PS"] > 0)
+    & (raw_results["Revenue Growth 5Y"] >= filters["min_revenue_growth"])
+    & (raw_results["Earnings Growth 5Y"] >= filters["min_earnings_growth"])
+    & (raw_results["Earnings TTM"] > 0)
+    & (raw_results["Revenue TTM"] > 0)
+)
+if filters["require_recent_growth"]:
+    mask &= (raw_results["Revenue Growth TTM"] > 0) & (raw_results["Earnings Growth TTM"] > 0)
+if filters["require_both_discounts"]:
+    mask &= (raw_results["PE Discount"] > 0) & (raw_results["PS Discount"] > 0)
+
+results = raw_results[mask].sort_values("Score", ascending=False).reset_index(drop=True)
+results.index += 1
+results.index.name = "Rank"
+
+st.subheader("Candidates", divider="green")
+summary_cols = st.columns(4)
+summary_cols[0].metric("Qualified", f"{len(results)}", help="Companies passing every selected rule")
+summary_cols[1].metric("Analyzed", f"{len(raw_results)} / {scan_state['requested']}")
+summary_cols[2].metric(
+    "Median 1Y potential",
+    f"{results['Potential Upside 1Y'].median():.1f}%" if not results.empty else "N/A",
+)
+summary_cols[3].metric(
+    "Median revenue growth", f"{results['Revenue Growth 5Y'].median():.1f}%" if not results.empty else "N/A"
+)
+
+st.markdown(
+    '<p class="method-note"><strong>Score:</strong> 55% historical valuation, 35% growth, and 10% '
+    'profit margin. A valuation score of 80 means the combined P/E and P/S are near the cheapest 20% '
+    'of their own selected history. Growth and quality scores are relative to the analyzed universe. '
+    '<strong>Potential upside:</strong> the average of earnings- and revenue-based implied values if '
+    'multiples return to their historical means and growth persists.</p>',
+    unsafe_allow_html=True,
+)
+
+if results.empty:
+    st.warning(
+        "No company passes every rule. Relax one constraint at a time, starting with positive TTM "
+        "earnings growth, which can be volatile for cyclical businesses."
+    )
+    st.stop()
+
+display_columns = [
+    "Symbol",
+    "Company",
+    "Score",
+    "Upside to Mean",
+    "Potential Upside 1Y",
+    "Potential Upside 5Y",
+    "Current PE",
+    "PE Discount",
+    "PE Percentile",
+    "Current PS",
+    "PS Discount",
+    "PS Percentile",
+    "Revenue Growth 5Y",
+    "Revenue Growth TTM",
+    "Earnings Growth 5Y",
+    "Earnings Growth TTM",
+    "Margin TTM",
+    "Market Cap",
+]
+st.dataframe(
+    results[display_columns],
+    column_config={
+        "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
+        "Upside to Mean": st.column_config.NumberColumn("Mean Reversion", format="%.1f%%"),
+        "Potential Upside 1Y": st.column_config.NumberColumn("Potential 1Y", format="%.1f%%"),
+        "Potential Upside 5Y": st.column_config.NumberColumn("Potential 5Y", format="%.1f%%"),
+        "Current PE": st.column_config.NumberColumn("P/E", format="%.2f"),
+        "PE Discount": st.column_config.NumberColumn("P/E Discount", format="%.1f%%"),
+        "PE Percentile": st.column_config.NumberColumn("P/E Percentile", format="%.0f%%"),
+        "Current PS": st.column_config.NumberColumn("P/S", format="%.2f"),
+        "PS Discount": st.column_config.NumberColumn("P/S Discount", format="%.1f%%"),
+        "PS Percentile": st.column_config.NumberColumn("P/S Percentile", format="%.0f%%"),
+        "Revenue Growth 5Y": st.column_config.NumberColumn("Revenue 5Y", format="%.1f%%"),
+        "Revenue Growth TTM": st.column_config.NumberColumn("Revenue TTM", format="%.1f%%"),
+        "Earnings Growth 5Y": st.column_config.NumberColumn("Earnings 5Y", format="%.1f%%"),
+        "Earnings Growth TTM": st.column_config.NumberColumn("Earnings TTM", format="%.1f%%"),
+        "Margin TTM": st.column_config.NumberColumn("Net Margin", format="%.1f%%"),
+        "Market Cap": st.column_config.NumberColumn("Market Cap", format="compact"),
+    },
+    hide_index=False,
+    width="stretch",
+    height=min(720, 38 * len(results) + 38),
+)
+
+st.download_button(
+    "Download candidates",
+    data=results.reset_index().to_csv(index=False).encode("utf-8"),
+    file_name=f"idx_growth_at_a_discount_{datetime.date.today().isoformat()}.csv",
+    mime="text/csv",
+)
+
+
+st.subheader("Inspect a candidate", divider="green")
+symbols = results["Symbol"].tolist()
+selected_symbol = st.selectbox(
+    "Company",
+    symbols,
+    format_func=lambda symbol: f"{symbol} - {results.loc[results['Symbol'] == symbol, 'Company'].iloc[0]}",
+)
+selected_row = results.loc[results["Symbol"] == selected_symbol].iloc[0]
+profile_row = scan_state["profiles"].loc[selected_symbol]
+profile_values = tuple(
+    (field, profile_row.get(field))
+    for field in ["price", "mktCap", "companyName", "sector", "industry"]
+)
+
+with st.spinner(f"Loading the research view for {selected_symbol}..."):
+    detail = load_stock_detail(
+        selected_symbol,
+        profile_values,
+        history_years,
+        SCAN_SCHEMA_VERSION,
+    )
+
+if not detail:
+    st.warning("The detailed history is temporarily unavailable for this company.")
+    st.stop()
+
+detail_row = detail["row"]
+required_detail_fields = {
+    "Current Price",
+    "Upside to Mean",
+    "Potential Upside 1Y",
+    "Potential Upside 5Y",
+    "Implied Price 1Y",
+    "Implied Price 5Y",
+}
+if not required_detail_fields.issubset(detail_row):
+    load_stock_detail.clear()
+    st.warning("The cached company detail is outdated. Select the company again to refresh it.")
+    st.stop()
+
+current_price = _finite(detail_row.get("Current Price"), _finite(profile_row.get("price")))
+detail_cols = st.columns(5)
+detail_cols[0].metric("Research score", f"{selected_row['Score']:.0f} / 100")
+detail_cols[1].metric(
+    "P/E vs median",
+    f"{detail_row['Current PE']:.2f}",
+    delta=f"{detail_row['PE Discount']:+.1f}% vs median",
+)
+detail_cols[2].metric(
+    "P/S vs median",
+    f"{detail_row['Current PS']:.2f}",
+    delta=f"{detail_row['PS Discount']:+.1f}% vs median",
+)
+detail_cols[3].metric("Revenue growth", f"{detail_row['Revenue Growth 5Y']:.1f}%", help="Median YoY TTM growth")
+detail_cols[4].metric("Earnings growth", f"{detail_row['Earnings Growth 5Y']:.1f}%", help="Median YoY TTM growth")
+
+st.caption(
+    f"{detail_row['Company']} | {detail_row['Sector']} | {_format_idr(detail_row['Market Cap'])} market cap | "
+    f"latest statement {pd.Timestamp(detail_row['Statement Date']).date().isoformat()}"
+)
+
+projection_cols = st.columns(4)
+projection_cols[0].metric(
+    "Current price",
+    f"IDR {current_price:,.0f}" if np.isfinite(current_price) else "N/A",
+)
+projection_cols[1].metric(
+    "Upside to mean valuation",
+    f"{detail_row['Upside to Mean']:.1f}%",
+    help="No-growth estimate using the historical mean P/E and P/S.",
+)
+projection_cols[2].metric(
+    "Implied price in 1Y",
+    f"IDR {detail_row['Implied Price 1Y']:,.0f}",
+    delta=f"{detail_row['Potential Upside 1Y']:+.1f}% potential",
+    help="Uses latest TTM earnings and revenue growth, capped between -20% and 30%.",
+)
+projection_cols[3].metric(
+    "Implied price in 5Y",
+    f"IDR {detail_row['Implied Price 5Y']:,.0f}",
+    delta=f"{detail_row['Potential Upside 5Y']:+.1f}% potential",
+    help="Compounds median five-year earnings and revenue growth, capped between -20% and 30% annually.",
+)
+
+with st.expander("How potential upside is estimated"):
+    st.markdown(
+        f"""
+        The model creates two estimates and gives them equal weight:
+
+        - **Earnings value:** historical mean P/E / current P/E x projected earnings growth
+        - **Revenue value:** historical mean P/S / current P/S x projected revenue growth
+        - **One year:** earnings growth **{detail_row['Earnings Growth Assumption 1Y']:.1f}%**, revenue growth **{detail_row['Revenue Growth Assumption 1Y']:.1f}%**
+        - **Five years:** earnings growth **{detail_row['Earnings Growth Assumption 5Y']:.1f}%**, revenue growth **{detail_row['Revenue Growth Assumption 5Y']:.1f}%** per year
+
+        Growth assumptions are capped at {MIN_PROJECTION_GROWTH:.0f}% to {MAX_PROJECTION_GROWTH:.0f}% annually.
+        The result is a scenario, not a price target or discounted cash-flow valuation.
+        """
+    )
+
+valuation_tab, growth_tab, checklist_tab = st.tabs(
+    ["Valuation history", "Business growth", "Investment checklist"]
+)
+with valuation_tab:
+    chart_cols = st.columns(2)
+    chart_cols[0].altair_chart(
+        _ratio_chart(detail["pe_history"], "P/E", history_years), use_container_width=True
+    )
+    chart_cols[1].altair_chart(
+        _ratio_chart(detail["ps_history"], "P/S", history_years), use_container_width=True
+    )
+    st.caption(
+        "The shaded band covers the historical 5th-to-95th percentile range. Dashed lines show the "
+        "mean multiple used by the potential-upside scenarios."
+    )
+
+with growth_tab:
+    financial_history = detail["financial_history"].dropna(subset=["Revenue TTM", "Earnings TTM"]).copy()
+    normalized = financial_history[["date", "Revenue TTM", "Earnings TTM"]].copy()
+    for column in ("Revenue TTM", "Earnings TTM"):
+        first_valid = normalized[column].replace(0, np.nan).dropna()
+        normalized[column] = normalized[column] / first_valid.iloc[0] * 100 if not first_valid.empty else np.nan
+    normalized = normalized.melt("date", var_name="Series", value_name="Index")
+    growth_chart = (
+        alt.Chart(normalized.dropna())
+        .mark_line(strokeWidth=2)
+        .encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y("Index:Q", title="TTM index (first period = 100)", scale=alt.Scale(zero=False)),
+            color=alt.Color(
+                "Series:N",
+                scale=alt.Scale(domain=["Revenue TTM", "Earnings TTM"], range=["#0f766e", "#b45309"]),
+                legend=alt.Legend(title=None, orient="top"),
+            ),
+            tooltip=["date:T", "Series:N", alt.Tooltip("Index:Q", format=".1f")],
+        )
+        .properties(height=330)
+    )
+    st.altair_chart(growth_chart, use_container_width=True)
+    growth_metrics = st.columns(4)
+    growth_metrics[0].metric("Revenue growth TTM", f"{detail_row['Revenue Growth TTM']:.1f}%")
+    growth_metrics[1].metric("Earnings growth TTM", f"{detail_row['Earnings Growth TTM']:.1f}%")
+    growth_metrics[2].metric("Net margin TTM", f"{detail_row['Margin TTM']:.1f}%")
+    growth_metrics[3].metric("Historical margin", f"{detail_row['Margin Median']:.1f}%")
+
+with checklist_tab:
+    checks = pd.DataFrame(
+        [
+            (
+                "Earnings valuation",
+                detail_row["PE Discount"] > 0,
+                _median_comparison(detail_row["PE Discount"], "P/E"),
+            ),
+            (
+                "Revenue valuation",
+                detail_row["PS Discount"] > 0,
+                _median_comparison(detail_row["PS Discount"], "P/S"),
+            ),
+            ("Durable revenue growth", detail_row["Revenue Growth 5Y"] > 0, f"5Y median growth is {detail_row['Revenue Growth 5Y']:.1f}%"),
+            ("Durable earnings growth", detail_row["Earnings Growth 5Y"] > 0, f"5Y median growth is {detail_row['Earnings Growth 5Y']:.1f}%"),
+            ("Recent revenue growth", detail_row["Revenue Growth TTM"] > 0, f"Latest TTM growth is {detail_row['Revenue Growth TTM']:.1f}%"),
+            ("Recent earnings growth", detail_row["Earnings Growth TTM"] > 0, f"Latest TTM growth is {detail_row['Earnings Growth TTM']:.1f}%"),
+            ("Profitable", detail_row["Earnings TTM"] > 0, f"Net margin is {detail_row['Margin TTM']:.1f}%"),
+        ],
+        columns=["Test", "Pass", "Evidence"],
+    )
+    checks["Status"] = np.where(checks["Pass"], "Pass", "Review")
+    st.dataframe(checks[["Status", "Test", "Evidence"]], hide_index=True, width="stretch")
+    st.warning(
+        "This screen identifies candidates, not intrinsic value. Review debt, cash flow, dilution, one-off "
+        "earnings, cyclicality, governance, and the latest filing before making an investment decision."
+    )
