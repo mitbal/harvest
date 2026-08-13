@@ -6,15 +6,64 @@ import streamlit as st
 import datetime
 import pandas as pd
 import numpy as np
-import vectorbt as vbt
 from st_supabase_connection import SupabaseConnection
 
 import harvest.data as hd
 
-STRATEGY_ENGINE_VERSION = 4
+STRATEGY_ENGINE_VERSION = 7
+DEFAULT_PROFIT_TARGET = 5.0
+DEFAULT_STOP_LOSS = 2.0
+DEFAULT_MAX_HOLD = 5
 
-st.set_page_config(page_title='Day Trading - Panen Dividen')
-st.title('Day Trading Strategy Lab')
+STRATEGY_REGIME_RSI = "Regime RSI"
+STRATEGY_BOLLINGER_LOWER = "Bollinger Lower-Band Reversion"
+STRATEGY_RSI_RECOVERY = "RSI Recovery"
+STRATEGY_DONCHIAN = "Donchian Breakout"
+STRATEGY_SQUEEZE = "Volatility Squeeze Breakout"
+STRATEGY_TREND_PULLBACK = "Trend Pullback"
+STRATEGY_RELATIVE_STRENGTH = "Relative-Strength Pullback"
+STRATEGY_CROSS_MOMENTUM = "Cross-Sectional Momentum"
+
+STRATEGY_TYPES = [
+    STRATEGY_REGIME_RSI,
+    STRATEGY_BOLLINGER_LOWER,
+    STRATEGY_RSI_RECOVERY,
+    STRATEGY_DONCHIAN,
+    STRATEGY_SQUEEZE,
+    STRATEGY_TREND_PULLBACK,
+    STRATEGY_RELATIVE_STRENGTH,
+    STRATEGY_CROSS_MOMENTUM,
+]
+
+STRATEGY_PARAMETER_LABELS = {
+    STRATEGY_REGIME_RSI: ("RSI Period", "Bear Buy <", "Trend SMA", "Bull Buy <"),
+    STRATEGY_BOLLINGER_LOWER: ("Band Period", "Std Dev", "RSI Period", "Max RSI"),
+    STRATEGY_RSI_RECOVERY: ("RSI Period", "Oversold Level", "Trend SMA", "Recovery Level"),
+    STRATEGY_DONCHIAN: ("Breakout Window", "Exit Window", "Trend SMA", "Breakout Buffer %"),
+    STRATEGY_SQUEEZE: ("Band Period", "Squeeze Percentile", "Breakout Window", "Bandwidth Lookback"),
+    STRATEGY_TREND_PULLBACK: ("Fast EMA", "Slow EMA", "Pullback Tolerance %", "Setup Window"),
+    STRATEGY_RELATIVE_STRENGTH: ("RS Lookback", "Min Outperformance %", "RSI Period", "Recovery Level"),
+    STRATEGY_CROSS_MOMENTUM: ("Momentum Lookback", "Top Percentile", "RSI Period", "Recovery Level"),
+}
+
+STRATEGY_PARAMETER_INPUTS = {
+    STRATEGY_REGIME_RSI: ((2.0, 50.0, 1.0), (5.0, 70.0, 1.0), (5.0, 200.0, 5.0), (10.0, 70.0, 1.0)),
+    STRATEGY_BOLLINGER_LOWER: ((5.0, 100.0, 5.0), (0.5, 4.0, 0.25), (2.0, 50.0, 1.0), (5.0, 70.0, 1.0)),
+    STRATEGY_RSI_RECOVERY: ((2.0, 50.0, 1.0), (5.0, 50.0, 1.0), (0.0, 200.0, 5.0), (10.0, 70.0, 1.0)),
+    STRATEGY_DONCHIAN: ((2.0, 200.0, 5.0), (2.0, 100.0, 5.0), (0.0, 200.0, 5.0), (0.0, 5.0, 0.25)),
+    STRATEGY_SQUEEZE: ((5.0, 100.0, 5.0), (5.0, 50.0, 5.0), (2.0, 100.0, 5.0), (20.0, 252.0, 10.0)),
+    STRATEGY_TREND_PULLBACK: ((2.0, 100.0, 1.0), (5.0, 200.0, 5.0), (0.0, 10.0, 0.5), (1.0, 20.0, 1.0)),
+    STRATEGY_RELATIVE_STRENGTH: ((2.0, 252.0, 5.0), (0.0, 30.0, 1.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
+    STRATEGY_CROSS_MOMENTUM: ((2.0, 252.0, 5.0), (50.0, 100.0, 5.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
+}
+
+
+def _load_vectorbt():
+    import vectorbt
+    return vectorbt
+
+st.set_page_config(page_title='Short-Term Swing Trading - Panen Dividen')
+st.title('Short-Term Swing Trading Strategy Lab')
 
 @st.cache_data(max_entries=64)
 def df_to_csv(df):
@@ -64,14 +113,17 @@ def load_live_daily_prices(stock: str, start_from: str) -> pd.DataFrame:
 
 st.sidebar.markdown(
     """
-    **Regime-aware day trading** — detect bull vs bear market using JKSE index,
-    then apply the right strategy for each regime:
+    **Short-term swing trading** uses completed daily closes to research 1–10
+    session mean-reversion, pullback, relative-strength, and breakout setups.
 
-    * **Bear market**: buy deeply oversold stocks (mean-reversion bounce), hold 1–7 days.
-    * **Bull market**: buy dips in an uptrend (pullback entry), hold 1–7 days.
+    * **Mean reversion:** regime RSI, Bollinger lower-band, and RSI recovery.
+    * **Trend and momentum:** Donchian, squeeze, EMA pullback, relative strength,
+      and cross-sectional momentum.
+    * **Execution:** a completed closing setup enters on the next session in the
+      backtest; live setups remain provisional until today's close.
 
-    Sweep entry-condition grids, backtest individual tickers, and scan the live
-    universe for today's closing entries.
+    Sweep compact parameter grids, validate on recent held-out data, inspect an
+    individual ticker, and scan the current shortlist for actionable setups.
     """
 )
 
@@ -162,49 +214,183 @@ def _wilder_rsi(close: pd.Series, period: int) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
+def _align_to_prices(series: pd.Series | None, index: pd.Index) -> pd.Series:
+    if series is None or series.empty:
+        return pd.Series(np.nan, index=index, dtype=float)
+    clean = pd.to_numeric(series, errors='coerce').dropna().sort_index()
+    clean = clean[~clean.index.duplicated(keep='last')]
+    return clean.reindex(index, method='ffill')
+
+
+def _strategy_components(
+    close: pd.Series,
+    regime: pd.Series,
+    benchmark_close: pd.Series | None,
+    momentum_percentile: pd.Series | None,
+    strategy_type: str,
+    param_a: float,
+    param_b: float,
+    param_c: float,
+    param_d: float,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Return closing setup, strategy exit, and a comparable display indicator."""
+    if strategy_type == STRATEGY_REGIME_RSI:
+        period = int(param_a)
+        bear_buy = float(param_b)
+        trend_sma = close.rolling(int(param_c), min_periods=int(param_c)).mean()
+        rsi = _wilder_rsi(close, period)
+        bear_setup = rsi < bear_buy
+        bull_setup = (rsi < float(param_d)) & (close > trend_sma)
+        setup = pd.Series(
+            np.where(regime == 'bear', bear_setup, bull_setup),
+            index=close.index,
+            dtype=bool,
+        )
+        strategy_exit = pd.Series(False, index=close.index)
+        indicator = rsi
+    elif strategy_type == STRATEGY_BOLLINGER_LOWER:
+        period = int(param_a)
+        middle = close.rolling(period, min_periods=period).mean()
+        deviation = close.rolling(period, min_periods=period).std()
+        lower = middle - float(param_b) * deviation
+        rsi = _wilder_rsi(close, int(param_c))
+        setup = (
+            (close < lower)
+            & (close.shift(1) >= lower.shift(1))
+            & (rsi <= float(param_d))
+        )
+        strategy_exit = (close >= middle) & (close.shift(1) < middle.shift(1))
+        indicator = (close / lower - 1) * 100
+    elif strategy_type == STRATEGY_RSI_RECOVERY:
+        rsi = _wilder_rsi(close, int(param_a))
+        was_oversold = (rsi <= float(param_b)).rolling(5, min_periods=1).max().shift(1).fillna(0).astype(bool)
+        recovery = (rsi > float(param_d)) & (rsi.shift(1) <= float(param_d))
+        setup = was_oversold & recovery
+        if int(param_c) > 0:
+            trend = close.rolling(int(param_c), min_periods=int(param_c)).mean()
+            setup &= close > trend
+        strategy_exit = (rsi >= 70) & (rsi.shift(1) < 70)
+        indicator = rsi
+    elif strategy_type == STRATEGY_DONCHIAN:
+        entry_window = int(param_a)
+        exit_window = int(param_b)
+        prior_high = close.rolling(entry_window, min_periods=entry_window).max().shift(1)
+        prior_low = close.rolling(exit_window, min_periods=exit_window).min().shift(1)
+        breakout_level = prior_high * (1 + float(param_d) / 100)
+        setup = (close > breakout_level) & (close.shift(1) <= breakout_level.shift(1))
+        if int(param_c) > 0:
+            trend = close.rolling(int(param_c), min_periods=int(param_c)).mean()
+            setup &= close > trend
+        setup &= regime == 'bull'
+        strategy_exit = close < prior_low
+        indicator = (close / breakout_level - 1) * 100
+    elif strategy_type == STRATEGY_SQUEEZE:
+        band_period = int(param_a)
+        middle = close.rolling(band_period, min_periods=band_period).mean()
+        deviation = close.rolling(band_period, min_periods=band_period).std()
+        bandwidth = deviation * 4 / middle * 100
+        lookback = int(param_d)
+        squeeze_threshold = bandwidth.rolling(lookback, min_periods=lookback).quantile(float(param_b) / 100)
+        recent_squeeze = (bandwidth <= squeeze_threshold).rolling(5, min_periods=1).max().shift(1).fillna(0).astype(bool)
+        prior_high = close.rolling(int(param_c), min_periods=int(param_c)).max().shift(1)
+        setup = recent_squeeze & (close > prior_high) & (close.shift(1) <= prior_high.shift(1))
+        setup &= regime == 'bull'
+        strategy_exit = close < middle
+        indicator = bandwidth
+    elif strategy_type == STRATEGY_TREND_PULLBACK:
+        fast = close.ewm(span=int(param_a), adjust=False, min_periods=int(param_a)).mean()
+        slow = close.ewm(span=int(param_b), adjust=False, min_periods=int(param_b)).mean()
+        tolerance = float(param_c) / 100
+        touched_fast = (
+            (close <= fast * (1 + tolerance))
+            .rolling(int(param_d), min_periods=1)
+            .max()
+            .shift(1)
+            .fillna(0)
+            .astype(bool)
+        )
+        setup = touched_fast & (fast > slow) & (close > fast) & (close.shift(1) <= fast.shift(1))
+        setup &= regime == 'bull'
+        strategy_exit = (fast < slow) | ((close < fast) & (close.shift(1) >= fast.shift(1)))
+        indicator = (close / fast - 1) * 100
+    elif strategy_type == STRATEGY_RELATIVE_STRENGTH:
+        benchmark = _align_to_prices(benchmark_close, close.index)
+        stock_return = close.pct_change(int(param_a))
+        benchmark_return = benchmark.pct_change(int(param_a))
+        relative_strength = (stock_return - benchmark_return) * 100
+        rsi = _wilder_rsi(close, int(param_c))
+        recovery = (rsi > float(param_d)) & (rsi.shift(1) <= float(param_d))
+        setup = (relative_strength >= float(param_b)) & recovery & (regime == 'bull')
+        strategy_exit = relative_strength < 0
+        indicator = relative_strength
+    elif strategy_type == STRATEGY_CROSS_MOMENTUM:
+        percentile = _align_to_prices(momentum_percentile, close.index)
+        rsi = _wilder_rsi(close, int(param_c))
+        recovery = (rsi > float(param_d)) & (rsi.shift(1) <= float(param_d))
+        setup = (percentile >= float(param_b)) & recovery & (regime == 'bull')
+        strategy_exit = percentile < 50
+        indicator = percentile
+    else:
+        raise ValueError(f"Unknown swing strategy: {strategy_type}")
+
+    return setup.fillna(False), strategy_exit.fillna(False), indicator
+
+
+def _strategy_warmup(
+    strategy_type: str,
+    param_a: float,
+    param_b: float,
+    param_c: float,
+    param_d: float,
+) -> int:
+    if strategy_type == STRATEGY_SQUEEZE:
+        return int(param_a) + int(param_d) + 5
+    if strategy_type in (STRATEGY_RELATIVE_STRENGTH, STRATEGY_CROSS_MOMENTUM):
+        return max(int(param_a), int(param_c), 50) + 5
+    if strategy_type == STRATEGY_TREND_PULLBACK:
+        return max(int(param_a), int(param_b), 50) + int(param_d) + 5
+    if strategy_type == STRATEGY_BOLLINGER_LOWER:
+        return max(int(param_a), int(param_c), 50) + 5
+    if strategy_type == STRATEGY_RSI_RECOVERY:
+        return max(int(param_a), int(param_c), 50) + 10
+    return max(int(param_a), int(param_b), int(param_c), 50) + 5
+
+
 def _build_regime_signals(
     price_series: pd.Series,
     regime_series: pd.Series,
-    bear_rsi_period: int,
-    bear_oversold: int,
-    bull_rsi_period: int,
-    bull_dip_rsi: int,
-    bull_trend_sma: int,
+    strategy_type: str,
+    param_a: float,
+    param_b: float,
+    param_c: float,
+    param_d: float,
     max_hold: int,
     profit_target_pct: float,
     stop_loss_pct: float,
     trade_start: pd.Timestamp | None = None,
+    benchmark_close: pd.Series | None = None,
+    momentum_percentile: pd.Series | None = None,
 ):
-    """Build market-on-close entries and close-based exits."""
+    """Build next-session entries and close-based exits from daily closing setups."""
     price_series = pd.to_numeric(price_series, errors='coerce').dropna().sort_index()
-    min_len = max(bear_rsi_period, bull_rsi_period, bull_trend_sma, 50) + 5
+    price_series = price_series[~price_series.index.duplicated(keep='last')]
+    min_len = _strategy_warmup(
+        strategy_type, param_a, param_b, param_c, param_d,
+    )
     if len(price_series) < min_len:
         return None
-
-    bear_rsi = _wilder_rsi(price_series, bear_rsi_period)
-    bull_rsi = _wilder_rsi(price_series, bull_rsi_period)
-    trend_sma = price_series.rolling(window=bull_trend_sma, min_periods=bull_trend_sma).mean()
 
     if regime_series.empty:
         regime_aligned = pd.Series('bear', index=price_series.index, dtype=str)
     else:
         regime_aligned = regime_series.reindex(price_series.index, method='ffill').fillna('bear')
 
-    # Enter at the same low close that produces the oversold signal.
-    bear_setup = bear_rsi < bear_oversold
-    bull_setup = (
-        (bull_rsi < bull_dip_rsi)
-        & (price_series > trend_sma)
+    setup, strategy_exit, _ = _strategy_components(
+        price_series, regime_aligned, benchmark_close, momentum_percentile,
+        strategy_type, param_a, param_b, param_c, param_d,
     )
-    setup = pd.Series(
-        np.where(regime_aligned == 'bear', bear_setup, bull_setup),
-        index=price_series.index,
-        dtype=bool,
-    ).fillna(False)
-
-    # Assume a market-on-close order can execute at the same close that produces
-    # the oversold signal.
-    entry_candidates = setup
+    entry_candidates = setup.shift(1, fill_value=False)
+    strategy_exit = strategy_exit.shift(1, fill_value=False)
     if trade_start is not None:
         entry_candidates.loc[entry_candidates.index < pd.Timestamp(trade_start)] = False
     n = len(price_series)
@@ -220,7 +406,7 @@ def _build_regime_signals(
             days_held += 1
             hit_target = profit_target_pct > 0 and close_arr[i] >= entry_price * (1 + profit_target_pct / 100)
             hit_stop = stop_loss_pct > 0 and close_arr[i] <= entry_price * (1 - stop_loss_pct / 100)
-            if hit_target or hit_stop or days_held >= max_hold:
+            if hit_target or hit_stop or strategy_exit.iloc[i] or days_held >= max_hold:
                 clean_exits[i] = True
                 in_pos = False
                 continue
@@ -246,11 +432,11 @@ def _build_regime_signals(
 def _run_regime_backtest(
     price_series: pd.Series,
     regime_series: pd.Series,
-    bear_rsi_period: int,
-    bear_oversold: int,
-    bull_rsi_period: int,
-    bull_dip_rsi: int,
-    bull_trend_sma: int,
+    strategy_type: str,
+    param_a: float,
+    param_b: float,
+    param_c: float,
+    param_d: float,
     max_hold: int,
     profit_target_pct: float,
     stop_loss_pct: float,
@@ -258,22 +444,14 @@ def _run_regime_backtest(
     sell_fee: float,
     sell_tax: float,
     trade_start: pd.Timestamp | None = None,
+    benchmark_close: pd.Series | None = None,
+    momentum_percentile: pd.Series | None = None,
 ):
-    """
-    Regime-aware day-trade backtest with multi-day hold.
-
-    Bear market:  buy when RSI < bear_oversold (deep oversold bounce).
-    Bull market:  buy when RSI < bull_dip_rsi AND close > SMA(trend) (dip in uptrend).
-
-    Exit (checked each day while in position):
-      - Profit target hit  → close >= entry_price * (1 + profit_target_pct/100)
-      - Stop loss hit      → close <= entry_price * (1 - stop_loss_pct/100)
-      - Max hold reached   → days_held >= max_hold
-    """
+    """Run one short-term swing strategy with close-based risk controls."""
     signals = _build_regime_signals(
-        price_series, regime_series, bear_rsi_period, bear_oversold,
-        bull_rsi_period, bull_dip_rsi, bull_trend_sma, max_hold,
-        profit_target_pct, stop_loss_pct, trade_start,
+        price_series, regime_series, strategy_type, param_a, param_b, param_c,
+        param_d, max_hold, profit_target_pct, stop_loss_pct, trade_start,
+        benchmark_close, momentum_percentile,
     )
     if signals is None:
         return None
@@ -287,6 +465,7 @@ def _run_regime_backtest(
     fees[exits]   = (sell_fee + sell_tax) / 100.0
 
     try:
+        vbt = _load_vectorbt()
         pf = vbt.Portfolio.from_signals(price_series, entries, exits, freq='1D', fees=fees)
         num_trades = len(pf.trades)
         if num_trades == 0:
@@ -453,25 +632,46 @@ else:
 
 SEARCH_PRESETS = {
     "Quick": {
-        "rsi_periods": [7, 14],
-        "bear_buys": [30, 40],
-        "bull_buys": [40, 50],
-        "hold_days": [3, 5],
-        "exit_rules": [(3.0, 2.0)],
+        "strategy_params": {
+            STRATEGY_REGIME_RSI: [(14, 30, 50, 45)],
+            STRATEGY_BOLLINGER_LOWER: [(20, 2.0, 14, 40)],
+            STRATEGY_RSI_RECOVERY: [(14, 30, 0, 35)],
+            STRATEGY_DONCHIAN: [(20, 10, 50, 0.0)],
+            STRATEGY_SQUEEZE: [(20, 20, 10, 120)],
+            STRATEGY_TREND_PULLBACK: [(20, 50, 2.0, 5)],
+            STRATEGY_RELATIVE_STRENGTH: [(20, 2.0, 14, 40)],
+            STRATEGY_CROSS_MOMENTUM: [(20, 80, 14, 40)],
+        },
+        "hold_days": [5],
+        "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
     },
     "Balanced": {
-        "rsi_periods": [7, 10, 14, 21],
-        "bear_buys": [25, 30, 35, 40],
-        "bull_buys": [40, 45, 50],
-        "hold_days": [3, 5, 7],
-        "exit_rules": [(2.0, 1.5), (3.0, 2.0)],
+        "strategy_params": {
+            STRATEGY_REGIME_RSI: [(7, 30, 50, 45), (14, 30, 50, 45), (14, 35, 100, 50)],
+            STRATEGY_BOLLINGER_LOWER: [(20, 1.5, 14, 45), (20, 2.0, 14, 40)],
+            STRATEGY_RSI_RECOVERY: [(7, 25, 0, 35), (14, 30, 50, 40)],
+            STRATEGY_DONCHIAN: [(10, 5, 20, 0.0), (20, 10, 50, 0.0)],
+            STRATEGY_SQUEEZE: [(20, 20, 10, 120), (20, 30, 20, 120)],
+            STRATEGY_TREND_PULLBACK: [(10, 30, 1.5, 3), (20, 50, 2.0, 5)],
+            STRATEGY_RELATIVE_STRENGTH: [(20, 0.0, 14, 40), (60, 3.0, 14, 45)],
+            STRATEGY_CROSS_MOMENTUM: [(20, 75, 14, 40), (60, 80, 14, 45)],
+        },
+        "hold_days": [3, 5],
+        "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
     },
     "Deep": {
-        "rsi_periods": [5, 7, 10, 14, 21],
-        "bear_buys": [25, 30, 35, 40, 45],
-        "bull_buys": [35, 40, 45, 50, 55],
-        "hold_days": [2, 3, 5, 7],
-        "exit_rules": [(2.0, 1.0), (3.0, 1.5), (4.0, 2.0), (5.0, 3.0)],
+        "strategy_params": {
+            STRATEGY_REGIME_RSI: [(7, 25, 20, 40), (7, 30, 50, 45), (14, 30, 50, 45), (14, 35, 100, 50)],
+            STRATEGY_BOLLINGER_LOWER: [(10, 1.5, 7, 40), (20, 1.5, 14, 45), (20, 2.0, 14, 40), (30, 2.0, 14, 45)],
+            STRATEGY_RSI_RECOVERY: [(7, 25, 0, 35), (14, 25, 50, 35), (14, 30, 50, 40)],
+            STRATEGY_DONCHIAN: [(10, 5, 20, 0.0), (20, 10, 50, 0.0), (50, 20, 100, 0.5)],
+            STRATEGY_SQUEEZE: [(10, 20, 10, 60), (20, 20, 10, 120), (20, 30, 20, 120)],
+            STRATEGY_TREND_PULLBACK: [(5, 20, 1.0, 3), (10, 30, 1.5, 3), (20, 50, 2.0, 5)],
+            STRATEGY_RELATIVE_STRENGTH: [(20, 0.0, 7, 40), (20, 2.0, 14, 40), (60, 3.0, 14, 45)],
+            STRATEGY_CROSS_MOMENTUM: [(10, 70, 7, 40), (20, 75, 14, 40), (60, 80, 14, 45)],
+        },
+        "hold_days": [3, 5, 7],
+        "exit_rules": [(DEFAULT_PROFIT_TARGET, 1.5), (DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
     },
 }
 OPTIMIZER_WORKERS = min(8, max(2, os.cpu_count() or 2))
@@ -485,10 +685,84 @@ def _weighted_mean(frame: pd.DataFrame, value_col: str, weight_col: str) -> floa
     return float(np.average(valid[value_col], weights=valid[weight_col]))
 
 
+def _format_strategy_params(
+    strategy_type: str,
+    param_a: float,
+    param_b: float,
+    param_c: float,
+    param_d: float,
+) -> str:
+    labels = STRATEGY_PARAMETER_LABELS[strategy_type]
+    values = (param_a, param_b, param_c, param_d)
+    formatted = []
+    for label, value in zip(labels, values):
+        display = f"{value:.2f}".rstrip('0').rstrip('.')
+        formatted.append(f"{label}: {display}")
+    return ", ".join(formatted)
+
+
+def _scanner_strategy_plan(
+    stock_params: dict | None,
+    active_params: dict | None,
+) -> list[dict]:
+    """Build one scanner configuration for every supported strategy."""
+    plan = []
+    for strategy_type in STRATEGY_TYPES:
+        if stock_params and stock_params['strategy_type'] == strategy_type:
+            source = stock_params
+            parameter_source = "Stock-specific optimized"
+            score = float(stock_params['score'])
+            uplift = float(stock_params['return_uplift'])
+        elif active_params and active_params['strategy_type'] == strategy_type:
+            source = active_params
+            parameter_source = "Global optimized"
+            score = float(active_params['score'])
+            uplift = np.nan
+        else:
+            defaults = SEARCH_PRESETS['Quick']['strategy_params'][strategy_type][0]
+            source = {
+                'param_a': defaults[0],
+                'param_b': defaults[1],
+                'param_c': defaults[2],
+                'param_d': defaults[3],
+                'max_hold': DEFAULT_MAX_HOLD,
+                'profit_target': DEFAULT_PROFIT_TARGET,
+                'stop_loss': DEFAULT_STOP_LOSS,
+            }
+            parameter_source = "Baseline preset"
+            score = np.nan
+            uplift = np.nan
+        plan.append({
+            'strategy_type': strategy_type,
+            'params': tuple(float(source[key]) for key in ('param_a', 'param_b', 'param_c', 'param_d')),
+            'profit_target': DEFAULT_PROFIT_TARGET,
+            'stop_loss': float(source['stop_loss']),
+            'max_hold': int(source['max_hold']),
+            'parameter_source': parameter_source,
+            'score': score,
+            'return_uplift': uplift,
+        })
+    return plan
+
+
+def _build_momentum_percentiles(
+    grouped_prices: dict[str, pd.Series],
+    lookbacks: set[int],
+) -> dict[int, pd.DataFrame]:
+    """Rank each stock's trailing return against the available universe by date."""
+    if not grouped_prices or not lookbacks:
+        return {}
+    close_frame = pd.concat(grouped_prices, axis=1, sort=False).sort_index()
+    return {
+        lookback: close_frame.pct_change(lookback).rank(axis=1, pct=True) * 100
+        for lookback in lookbacks
+    }
+
+
 def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate each parameter set across stocks and score holdout robustness."""
     params = [
-        'Bear Period', 'Bear Buy <', 'Bull Period', 'Bull Buy <', 'Trend SMA',
+        'Strategy', 'Param A', 'Param B', 'Param C', 'Param D',
         'Max Hold', 'Profit Target', 'Stop Loss',
     ]
     rows = []
@@ -513,6 +787,12 @@ def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
     summary = pd.DataFrame(rows)
     if summary.empty:
         return summary
+    summary['Parameters'] = summary.apply(
+        lambda row: _format_strategy_params(
+            row['Strategy'], row['Param A'], row['Param B'], row['Param C'], row['Param D'],
+        ),
+        axis=1,
+    )
     summary['Generalization Gap'] = summary['Validation Avg Trade'] - summary['Train Avg Trade']
     score_inputs = {
         'Validation Avg Trade': 0.30,
@@ -539,11 +819,11 @@ def _select_stock_strategies(
     selections = {}
     for symbol, group in results_df.groupby('Symbol'):
         global_rows = group[
-            (group['Bear Period'] == global_strategy['rsi_period'])
-            & (group['Bear Buy <'] == global_strategy['bear_buy'])
-            & (group['Bull Period'] == global_strategy['rsi_period'])
-            & (group['Bull Buy <'] == global_strategy['bull_buy'])
-            & (group['Trend SMA'] == global_strategy['trend_sma'])
+            (group['Strategy'] == global_strategy['strategy_type'])
+            & np.isclose(group['Param A'], global_strategy['param_a'])
+            & np.isclose(group['Param B'], global_strategy['param_b'])
+            & np.isclose(group['Param C'], global_strategy['param_c'])
+            & np.isclose(group['Param D'], global_strategy['param_d'])
             & (group['Max Hold'] == global_strategy['max_hold'])
             & np.isclose(group['Profit Target'], global_strategy['profit_target'])
             & np.isclose(group['Stop Loss'], global_strategy['stop_loss'])
@@ -578,10 +858,11 @@ def _select_stock_strategies(
             ascending=False,
         ).iloc[0]
         selections[symbol] = {
-            'rsi_period': int(best['Bear Period']),
-            'bear_buy': int(best['Bear Buy <']),
-            'bull_buy': int(best['Bull Buy <']),
-            'trend_sma': int(best['Trend SMA']),
+            'strategy_type': best['Strategy'],
+            'param_a': float(best['Param A']),
+            'param_b': float(best['Param B']),
+            'param_c': float(best['Param C']),
+            'param_d': float(best['Param D']),
             'max_hold': int(best['Max Hold']),
             'profit_target': float(best['Profit Target']),
             'stop_loss': float(best['Stop Loss']),
@@ -601,10 +882,11 @@ def _test_stock_strategies(
     regime_series: pd.Series,
     param_combos: list[tuple],
     validation_pct: int,
-    bull_trend_sma: int,
     buy_fee: float,
     sell_fee: float,
     sell_tax: float,
+    benchmark_close: pd.Series | None,
+    momentum_percentiles: dict[int, pd.Series],
 ) -> tuple[list[dict], str]:
     """Test every strategy for one stock; safe to execute in a worker thread."""
     if price_series is None or price_series.empty:
@@ -612,8 +894,9 @@ def _test_stock_strategies(
 
     price_series = price_series[~price_series.index.duplicated(keep='last')].sort_index()
     split_idx = int(len(price_series) * (1 - validation_pct / 100))
-    max_rsi_period = max(combo[0] for combo in param_combos)
-    indicator_warmup = max(max_rsi_period, int(bull_trend_sma), 50) + 5
+    indicator_warmup = max(
+        _strategy_warmup(combo[0], *combo[1:5]) for combo in param_combos
+    )
     if split_idx < indicator_warmup or len(price_series) - split_idx < indicator_warmup:
         return [], 'insufficient_history'
 
@@ -622,14 +905,16 @@ def _test_stock_strategies(
     validation_prices = price_series.iloc[max(0, split_idx - indicator_warmup):]
     rows = []
 
-    for rsi_p, bear_b, bull_b, hold_d, profit_target, stop_loss in param_combos:
+    for strategy_type, param_a, param_b, param_c, param_d, hold_d, profit_target, stop_loss in param_combos:
+        momentum_percentile = momentum_percentiles.get(int(param_a))
         result = _run_regime_backtest(
             train_prices, regime_series,
-            bear_rsi_period=int(rsi_p), bear_oversold=int(bear_b),
-            bull_rsi_period=int(rsi_p), bull_dip_rsi=int(bull_b),
-            bull_trend_sma=int(bull_trend_sma), max_hold=int(hold_d),
+            strategy_type=strategy_type,
+            param_a=param_a, param_b=param_b, param_c=param_c, param_d=param_d,
+            max_hold=int(hold_d),
             profit_target_pct=float(profit_target), stop_loss_pct=float(stop_loss),
             buy_fee=buy_fee, sell_fee=sell_fee, sell_tax=sell_tax,
+            benchmark_close=benchmark_close, momentum_percentile=momentum_percentile,
         )
         if result is None:
             continue
@@ -637,12 +922,13 @@ def _test_stock_strategies(
         tot_ret, win_rate, max_dd, num_trades, avg_trade, n_bear, n_bull = result
         validation_result = _run_regime_backtest(
             validation_prices, regime_series,
-            bear_rsi_period=int(rsi_p), bear_oversold=int(bear_b),
-            bull_rsi_period=int(rsi_p), bull_dip_rsi=int(bull_b),
-            bull_trend_sma=int(bull_trend_sma), max_hold=int(hold_d),
+            strategy_type=strategy_type,
+            param_a=param_a, param_b=param_b, param_c=param_c, param_d=param_d,
+            max_hold=int(hold_d),
             profit_target_pct=float(profit_target), stop_loss_pct=float(stop_loss),
             buy_fee=buy_fee, sell_fee=sell_fee, sell_tax=sell_tax,
             trade_start=validation_start,
+            benchmark_close=benchmark_close, momentum_percentile=momentum_percentile,
         )
         if validation_result is None:
             val_ret, val_win, val_dd, val_trades, val_avg = np.nan, np.nan, np.nan, 0, np.nan
@@ -651,11 +937,11 @@ def _test_stock_strategies(
 
         rows.append({
             'Symbol': ticker,
-            'Bear Period': rsi_p,
-            'Bear Buy <': bear_b,
-            'Bull Period': rsi_p,
-            'Bull Buy <': bull_b,
-            'Trend SMA': bull_trend_sma,
+            'Strategy': strategy_type,
+            'Param A': param_a,
+            'Param B': param_b,
+            'Param C': param_c,
+            'Param D': param_d,
             'Max Hold': hold_d,
             'Profit Target': profit_target,
             'Stop Loss': stop_loss,
@@ -676,11 +962,12 @@ def _test_stock_strategies(
     return rows, 'ok' if rows else 'no_signals'
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("Find the Best Day-Trade Strategy", divider='violet')
+st.subheader("Find the Best Short-Term Swing Strategy", divider='violet')
 st.caption(
-    "Test a curated set of RSI, holding-period, and risk/reward combinations. "
+    "Test compact strategy-specific parameter sets without varying irrelevant inputs. "
     "The most recent data is held out, then each strategy is ranked by how "
-    "consistently it performs across the full stock shortlist."
+    "consistently it performs across the full stock shortlist. Cross-sectional "
+    "momentum is ranked against the same shortlist on every date."
 )
 
 search_cols = st.columns(3)
@@ -688,9 +975,10 @@ search_depth = search_cols[0].selectbox(
     "Search Depth", options=list(SEARCH_PRESETS), index=1, key="dt_search_depth",
     help="Quick for iteration, Balanced for normal use, Deep for final research",
 )
-bull_trend_sma = search_cols[1].selectbox(
-    "Bull Trend Filter", options=[20, 50, 100], index=1, key="dt_bull_sma",
-    help="Bull entries require price above this moving average",
+strategy_types = search_cols[1].multiselect(
+    "Strategies", options=STRATEGY_TYPES,
+    default=STRATEGY_TYPES, key="dt_strategy_types",
+    help="Compare mean-reversion, trend, breakout, and relative-strength setups",
 )
 opt_validation_pct = search_cols[2].slider(
     "Holdout Data %", min_value=20, max_value=40, value=30, step=5,
@@ -703,23 +991,32 @@ opt_end = date_cols[1].date_input("End Date", value=datetime.date.today(), key="
 
 with st.expander("Advanced: market regime and trading costs"):
     advanced_cols = st.columns(5)
-    regime_fast = advanced_cols[0].number_input("Regime Fast SMA", 10, 100, 50, 10, key="dt_reg_fast")
-    regime_slow = advanced_cols[1].number_input("Regime Slow SMA", 50, 300, 200, 10, key="dt_reg_slow")
-    opt_buy_fee = advanced_cols[2].number_input("Buy Fee %", 0.0, 5.0, 0.15, 0.01, key="dt_buy_fee")
-    opt_sell_fee = advanced_cols[3].number_input("Sell Fee %", 0.0, 5.0, 0.15, 0.01, key="dt_sell_fee")
-    opt_sell_tax = advanced_cols[4].number_input("Sell Tax %", 0.0, 5.0, 0.1, 0.01, key="dt_sell_tax")
+    regime_fast = advanced_cols[0].number_input(
+        "Regime Fast SMA", min_value=10, max_value=100, value=50, step=10, key="dt_reg_fast",
+    )
+    regime_slow = advanced_cols[1].number_input(
+        "Regime Slow SMA", min_value=50, max_value=300, value=200, step=10, key="dt_reg_slow",
+    )
+    opt_buy_fee = advanced_cols[2].number_input(
+        "Buy Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="dt_buy_fee",
+    )
+    opt_sell_fee = advanced_cols[3].number_input(
+        "Sell Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="dt_sell_fee",
+    )
+    opt_sell_tax = advanced_cols[4].number_input(
+        "Sell Tax %", min_value=0.0, max_value=5.0, value=0.1, step=0.01, key="dt_sell_tax",
+    )
 
 search_space = SEARCH_PRESETS[search_depth]
-rsi_periods = search_space['rsi_periods']
-bear_buys = search_space['bear_buys']
-bull_buys = search_space['bull_buys']
 hold_days = search_space['hold_days']
 exit_rules = search_space['exit_rules']
-param_combos = [
-    (rsi_p, bear_b, bull_b, hold_d, profit_target, stop_loss)
-    for rsi_p, bear_b, bull_b, hold_d, (profit_target, stop_loss)
-    in itertools.product(rsi_periods, bear_buys, bull_buys, hold_days, exit_rules)
-]
+param_combos = []
+for strategy_type in strategy_types:
+    param_combos.extend(
+        (strategy_type, *strategy_params, hold_d, profit_target, stop_loss)
+        for strategy_params, hold_d, (profit_target, stop_loss)
+        in itertools.product(search_space['strategy_params'][strategy_type], hold_days, exit_rules)
+    )
 total_combos = len(param_combos) * len(shortlist_tickers)
 
 info_cols = st.columns(5)
@@ -741,7 +1038,7 @@ price_cache_key = hashlib.md5(
     f"{sorted(shortlist_tickers)}{opt_start}{opt_end}".encode()
 ).hexdigest()
 results_cache_key = hashlib.md5(
-    f"{STRATEGY_ENGINE_VERSION}{param_combos}{bull_trend_sma}{regime_fast}{regime_slow}{opt_start}{opt_end}{shortlist_tickers}{opt_buy_fee}{opt_sell_fee}{opt_sell_tax}{opt_validation_pct}".encode()
+    f"{STRATEGY_ENGINE_VERSION}{param_combos}{regime_fast}{regime_slow}{opt_start}{opt_end}{shortlist_tickers}{opt_buy_fee}{opt_sell_fee}{opt_sell_tax}{opt_validation_pct}".encode()
 ).hexdigest()
 
 if run_optimizer:
@@ -808,6 +1105,12 @@ if run_optimizer:
             sym: grp.set_index('date')['close']
             for sym, grp in all_prices_df.groupby('symbol')
         }
+        momentum_lookbacks = {
+            int(combo[1]) for combo in param_combos
+            if combo[0] == STRATEGY_CROSS_MOMENTUM
+        }
+        momentum_frames = _build_momentum_percentiles(grouped, momentum_lookbacks)
+        benchmark_close = jkse_df['close'] if not jkse_df.empty else pd.Series(dtype=float)
         status_counts = {
             'ok': 0, 'no_signals': 0, 'missing_data': 0,
             'insufficient_history': 0, 'error': 0,
@@ -822,10 +1125,15 @@ if run_optimizer:
                     regime_series,
                     param_combos,
                     int(opt_validation_pct),
-                    int(bull_trend_sma),
                     float(opt_buy_fee),
                     float(opt_sell_fee),
                     float(opt_sell_tax),
+                    benchmark_close,
+                    {
+                        lookback: frame[ticker]
+                        for lookback, frame in momentum_frames.items()
+                        if ticker in frame.columns
+                    },
                 ): ticker
                 for ticker in shortlist_tickers
             }
@@ -897,10 +1205,12 @@ if results_are_current:
 
     col_cfg = {
         "Symbol":        st.column_config.TextColumn("Symbol"),
-        "Bear Period":   st.column_config.NumberColumn("RSI Period", format="%d"),
-        "Bear Buy <":    st.column_config.NumberColumn("Bear RSI Buy <", format="%d"),
-        "Bull Buy <":    st.column_config.NumberColumn("Bull RSI Buy <", format="%d"),
-        "Trend SMA":     st.column_config.NumberColumn("Trend SMA", format="%d"),
+        "Strategy":      st.column_config.TextColumn("Strategy"),
+        "Parameters":    st.column_config.TextColumn("Strategy Parameters"),
+        "Param A":       st.column_config.NumberColumn("Param A", format="%.2f"),
+        "Param B":       st.column_config.NumberColumn("Param B", format="%.2f"),
+        "Param C":       st.column_config.NumberColumn("Param C", format="%.2f"),
+        "Param D":       st.column_config.NumberColumn("Param D", format="%.2f"),
         "Max Hold":      st.column_config.NumberColumn("Max Hold Days", format="%d"),
         "Profit Target": st.column_config.NumberColumn("Profit Target", format="%.1f%%"),
         "Stop Loss":     st.column_config.NumberColumn("Stop Loss", format="%.1f%%"),
@@ -936,10 +1246,11 @@ if results_are_current:
     if not qualified_df.empty:
         recommended = qualified_df.iloc[0]
         recommended_strategy = {
-            'rsi_period': int(recommended['Bear Period']),
-            'bear_buy': int(recommended['Bear Buy <']),
-            'bull_buy': int(recommended['Bull Buy <']),
-            'trend_sma': int(recommended['Trend SMA']),
+            'strategy_type': recommended['Strategy'],
+            'param_a': float(recommended['Param A']),
+            'param_b': float(recommended['Param B']),
+            'param_c': float(recommended['Param C']),
+            'param_d': float(recommended['Param D']),
             'max_hold': int(recommended['Max Hold']),
             'profit_target': float(recommended['Profit Target']),
             'stop_loss': float(recommended['Stop Loss']),
@@ -950,32 +1261,29 @@ if results_are_current:
         st.session_state['dt_stock_strategies_cache_key'] = results_cache_key
         strategy_signature = (
             results_cache_key,
-            recommended_strategy['rsi_period'],
-            recommended_strategy['bear_buy'],
-            recommended_strategy['bull_buy'],
-            recommended_strategy['trend_sma'],
+            recommended_strategy['strategy_type'],
+            recommended_strategy['param_a'],
+            recommended_strategy['param_b'],
+            recommended_strategy['param_c'],
+            recommended_strategy['param_d'],
             recommended_strategy['max_hold'],
             recommended_strategy['profit_target'],
             recommended_strategy['stop_loss'],
         )
         if st.session_state.get('dt_applied_strategy_signature') != strategy_signature:
             downstream_defaults = {
-                'bt_bear_period': recommended_strategy['rsi_period'],
-                'bt_bear_oversold': recommended_strategy['bear_buy'],
-                'bt_bull_period': recommended_strategy['rsi_period'],
-                'bt_bull_dip': recommended_strategy['bull_buy'],
-                'bt_bull_sma': recommended_strategy['trend_sma'],
+                'bt_strategy_type': recommended_strategy['strategy_type'],
+                'bt_parameter_strategy': recommended_strategy['strategy_type'],
+                'bt_param_a': recommended_strategy['param_a'],
+                'bt_param_b': recommended_strategy['param_b'],
+                'bt_param_c': recommended_strategy['param_c'],
+                'bt_param_d': recommended_strategy['param_d'],
                 'bt_max_hold': recommended_strategy['max_hold'],
                 'bt_pt': recommended_strategy['profit_target'],
                 'bt_sl': recommended_strategy['stop_loss'],
                 'bt_buy_fee': float(opt_buy_fee),
                 'bt_sell_fee': float(opt_sell_fee),
                 'bt_sell_tax': float(opt_sell_tax),
-                'dt_alert_bear_p': recommended_strategy['rsi_period'],
-                'dt_alert_bear_b': recommended_strategy['bear_buy'],
-                'dt_alert_bull_p': recommended_strategy['rsi_period'],
-                'dt_alert_bull_b': recommended_strategy['bull_buy'],
-                'dt_alert_sma': recommended_strategy['trend_sma'],
             }
             for key, value in downstream_defaults.items():
                 st.session_state[key] = value
@@ -984,7 +1292,7 @@ if results_are_current:
             strategy_was_applied = True
 
         strategy_params = [
-            'Bear Period', 'Bear Buy <', 'Bull Period', 'Bull Buy <', 'Trend SMA',
+            'Strategy', 'Param A', 'Param B', 'Param C', 'Param D',
             'Max Hold', 'Profit Target', 'Stop Loss',
         ]
         recommended_runs = results_df.copy()
@@ -1008,8 +1316,8 @@ if results_are_current:
             st.dataframe(
                 qualified_df.head(10), column_config=col_cfg,
                 column_order=[
-                    'Strategy Score', 'Bear Period', 'Bear Buy <', 'Bull Buy <',
-                    'Trend SMA', 'Max Hold', 'Profit Target', 'Stop Loss',
+                    'Strategy Score', 'Strategy', 'Parameters',
+                    'Max Hold', 'Profit Target', 'Stop Loss',
                     'Validation Avg Trade', 'Validation Win Rate',
                     'Median Validation Return', 'Positive Stocks %',
                     'Validation Coverage %', 'Validation Drawdown',
@@ -1042,8 +1350,8 @@ if results_are_current:
         st.dataframe(
             strategy_df, column_config=col_cfg,
             column_order=[
-                'Strategy Score', 'Bear Period', 'Bear Buy <', 'Bull Buy <',
-                'Trend SMA', 'Max Hold', 'Profit Target', 'Stop Loss',
+                'Strategy Score', 'Strategy', 'Parameters',
+                'Max Hold', 'Profit Target', 'Stop Loss',
                 'Validation Avg Trade', 'Validation Win Rate',
                 'Median Validation Return', 'Positive Stocks %',
                 'Validation Coverage %', 'Validation Drawdown',
@@ -1056,7 +1364,7 @@ if results_are_current:
     st.download_button(
         "Download Strategy Rankings CSV",
         data=df_to_csv(strategy_df),
-        file_name="daytrade_strategy_rankings.csv",
+        file_name="short_term_swing_strategy_rankings.csv",
         mime="text/csv",
     )
 
@@ -1066,502 +1374,393 @@ if results_are_current:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("Run Regime-Aware Day-Trade on a Specific Ticker", divider='red')
+st.subheader("Run a Short-Term Swing Backtest on a Specific Ticker", divider='red')
 
 active_strategy = st.session_state.get('dt_active_strategy')
 stock_strategy_map = st.session_state.get('dt_stock_strategies', {})
 
 main_col1, main_col2 = st.columns([1, 2])
-
 with main_col1:
     try:
         stock_list = sorted(pd.read_csv('data/jkse/valuation.csv')['stock'].unique().tolist())
     except Exception:
         stock_list = ['BBCA.JK']
-    try:
-        default_idx = stock_list.index('BBCA.JK')
-    except ValueError:
-        default_idx = 0
-
+    default_idx = stock_list.index('BBCA.JK') if 'BBCA.JK' in stock_list else 0
     stock = st.selectbox('Stock Ticker', options=stock_list, index=default_idx, key="dt_single_stock")
-
 with main_col2:
     start_date = st.date_input('Start Date', value=datetime.date(2023, 1, 1), key="dt_single_start")
-    end_date   = st.date_input('End Date',   value=datetime.date.today(),     key="dt_single_end")
+    end_date = st.date_input('End Date', value=datetime.date.today(), key="dt_single_end")
 
 stock_specific_strategy = stock_strategy_map.get(stock)
 single_strategy = stock_specific_strategy or active_strategy
+if (
+    'bt_pt' not in st.session_state
+    or st.session_state.get('dt_profit_target_version') != STRATEGY_ENGINE_VERSION
+):
+    st.session_state['bt_pt'] = DEFAULT_PROFIT_TARGET
+    st.session_state['dt_profit_target_version'] = STRATEGY_ENGINE_VERSION
+st.session_state.setdefault('bt_max_hold', DEFAULT_MAX_HOLD)
+st.session_state.setdefault('bt_sl', DEFAULT_STOP_LOSS)
+st.session_state.setdefault('bt_buy_fee', 0.15)
+st.session_state.setdefault('bt_sell_fee', 0.15)
+st.session_state.setdefault('bt_sell_tax', 0.1)
 if single_strategy:
     single_strategy_signature = (
-        stock,
-        st.session_state.get('dt_stock_strategies_cache_key'),
-        single_strategy['rsi_period'], single_strategy['bear_buy'],
-        single_strategy['bull_buy'], single_strategy['trend_sma'],
-        single_strategy['max_hold'], single_strategy['profit_target'],
-        single_strategy['stop_loss'],
+        stock, st.session_state.get('dt_stock_strategies_cache_key'),
+        single_strategy['strategy_type'], single_strategy['param_a'],
+        single_strategy['param_b'], single_strategy['param_c'], single_strategy['param_d'],
+        single_strategy['max_hold'], single_strategy['profit_target'], single_strategy['stop_loss'],
     )
     if st.session_state.get('dt_single_strategy_signature') != single_strategy_signature:
-        single_defaults = {
-            'bt_bear_period': single_strategy['rsi_period'],
-            'bt_bear_oversold': single_strategy['bear_buy'],
-            'bt_bull_period': single_strategy['rsi_period'],
-            'bt_bull_dip': single_strategy['bull_buy'],
-            'bt_bull_sma': single_strategy['trend_sma'],
+        for key, value in {
+            'bt_strategy_type': single_strategy['strategy_type'],
+            'bt_parameter_strategy': single_strategy['strategy_type'],
+            'bt_param_a': single_strategy['param_a'],
+            'bt_param_b': single_strategy['param_b'],
+            'bt_param_c': single_strategy['param_c'],
+            'bt_param_d': single_strategy['param_d'],
             'bt_max_hold': single_strategy['max_hold'],
             'bt_pt': single_strategy['profit_target'],
             'bt_sl': single_strategy['stop_loss'],
-        }
-        for key, value in single_defaults.items():
+        }.items():
             st.session_state[key] = value
         st.session_state['dt_single_strategy_signature'] = single_strategy_signature
 
 with st.expander("Strategy Parameters & Costs", expanded=False):
+    if st.session_state.get('bt_strategy_type') not in STRATEGY_TYPES:
+        st.session_state['bt_strategy_type'] = STRATEGY_REGIME_RSI
+        st.session_state.pop('bt_parameter_strategy', None)
+    bt_strategy_type = st.selectbox("Entry Strategy", STRATEGY_TYPES, key="bt_strategy_type")
+    if st.session_state.get('bt_parameter_strategy') != bt_strategy_type:
+        defaults = SEARCH_PRESETS['Quick']['strategy_params'][bt_strategy_type][0]
+        for key, value in zip(('bt_param_a', 'bt_param_b', 'bt_param_c', 'bt_param_d'), defaults):
+            st.session_state[key] = value
+        st.session_state['bt_parameter_strategy'] = bt_strategy_type
+
+    parameter_labels = STRATEGY_PARAMETER_LABELS[bt_strategy_type]
+    parameter_inputs = STRATEGY_PARAMETER_INPUTS[bt_strategy_type]
+    parameter_cols = st.columns(4)
+    bt_params = [
+        column.number_input(
+            label, min_value=bounds[0], max_value=bounds[1], step=bounds[2], key=f'bt_param_{letter}',
+        )
+        for column, label, bounds, letter in zip(
+            parameter_cols, parameter_labels, parameter_inputs, ('a', 'b', 'c', 'd'),
+        )
+    ]
+    bt_param_a, bt_param_b, bt_param_c, bt_param_d = bt_params
+
     if single_strategy:
-        parameter_source = "stock-specific grid result" if stock_specific_strategy else "global recommendation"
-        return_comparison = ""
-        if stock_specific_strategy:
-            return_comparison = (
-                f" Validation return {single_strategy['validation_return']:.2f}% vs "
-                f"global {single_strategy['global_validation_return']:.2f}% "
-                f"(+{single_strategy['return_uplift']:.2f}%)."
-            )
+        parameter_source = "stock-specific holdout result" if stock_specific_strategy else "global recommendation"
         st.info(
-            f"Using {parameter_source} for **{stock}**: "
-            f"RSI {single_strategy['rsi_period']}, bear < {single_strategy['bear_buy']}, "
-            f"bull < {single_strategy['bull_buy']}, SMA {single_strategy['trend_sma']}, "
-            f"target {single_strategy['profit_target']:.1f}%, "
-            f"stop {single_strategy['stop_loss']:.1f}%, hold {single_strategy['max_hold']} days."
-            f"{return_comparison}"
+            f"Using the {parameter_source} for **{stock}**: {single_strategy['strategy_type']} "
+            f"({_format_strategy_params(single_strategy['strategy_type'], single_strategy['param_a'], single_strategy['param_b'], single_strategy['param_c'], single_strategy['param_d'])}); "
+            f"target {single_strategy['profit_target']:.1f}%, stop {single_strategy['stop_loss']:.1f}%, "
+            f"hold up to {single_strategy['max_hold']} sessions."
         )
 
-    st.markdown("#### Bear Market — Oversold Bounce")
-    bsc1, bsc2 = st.columns(2)
-    with bsc1:
-        bt_bear_period = st.number_input("RSI Period", min_value=3, max_value=50, value=14, step=1, key="bt_bear_period")
-    with bsc2:
-        bt_bear_oversold = st.number_input("Buy if RSI <", min_value=5, max_value=70, value=30, step=1, key="bt_bear_oversold")
-
-    st.markdown("#### Bull Market — Dip Buy")
-    buc1, buc2, buc3 = st.columns(3)
-    with buc1:
-        bt_bull_period = st.number_input("RSI Period", min_value=3, max_value=50, value=14, step=1, key="bt_bull_period")
-    with buc2:
-        bt_bull_dip = st.number_input("Buy if RSI <", min_value=10, max_value=70, value=40, step=1, key="bt_bull_dip")
-    with buc3:
-        bt_bull_sma = st.number_input("Trend SMA (close >)", min_value=10, max_value=200, value=50, step=10, key="bt_bull_sma")
-
     st.markdown("#### Exit Rules & Costs")
-    ex_c1, ex_c2, ex_c3 = st.columns(3)
-    with ex_c1:
-        bt_max_hold = st.number_input("Max Hold Days", min_value=1, max_value=20, value=5, step=1, key="bt_max_hold")
-    with ex_c2:
-        bt_profit_target = st.number_input("Profit Target %", min_value=0.0, max_value=20.0, value=3.0, step=0.5, key="bt_pt")
-    with ex_c3:
-        bt_stop_loss = st.number_input("Stop Loss %", min_value=0.0, max_value=20.0, value=2.0, step=0.5, key="bt_sl")
-
+    exit_cols = st.columns(3)
+    bt_max_hold = exit_cols[0].number_input(
+        "Max Hold Sessions", min_value=1, max_value=20, step=1, key="bt_max_hold",
+    )
+    bt_profit_target = exit_cols[1].number_input(
+        "Profit Target %", min_value=0.0, max_value=20.0,
+        step=0.5, key="bt_pt",
+    )
+    bt_stop_loss = exit_cols[2].number_input(
+        "Stop Loss %", min_value=0.0, max_value=20.0, step=0.5, key="bt_sl",
+    )
     cost_cols = st.columns(3)
-    bt_buy_fee = cost_cols[0].number_input("Buy Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="bt_buy_fee")
-    bt_sell_fee = cost_cols[1].number_input("Sell Fee %", min_value=0.0, max_value=5.0, value=0.15, step=0.01, key="bt_sell_fee")
-    bt_sell_tax = cost_cols[2].number_input("Sell Tax %", min_value=0.0, max_value=5.0, value=0.1, step=0.01, key="bt_sell_tax")
+    bt_buy_fee = cost_cols[0].number_input(
+        "Buy Fee %", min_value=0.0, max_value=5.0, step=0.01, key="bt_buy_fee",
+    )
+    bt_sell_fee = cost_cols[1].number_input(
+        "Sell Fee %", min_value=0.0, max_value=5.0, step=0.01, key="bt_sell_fee",
+    )
+    bt_sell_tax = cost_cols[2].number_input(
+        "Sell Tax %", min_value=0.0, max_value=5.0, step=0.01, key="bt_sell_tax",
+    )
 
 st.divider()
 
-if st.button('Run Day-Trade Backtest', key="dt_run_single"):
-    if stock:
-        regime_series = compute_regime_series(jkse_df)
+if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
+    regime_series = compute_regime_series(jkse_df)
+    with st.spinner("Fetching data from Supabase..."):
+        try:
+            res = conn.table("historical_prices").select("date,close").eq("symbol", stock).gte("date", start_date.strftime('%Y-%m-%d')).execute()
+            price_df = pd.DataFrame(res.data or [])
+        except Exception as e:
+            st.error(f"Error fetching data from Supabase: {e}")
+            price_df = pd.DataFrame()
 
-        with st.spinner("Fetching data from Supabase..."):
-            start_date_str = start_date.strftime('%Y-%m-%d')
-            try:
-                res = conn.table("historical_prices").select("date,close").eq("symbol", stock).gte("date", start_date_str).execute()
+    if price_df.empty:
+        st.error("No historical data found for the given stock and timeframe.")
+    else:
+        price_df['date'] = pd.to_datetime(price_df['date'], errors='coerce')
+        price_df['close'] = pd.to_numeric(price_df['close'], errors='coerce')
+        close = price_df.dropna().drop_duplicates('date', keep='last').sort_values('date').set_index('date')['close']
+        close = close[close.index <= pd.to_datetime(end_date)]
+        cached_prices = st.session_state.get('dt_prices', pd.DataFrame())
+        momentum_percentile = None
+        if bt_strategy_type == STRATEGY_CROSS_MOMENTUM and not cached_prices.empty:
+            grouped_single = {
+                symbol: group.assign(date=pd.to_datetime(group['date'])).set_index('date')['close']
+                for symbol, group in cached_prices.groupby('symbol')
+            }
+            frame = _build_momentum_percentiles(grouped_single, {int(bt_param_a)}).get(int(bt_param_a))
+            if frame is not None and stock in frame:
+                momentum_percentile = frame[stock]
 
-                if res.data and len(res.data) > 0:
-                    price_df = pd.DataFrame(res.data).sort_values("date").reset_index(drop=True)
-                    price_df['date'] = pd.to_datetime(price_df['date'])
-                else:
-                    st.warning("Insufficient data available in Supabase for the selected date range.")
-                    price_df = pd.DataFrame()
-            except Exception as e:
-                st.error(f"Error fetching data from Supabase: {e}")
-                price_df = pd.DataFrame()
-
-            if not price_df.empty:
-                price_df = price_df.sort_values('date').set_index('date')
-                price_df = price_df[price_df.index <= pd.to_datetime(end_date)]
-
-                if len(price_df) > 50:
-                    close = price_df['close']
-
-                    signals = _build_regime_signals(
-                        close, regime_series, bt_bear_period, bt_bear_oversold,
-                        bt_bull_period, bt_bull_dip, bt_bull_sma, bt_max_hold,
-                        bt_profit_target, bt_stop_loss,
-                    )
-                    if signals is None:
-                        st.warning("Not enough data to calculate the configured indicators.")
-                    else:
-                        close, entries, exits, regime_aligned = signals
-
-                    if signals is not None and not entries.any():
-                        st.warning("No entry signals generated. Try loosening thresholds.")
-                    elif signals is not None:
-                        fees = pd.Series(0.0, index=close.index)
-                        fees[entries] = bt_buy_fee / 100.0
-                        fees[exits]   = (bt_sell_fee + bt_sell_tax) / 100.0
-
-                        pf = vbt.Portfolio.from_signals(close, entries, exits, freq='1D', fees=fees)
-
-                        st.subheader('Performance Outline')
-                        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
-
-                        tot_ret = pf.total_return() * 100 if pf.total_return() is not None else 0.0
-                        bh_ret  = ((close.iloc[-1] / close.iloc[0]) - 1) * 100
-
-                        try:  win_r = pf.trades.win_rate() * 100 if len(pf.trades) > 0 else 0.0
-                        except: win_r = 0.0
-                        try:  max_dd = pf.max_drawdown() * 100 if pf.max_drawdown() is not None else 0.0
-                        except: max_dd = 0.0
-                        try:  avg_trade = pf.trades.returns.mean() * 100 if len(pf.trades) > 0 else 0.0
-                        except: avg_trade = 0.0
-
-                        bear_n = int((entries & (regime_aligned == 'bear')).sum())
-                        bull_n = int((entries & (regime_aligned == 'bull')).sum())
-
-                        metrics_col1.metric("Total Return", f"{tot_ret:.2f}%", delta=f"vs B&H {bh_ret:.2f}%")
-                        metrics_col2.metric("Win Rate",     f"{win_r:.2f}%")
-                        metrics_col3.metric("Avg Trade",    f"{avg_trade:.3f}%")
-                        metrics_col4.metric("Max Drawdown", f"{max_dd:.2f}%")
-
-                        st.caption(f"Bear entries: {bear_n}  |  Bull entries: {bull_n}  |  Total trades: {len(pf.trades)}")
-
-                        st.plotly_chart(pf.plot())
-
-                        with st.expander('View Trade Log'):
-                            if len(pf.trades) > 0:
-                                st.dataframe(pf.trades.records_readable)
-                            else:
-                                st.info("No day trades executed within this time window.")
-                else:
-                    st.warning("Not enough data to run the strategy. Try selecting a broader date range.")
+        signals = _build_regime_signals(
+            close, regime_series, bt_strategy_type, bt_param_a, bt_param_b,
+            bt_param_c, bt_param_d, bt_max_hold, bt_profit_target, bt_stop_loss,
+            benchmark_close=jkse_df['close'] if not jkse_df.empty else None,
+            momentum_percentile=momentum_percentile,
+        )
+        if signals is None:
+            st.warning("Not enough data to calculate the configured indicators.")
+        else:
+            close, entries, exits, regime_aligned = signals
+            if not entries.any():
+                detail = " Run the optimizer first to populate universe ranks." if bt_strategy_type == STRATEGY_CROSS_MOMENTUM and momentum_percentile is None else ""
+                st.warning(f"No entry signals generated. Try loosening thresholds.{detail}")
             else:
-                st.error("No historical data found for the given stock and timeframe.")
+                fees = pd.Series(0.0, index=close.index)
+                fees[entries] = bt_buy_fee / 100.0
+                fees[exits] = (bt_sell_fee + bt_sell_tax) / 100.0
+                vbt = _load_vectorbt()
+                pf = vbt.Portfolio.from_signals(close, entries, exits, freq='1D', fees=fees)
+                st.subheader('Performance Outline')
+                metrics = st.columns(4)
+                tot_ret = pf.total_return() * 100 if pf.total_return() is not None else 0.0
+                bh_ret = ((close.iloc[-1] / close.iloc[0]) - 1) * 100
+                win_rate = pf.trades.win_rate() * 100 if len(pf.trades) else 0.0
+                max_dd = pf.max_drawdown() * 100 if pf.max_drawdown() is not None else 0.0
+                avg_trade = pf.trades.returns.mean() * 100 if len(pf.trades) else 0.0
+                metrics[0].metric("Total Return", f"{tot_ret:.2f}%", delta=f"vs B&H {bh_ret:.2f}%")
+                metrics[1].metric("Win Rate", f"{win_rate:.2f}%")
+                metrics[2].metric("Avg Trade", f"{avg_trade:.3f}%")
+                metrics[3].metric("Max Drawdown", f"{max_dd:.2f}%")
+                bear_n = int((entries & (regime_aligned == 'bear')).sum())
+                bull_n = int((entries & (regime_aligned == 'bull')).sum())
+                st.caption(f"Bear entries: {bear_n} | Bull entries: {bull_n} | Total trades: {len(pf.trades)}")
+                st.plotly_chart(pf.plot())
+                with st.expander('View Trade Log'):
+                    st.dataframe(pf.trades.records_readable)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LIVE DAY-TRADE SIGNAL SCANNER
+# LIVE SHORT-TERM SWING SETUP SCANNER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("Live Day-Trade Entry Scanner", divider='orange')
+st.subheader("Live Short-Term Swing Setup Scanner", divider='orange')
 st.caption(
-    "Scan today's shortlist closes for regime-appropriate entry signals. "
-    "Bear market: deep oversold bounce.  Bull market: dip buy in uptrend. "
-    "Signals assume a market-on-close entry at today's closing price. "
-    "During market hours, signals remain provisional until the close."
+    "Evaluate every supported strategy for every stock in today's shortlist. "
+    "A setup confirmed at today's close is modeled as an entry at the next session's close; "
+    "during market hours it remains provisional."
 )
 
 curr_regime = get_current_regime(full_regime_series)
 if curr_regime:
-    regime_label = f"Current regime: **{curr_regime.upper()}**"
-    if curr_regime == 'bear':
-        st.info(f"🐻 {regime_label} — looking for deeply oversold stocks (mean-reversion bounce).")
-    else:
-        st.info(f"🐂 {regime_label} — looking for pullback dips in uptrending stocks.")
+    st.info(f"Current JKSE regime: **{curr_regime.upper()}**. Strategies apply their own regime filters where relevant.")
 
-alert_col1, alert_col2, alert_col3, alert_col4 = st.columns(4)
-with alert_col1:
-    alert_bear_period = st.number_input("Bear RSI Period",  min_value=3, max_value=50, value=14, step=1, key="dt_alert_bear_p")
-with alert_col2:
-    alert_bear_buy    = st.number_input(
-        "Bear Buy if RSI <", min_value=5, max_value=70, value=30, step=1,
-        key="dt_alert_bear_b", help="Enter at today's close when RSI is below this level",
-    )
-with alert_col3:
-    alert_bull_period = st.number_input("Bull RSI Period",  min_value=3, max_value=50, value=14, step=1, key="dt_alert_bull_p")
-with alert_col4:
-    alert_bull_buy    = st.number_input(
-        "Bull Buy if RSI <", min_value=10, max_value=70, value=40, step=1,
-        key="dt_alert_bull_b", help="Enter at today's close when RSI is below this level and price is above the trend SMA",
-    )
+scanner_cols = st.columns(2)
+alert_lookback = scanner_cols[0].number_input("Calendar Days of History", min_value=90, max_value=730, value=365, step=30, key="dt_alert_lookback")
+alert_watch_band = scanner_cols[1].number_input("Watch Proximity", min_value=1.0, max_value=20.0, value=5.0, step=1.0, key="dt_alert_watch")
 
-alert_col5, alert_col6, alert_col7 = st.columns(3)
-with alert_col5:
-    alert_bull_sma    = st.number_input("Bull Trend SMA",   min_value=10, max_value=200, value=50, step=10, key="dt_alert_sma")
-with alert_col6:
-    alert_lookback    = st.number_input("Days of History",  min_value=30, max_value=365, value=250, step=10, key="dt_alert_lookback")
-with alert_col7:
-    alert_watch_band  = st.number_input("Watch Band (+)",   min_value=1, max_value=20, value=10, step=1, key="dt_alert_watch",
-                                        help="Stocks with RSI between Buy threshold and Buy+Watch are flagged as 'Watch'")
-
-scanner_profit_target = active_strategy['profit_target'] if active_strategy else 3.0
-scanner_stop_loss = active_strategy['stop_loss'] if active_strategy else 2.0
-scanner_max_hold = active_strategy['max_hold'] if active_strategy else 5
 if stock_strategy_map:
     st.caption(
-        f"Using stock-specific grid parameters for {len(stock_strategy_map)} tickers; "
-        "the global recommendation is used for all others."
+        f"All eight strategies are evaluated. Stock-specific optimized parameters apply to "
+        f"{len(stock_strategy_map)} tickers; other strategies use the global recommendation or baseline presets."
     )
 elif active_strategy:
-    st.caption(
-        f"Optimized exit plan: take profit at +{scanner_profit_target:.1f}%, "
-        f"stop at -{scanner_stop_loss:.1f}%, or exit after {scanner_max_hold} sessions."
-    )
+    st.caption("All eight strategies are evaluated using the global recommendation where applicable and baseline presets otherwise.")
+else:
+    st.caption("All eight strategies are evaluated with baseline presets. Run the optimizer to apply validated parameters.")
+st.caption(f"Every scanner candidate uses a +{DEFAULT_PROFIT_TARGET:.1f}% profit target.")
 
-scan_button = st.button("Scan Today's Closing Entries", type="primary", disabled=len(shortlist_tickers) == 0)
+scan_button = st.button("Scan Today's Closing Setups", type="primary", disabled=len(shortlist_tickers) == 0)
 
-def _compute_current_signal(price_series: pd.Series, bear_period: int, bear_buy: int,
-                              bull_period: int, bull_buy: int, bull_sma: int,
-                              regime: str | None):
-    """Return (rsi, trend_ok, entry_fires, bear_rsi_val, bull_rsi_val)."""
-    min_len = max(bear_period, bull_period, bull_sma, 35) + 5
-    if len(price_series) < min_len:
-        return None, False, False, None, None
 
-    bear_rsi = _wilder_rsi(price_series, bear_period)
-    bull_rsi = _wilder_rsi(price_series, bull_period)
-    sma = price_series.rolling(window=bull_sma, min_periods=bull_sma).mean()
+def _clean_price_series(series: pd.Series | None) -> pd.Series:
+    if series is None or series.empty:
+        return pd.Series(dtype=float)
+    clean = pd.to_numeric(series, errors='coerce').dropna().copy()
+    clean.index = pd.to_datetime(clean.index, errors='coerce')
+    clean = clean[~clean.index.isna()]
+    return clean[~clean.index.duplicated(keep='last')].sort_index()
 
-    bear_rsi_val = float(bear_rsi.iloc[-1]) if not pd.isna(bear_rsi.iloc[-1]) else None
-    bull_rsi_val = float(bull_rsi.iloc[-1]) if not pd.isna(bull_rsi.iloc[-1]) else None
-    above_sma = True
-    if bull_sma > 0 and not pd.isna(sma.iloc[-1]):
-        above_sma = float(price_series.iloc[-1]) > float(sma.iloc[-1])
 
-    if regime == 'bear':
-        main_rsi = bear_rsi_val
-        fires = main_rsi is not None and main_rsi < bear_buy
-    elif regime == 'bull':
-        main_rsi = bull_rsi_val
-        fires = main_rsi is not None and main_rsi < bull_buy and above_sma
-    else:
-        main_rsi = bear_rsi_val
-        fires = main_rsi is not None and main_rsi < bear_buy
+def _is_near_setup(strategy_type: str, indicator: float, params: tuple[float, ...], proximity: float) -> bool:
+    if not np.isfinite(indicator):
+        return False
+    _, param_b, _, param_d = params
+    if strategy_type == STRATEGY_REGIME_RSI:
+        threshold = param_b if curr_regime != 'bull' else param_d
+        return indicator <= threshold + proximity
+    if strategy_type == STRATEGY_RSI_RECOVERY:
+        return param_b <= indicator <= param_d + proximity
+    if strategy_type in (STRATEGY_BOLLINGER_LOWER, STRATEGY_DONCHIAN, STRATEGY_TREND_PULLBACK):
+        return abs(indicator) <= proximity
+    if strategy_type == STRATEGY_RELATIVE_STRENGTH:
+        return indicator >= param_b - proximity
+    if strategy_type == STRATEGY_CROSS_MOMENTUM:
+        return indicator >= param_b - proximity
+    return indicator <= proximity
 
-    return main_rsi, above_sma, fires, bear_rsi_val, bull_rsi_val
 
 if scan_button:
-    stock_rsi_periods = [params['rsi_period'] for params in stock_strategy_map.values()]
-    stock_trend_smas = [params['trend_sma'] for params in stock_strategy_map.values()]
+    scanner_plans = {
+        ticker: _scanner_strategy_plan(stock_strategy_map.get(ticker), active_strategy)
+        for ticker in shortlist_tickers
+    }
+    strategy_params_for_warmup = [
+        (item['strategy_type'], *item['params'])
+        for plan in scanner_plans.values()
+        for item in plan
+    ]
     required_rows = max(
-        int(alert_bear_period), int(alert_bull_period), int(alert_bull_sma),
-        max(stock_rsi_periods, default=0), max(stock_trend_smas, default=0), 35,
-    ) + 5
-    history_days = max(int(alert_lookback), required_rows * 2)
-    alert_start = (
-        datetime.date.today() - datetime.timedelta(days=history_days)
-    ).strftime('%Y-%m-%d')
+        _strategy_warmup(strategy_type, *params)
+        for strategy_type, *params in strategy_params_for_warmup
+    )
+    alert_start = (datetime.date.today() - datetime.timedelta(days=max(int(alert_lookback), required_rows * 2))).strftime('%Y-%m-%d')
 
-    with st.spinner("Fetching live prices..."):
-        try:
-            cp_df = hd.get_company_profile(shortlist_tickers)
-        except Exception as e:
-            st.warning(f"Could not fetch live prices via get_company_profile: {e}")
-            cp_df = pd.DataFrame()
-
-    scan_progress = st.progress(0, text="Scanning shortlist...")
-    scan_rows = []
+    try:
+        cp_df = hd.get_company_profile(shortlist_tickers)
+    except Exception as e:
+        st.warning(f"Could not fetch current profile prices: {e}")
+        cp_df = pd.DataFrame()
 
     cached_prices = st.session_state.get('dt_prices', pd.DataFrame())
+    grouped_alert = {}
     if not cached_prices.empty:
         cached_prices = cached_prices.copy()
         cached_prices['date'] = pd.to_datetime(cached_prices['date'], errors='coerce')
         grouped_alert = {
-            sym: grp.dropna(subset=['date']).set_index('date')['close'].sort_index()
-            for sym, grp in cached_prices.groupby('symbol')
+            symbol: group.dropna(subset=['date']).set_index('date')['close'].sort_index()
+            for symbol, group in cached_prices.groupby('symbol')
         }
-    else:
-        grouped_alert = {}
-
-    def _clean_series(series: pd.Series | None) -> pd.Series:
-        if series is None or series.empty:
-            return pd.Series(dtype=float)
-        clean = pd.to_numeric(series, errors='coerce').dropna().copy()
-        clean.index = pd.to_datetime(clean.index, errors='coerce')
-        clean = clean[~clean.index.isna()]
-        return clean[~clean.index.duplicated(keep='last')].sort_index()
 
     def _series_is_current(series: pd.Series) -> bool:
-        if len(series) < required_rows:
-            return False
-        latest_date = series.index[-1].date()
-        return latest_date >= datetime.date.today() - datetime.timedelta(days=7)
+        return len(series) >= required_rows and series.index[-1].date() >= datetime.date.today() - datetime.timedelta(days=7)
 
-    def _scan_series(series: pd.Series, ticker: str, price_source: str):
-        series = _clean_series(series)
-        history_date = series.index[-1].date()
-        stock_params = stock_strategy_map.get(ticker)
-        if stock_params:
-            bear_period = bull_period = int(stock_params['rsi_period'])
-            bear_buy = int(stock_params['bear_buy'])
-            bull_buy = int(stock_params['bull_buy'])
-            trend_sma = int(stock_params['trend_sma'])
-            profit_target = float(stock_params['profit_target'])
-            stop_loss = float(stock_params['stop_loss'])
-            max_hold = int(stock_params['max_hold'])
-            parameter_source = "Stock-specific"
-            strategy_score = float(stock_params['score'])
-            return_uplift = float(stock_params['return_uplift'])
-        else:
-            bear_period = int(alert_bear_period)
-            bull_period = int(alert_bull_period)
-            bear_buy = int(alert_bear_buy)
-            bull_buy = int(alert_bull_buy)
-            trend_sma = int(alert_bull_sma)
-            profit_target = scanner_profit_target
-            stop_loss = scanner_stop_loss
-            max_hold = scanner_max_hold
-            parameter_source = "Global fallback"
-            strategy_score = active_strategy['score'] if active_strategy else np.nan
-            return_uplift = np.nan
-
-        if ticker in cp_df.index:
-            live_price = pd.to_numeric(cp_df.loc[ticker, 'price'], errors='coerce')
-            previous_close = float(series.iloc[-1])
-            if pd.notna(live_price) and live_price > 0 and 0.65 <= live_price / previous_close <= 1.35:
-                today_ts = pd.Timestamp(datetime.date.today()).normalize()
-                series.loc[today_ts] = float(live_price)
-                series = series.sort_index()
-        rsi_val, above_sma, fires, bear_rsi_v, bull_rsi_v = _compute_current_signal(
-            series, bear_period, bear_buy,
-            bull_period, bull_buy, trend_sma,
-            curr_regime
-        )
-        if rsi_val is not None:
-            buy_threshold = bear_buy if curr_regime != 'bull' else bull_buy
-            scan_rows.append({
-                'Symbol':        ticker,
-                'Current Price': float(series.iloc[-1]),
-                'History Through': history_date,
-                'Price Source':   price_source,
-                'Parameter Source': parameter_source,
-                'Strategy Score': strategy_score,
-                'Return Uplift':  return_uplift,
-                'RSI Period':     bear_period if curr_regime != 'bull' else bull_period,
-                'Buy RSI <':      buy_threshold,
-                'Trend SMA':      trend_sma,
-                'RSI':           rsi_val,
-                'Bear RSI':      round(bear_rsi_v, 2) if bear_rsi_v is not None else None,
-                'Bull RSI':      round(bull_rsi_v, 2) if bull_rsi_v is not None else None,
-                'Above SMA':     "Yes" if above_sma else "No",
-                'Profit Target': profit_target,
-                'Stop Loss':     stop_loss,
-                'Max Hold':      max_hold,
-                'Entry Fires':   fires,
-            })
-
+    scan_progress = st.progress(0, text="Loading current daily histories...")
+    current_series = {}
+    price_sources = {}
     stale_skipped = 0
-    for i, ticker in enumerate(shortlist_tickers):
-        scan_progress.progress((i + 1) / len(shortlist_tickers), text=f"Checking {ticker}...")
-        series = _clean_series(grouped_alert.get(ticker))
-        price_source = "Optimizer cache"
-
+    for index, ticker in enumerate(shortlist_tickers, start=1):
+        scan_progress.progress(index / len(shortlist_tickers), text=f"Loading {ticker}...")
+        series = _clean_price_series(grouped_alert.get(ticker))
+        source = "Optimizer cache"
         if not _series_is_current(series):
             try:
-                res = (
-                    conn.table("historical_prices")
-                        .select("symbol,date,close")
-                        .eq("symbol", ticker)
-                        .order("date", desc=True)
-                        .limit(required_rows + 50)
-                        .execute()
-                )
-                rows = res.data or []
+                rows = conn.table("historical_prices").select("symbol,date,close").eq("symbol", ticker).order("date", desc=True).limit(required_rows + 50).execute().data or []
                 if rows:
-                    series = _clean_series(
-                        pd.DataFrame(rows)
-                          .assign(date=lambda d: pd.to_datetime(d['date']),
-                                  close=lambda d: pd.to_numeric(d['close'], errors='coerce'))
-                          .sort_values('date')
-                          .set_index('date')['close']
-                    )
+                    frame = pd.DataFrame(rows)
+                    frame['date'] = pd.to_datetime(frame['date'], errors='coerce')
+                    series = _clean_price_series(frame.sort_values('date').set_index('date')['close'])
             except Exception:
                 pass
-            price_source = "Supabase"
-
-        # Never bridge a stale historical close directly to today's profile
-        # price: missing sessions materially distort RSI (for example KLBF).
+            source = "Supabase"
         if not _series_is_current(series):
             live_history = load_live_daily_prices(ticker, alert_start)
             if not live_history.empty:
-                series = _clean_series(live_history.set_index('date')['close'])
-                price_source = "Live daily API"
-
-        if _series_is_current(series):
-            _scan_series(series, ticker, price_source)
-        else:
+                series = _clean_price_series(live_history.set_index('date')['close'])
+                source = "Live daily API"
+        if not _series_is_current(series):
             stale_skipped += 1
+            continue
+        if ticker in cp_df.index:
+            live_price = pd.to_numeric(cp_df.loc[ticker, 'price'], errors='coerce')
+            if pd.notna(live_price) and live_price > 0 and 0.65 <= live_price / float(series.iloc[-1]) <= 1.35:
+                series.loc[pd.Timestamp(datetime.date.today()).normalize()] = float(live_price)
+                series = series.sort_index()
+        current_series[ticker] = series
+        price_sources[ticker] = source
 
+    momentum_lookbacks = {
+        int(item['params'][0])
+        for plan in scanner_plans.values()
+        for item in plan
+        if item['strategy_type'] == STRATEGY_CROSS_MOMENTUM
+    }
+    momentum_frames = _build_momentum_percentiles(current_series, momentum_lookbacks)
+    benchmark_close = jkse_df['close'] if not jkse_df.empty else None
+    scan_rows = []
+    for index, (ticker, series) in enumerate(current_series.items(), start=1):
+        scan_progress.progress(index / len(current_series), text=f"Evaluating {ticker}...")
+        aligned_regime = full_regime_series.reindex(series.index, method='ffill').fillna('bear') if not full_regime_series.empty else pd.Series('bear', index=series.index)
+        for item in scanner_plans[ticker]:
+            strategy_type = item['strategy_type']
+            params = item['params']
+            momentum_percentile = None
+            frame = momentum_frames.get(int(params[0]))
+            if strategy_type == STRATEGY_CROSS_MOMENTUM and frame is not None and ticker in frame:
+                momentum_percentile = frame[ticker]
+            setup, _, indicator_series = _strategy_components(
+                series, aligned_regime, benchmark_close, momentum_percentile,
+                strategy_type, *params,
+            )
+            indicator = float(indicator_series.iloc[-1]) if pd.notna(indicator_series.iloc[-1]) else np.nan
+            fires = bool(setup.iloc[-1])
+            scan_rows.append({
+                'Symbol': ticker,
+                'Current Price': float(series.iloc[-1]),
+                'History Through': series.index[-1].date(),
+                'Price Source': price_sources[ticker],
+                'Parameter Source': item['parameter_source'],
+                'Strategy': strategy_type,
+                'Parameters': _format_strategy_params(strategy_type, *params),
+                'Indicator': indicator,
+                'Strategy Score': item['score'],
+                'Return Uplift': item['return_uplift'],
+                'Profit Target': item['profit_target'],
+                'Stop Loss': item['stop_loss'],
+                'Max Hold': item['max_hold'],
+                'Setup Fires': fires,
+                'Near Setup': _is_near_setup(strategy_type, indicator, params, float(alert_watch_band)),
+            })
     scan_progress.empty()
-    if stale_skipped:
-        st.warning(
-            f"Skipped {stale_skipped} stock(s) because no sufficiently recent daily history was available."
-        )
 
+    if stale_skipped:
+        st.warning(f"Skipped {stale_skipped} stock(s) without sufficiently recent daily history.")
     if not scan_rows:
-        st.warning("Could not evaluate signals for any stock. Try increasing 'Days of History'.")
+        st.warning("Could not evaluate any stock. Increase the history window or verify the price sources.")
     else:
         alert_df = pd.DataFrame(scan_rows)
-
-        def _classify(row):
-            rsi = row['RSI']
-            if row['Entry Fires']:
-                return "Enter Today at Close"
-            elif rsi < row['Buy RSI <'] + int(alert_watch_band):
-                return "Watch"
-            else:
-                return "Neutral"
-
-        alert_df['Signal'] = alert_df.apply(_classify, axis=1)
-        alert_df['RSI'] = alert_df['RSI'].round(2)
-        alert_df = alert_df.sort_values('RSI')
-
-        n_enter  = (alert_df['Signal'] == "Enter Today at Close").sum()
-        n_watch  = (alert_df['Signal'] == "Watch").sum()
-        n_total  = len(alert_df)
-
-        sum_cols = st.columns(3)
-        sum_cols[0].metric("Enter Today at Close", n_enter, help="RSI is below its stock-specific buy threshold")
-        sum_cols[1].metric("Watch", n_watch, help="RSI is within the configured watch band above its stock-specific threshold")
-        sum_cols[2].metric("Stocks Scanned", n_total)
-
-        if n_enter > 0:
-            st.success(
-                f"**{n_enter} stock(s) firing an entry signal** — enter at today's close; "
-                "use each row's target, stop, and maximum hold."
-            )
-
-        enter_df = alert_df[alert_df['Signal'] == "Enter Today at Close"]
+        alert_df['Signal'] = np.select(
+            [alert_df['Setup Fires'], alert_df['Near Setup']],
+            ["Setup Confirmed", "Watch"],
+            default="Neutral",
+        )
+        alert_df = alert_df.sort_values(['Signal', 'Strategy Score', 'Indicator'], ascending=[True, False, False])
+        confirmed_df = alert_df[alert_df['Signal'] == "Setup Confirmed"]
         watch_df = alert_df[alert_df['Signal'] == "Watch"]
         neutral_df = alert_df[alert_df['Signal'] == "Neutral"]
+        summary_cols = st.columns(3)
+        summary_cols[0].metric("Setups Confirmed", len(confirmed_df), help="Completed-close setups modeled for next-session entry")
+        summary_cols[1].metric("Watch", len(watch_df))
+        summary_cols[2].metric("Strategy Checks", len(alert_df), help=f"{len(current_series)} stocks x {len(STRATEGY_TYPES)} strategies")
+        if not confirmed_df.empty:
+            st.success(f"{len(confirmed_df)} setup(s) confirmed at the latest close for next-session execution research.")
 
-        col_cfg = {
-            "Symbol":        st.column_config.TextColumn("Symbol"),
+        scanner_cfg = {
             "Current Price": st.column_config.NumberColumn("Price", format="%.0f"),
             "History Through": st.column_config.DateColumn("History Through", format="YYYY-MM-DD"),
-            "Price Source":   st.column_config.TextColumn("Price Source"),
-            "Parameter Source": st.column_config.TextColumn("Parameters"),
-            "Strategy Score": st.column_config.ProgressColumn("Stock Strategy Score", format="%.1f", min_value=0, max_value=100),
-            "Return Uplift":  st.column_config.NumberColumn("Return vs Global", format="%+.2f%%"),
-            "RSI Period":     st.column_config.NumberColumn("RSI Period", format="%d"),
-            "Buy RSI <":      st.column_config.NumberColumn("Buy RSI <", format="%d"),
-            "Trend SMA":      st.column_config.NumberColumn("Trend SMA", format="%d"),
-            "RSI":           st.column_config.ProgressColumn("RSI", help="Current RSI (regime-appropriate period)", format="%.1f", min_value=0, max_value=100),
-            "Bear RSI":      st.column_config.NumberColumn("Bear RSI", format="%.1f"),
-            "Bull RSI":      st.column_config.NumberColumn("Bull RSI", format="%.1f"),
-            "Above SMA":     st.column_config.TextColumn("Above SMA"),
+            "Indicator": st.column_config.NumberColumn("Current Indicator", format="%.2f"),
+            "Strategy Score": st.column_config.ProgressColumn("Strategy Score", format="%.1f", min_value=0, max_value=100),
+            "Return Uplift": st.column_config.NumberColumn("Return vs Global", format="%+.2f%%"),
             "Profit Target": st.column_config.NumberColumn("Target", format="%.1f%%"),
-            "Stop Loss":     st.column_config.NumberColumn("Stop", format="%.1f%%"),
-            "Max Hold":      st.column_config.NumberColumn("Max Hold Days", format="%d"),
-            "Signal":        st.column_config.TextColumn("Signal"),
+            "Stop Loss": st.column_config.NumberColumn("Stop", format="%.1f%%"),
+            "Max Hold": st.column_config.NumberColumn("Max Hold", format="%d sessions"),
         }
-
-        if not enter_df.empty:
-            st.markdown("#### Enter Today at Close")
-            st.dataframe(enter_df, column_config=col_cfg, hide_index=True, width='stretch')
-
+        if not confirmed_df.empty:
+            st.markdown("#### Setup Confirmed at Latest Close")
+            st.dataframe(confirmed_df, column_config=scanner_cfg, hide_index=True, width='stretch')
         if not watch_df.empty:
-            st.markdown("#### Approaching Entry Zone")
-            st.dataframe(watch_df, column_config=col_cfg, hide_index=True, width='stretch')
-
+            st.markdown("#### Approaching Setup")
+            st.dataframe(watch_df, column_config=scanner_cfg, hide_index=True, width='stretch')
         with st.expander(f"Neutral stocks ({len(neutral_df)})"):
-            st.dataframe(neutral_df, column_config=col_cfg, hide_index=True, width='stretch')
+            st.dataframe(neutral_df, column_config=scanner_cfg, hide_index=True, width='stretch')
