@@ -2,7 +2,7 @@ redis==8.1.0
 numpy==2.5.2
 pandas==3.0.5
 altair==6.2.2
-lesley==0.3.1
+lesley==0.3.2
 psutil==7.2.2
 openai==3.0.0
 authlib==1.7.2
@@ -18,7 +18,6 @@ streamlit==1.61.1
 matplotlib==3.11.1
 st-vortree==0.1.8
 scikit_learn==1.9.0
-fastparquet==2026.5.0
 streamlit_lottie==0.0.5
 streamlit-echarts5==1.0.0
 python-json-logger==4.1.0
