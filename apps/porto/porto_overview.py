@@ -611,7 +611,7 @@ summary_cols = st.columns([1.25, 1, 1, 1.15, 1.15])
 with summary_cols[0]:
     render_kpi(
         "Annual Dividend Income",
-        f"IDR {annual_dividend:,.0f}",
+        f"{annual_dividend:,.0f}",
         emphasis=True,
         tone="income",
     )
@@ -619,7 +619,7 @@ with summary_cols[1]:
     render_kpi(
         "Income Target Progress",
         f"{achieve_percentage:.2f}%",
-        f"Target IDR {target:,.0f}M per year",
+        f"Target {target:,.0f}M per year",
         emphasis=True,
         tone="target",
     )
@@ -633,13 +633,13 @@ with summary_cols[2]:
         tone="yield",
     )
 with summary_cols[3]:
-    render_kpi("Total Invested", f"IDR {total_investment:,.0f}", tone="invested")
+    render_kpi("Total Invested", f"{total_investment:,.0f}", tone="invested")
 market_delta = current_investment_value - total_investment
 with summary_cols[4]:
     render_kpi(
         "Market Value",
-        f"IDR {current_investment_value:,.0f}",
-        f"IDR {market_delta:+,.0f}",
+        f"{current_investment_value:,.0f}",
+        f"{market_delta:+,.0f}",
         delta_value=market_delta,
         tone="market",
     )
