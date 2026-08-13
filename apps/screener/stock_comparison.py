@@ -18,6 +18,7 @@ from harvest.utils import setup_logging
 
 mimetypes.add_type('image/svg+xml', '.svg')
 
+st.set_page_config(page_title='Stock Comparison - Panen Dividen')
 st.title('Stock Comparison')
 st.caption(
     'Compare 2-5 stocks across income, valuation, quality, growth, returns, and risk. '
