@@ -1,6 +1,7 @@
 import os
 import json
 import pickle
+import time
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
@@ -186,37 +187,40 @@ def run_daily(
     store_to_supabase_storage(f'data/{exch}/financials.pkl', financials)
 
 
-@flow
+@task(log_prints=True)
 def download_financials(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
-    """Download financial data in parallel using ThreadPoolExecutor."""
+    """Download financial data as one parallel batch task."""
     return _download_data(stock_list, download_single_fin, "financial", max_concurrency)
 
 
-@flow
+@task(log_prints=True)
 def download_dividends(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
-    """Download dividend data in parallel using ThreadPoolExecutor."""
+    """Download Indonesian dividend data as one parallel batch task."""
     return _download_data(stock_list, download_single_dividend, "dividend", max_concurrency)
 
 
-@flow
+@task(log_prints=True)
 def download_us_dividends(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
-    """Download dividend data in parallel using ThreadPoolExecutor."""
+    """Download US dividend data as one parallel batch task."""
     return _download_data(stock_list, download_single_us_dividend, "dividend", max_concurrency)
 
 
-@flow
+@task(log_prints=True)
 def download_prices(stock_list, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
-    """Download price data in parallel using ThreadPoolExecutor."""
+    """Download price data as one parallel batch task."""
     return _download_data(stock_list, download_single_price, "price", max_concurrency)
 
 
 def _download_data(stock_list, download_func, data_type, max_concurrency):
     """
-    Helper function to download data in parallel.
+    Download one data type as a batch without creating a Prefect task per stock.
     """
     data = {}
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-        futures = {executor.submit(download_func, stock): stock for stock in stock_list}
+        futures = {
+            executor.submit(_download_with_retries, download_func, stock, data_type): stock
+            for stock in stock_list
+        }
         for future in futures:
             stock = futures[future]
             try:
@@ -230,13 +234,14 @@ def _download_data(stock_list, download_func, data_type, max_concurrency):
     total_stocks = len(stock_list)
     successful_downloads = len(data)
     failed_downloads = total_stocks - successful_downloads
+    success_rate = (successful_downloads / total_stocks * 100) if total_stocks else 0
 
     markdown_content = f"""
     # {data_type.capitalize()} Data Download Summary
     - Total stocks processed: {total_stocks}
     - Successful downloads: {successful_downloads} 
     - Failed downloads: {failed_downloads}
-    - Success rate: {(successful_downloads/total_stocks)*100:.1f}%
+    - Success rate: {success_rate:.1f}%
     """
 
     create_markdown_artifact(
@@ -247,52 +252,45 @@ def _download_data(stock_list, download_func, data_type, max_concurrency):
 
     return data
 
-@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
+
+def _download_with_retries(download_func, stock: str, data_type: str):
+    """Run a stock download in a worker thread with per-stock retries."""
+    for attempt in range(DEFAULT_RETRIES + 1):
+        try:
+            return download_func(stock)
+        except Exception as e:
+            if attempt == DEFAULT_RETRIES:
+                raise
+            print(
+                f"Error downloading {data_type} data for {stock}: {e}. "
+                f"Retrying in {DEFAULT_RETRY_DELAY} seconds "
+                f"({attempt + 1}/{DEFAULT_RETRIES})."
+            )
+            time.sleep(DEFAULT_RETRY_DELAY)
+
+
 def download_single_fin(stock: str):
     """Downloads a single financial report."""
     print(f'download financial report {stock}')
-    try:
-        fin = hd.get_financial_data(stock, period='quarter')
-        return fin
-    except Exception as e:
-        print(f'Error downloading financial report {stock}: {e}')
-        raise e
+    return hd.get_financial_data(stock, period='quarter')
 
 
-@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
 def download_single_dividend(stock: str):
     """Downloads dividend history for a single stock."""
     print(f'download dividend history for {stock}')
-    try:
-        div = hd.get_dividend_history_single_stock(stock, source='dag')
-        return div
-    except Exception as e:
-        print(f'Error downloading dividend history for {stock}: {e}')
-        raise e
+    return hd.get_dividend_history_single_stock(stock, source='dag')
 
 
-@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
 def download_single_us_dividend(stock: str):
     """Downloads dividend history for a single stock."""
     print(f'download dividend history for {stock}')
-    try:
-        div = hd.get_dividend_history_single_stock(stock, source='fmp')
-        return div
-    except Exception as e:
-        print(f'Error downloading dividend history for {stock}: {e}')
-        raise e
+    return hd.get_dividend_history_single_stock(stock, source='fmp')
 
 
-@task(log_prints=True, retries=DEFAULT_RETRIES, retry_delay_seconds=DEFAULT_RETRY_DELAY)
 def download_single_price(stock: str):
     """Downloads price history for a single stock."""
     print(f'download price history for {stock}')
-    try:
-        price = hd.get_daily_stock_price(stock, start_from='2010-01-01')
-        return price
-    except Exception as e:
-        print(f'Error downloading price history for {stock}: {e}')
-        raise e
+    return hd.get_daily_stock_price(stock, start_from='2010-01-01')
 
 
 @task
@@ -314,6 +312,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['yield'] = 0
     df['lastDiv'] = 0
     df['revenueGrowth'] = np.nan
+    df['revenueCAGR5Y'] = np.nan
     df['netIncomeGrowth'] = np.nan
     df['earningTTM'] = np.nan
     df['revenueTTM'] = np.nan
@@ -338,6 +337,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
             elif sl == 'sp500':
                 fin_stats = hd.calc_fin_stats(fin_df, target_currency='USD')
             df.loc[symbol, 'revenueGrowth'] = fin_stats['trim_mean_10y_revenue_growth']
+            df.loc[symbol, 'revenueCAGR5Y'] = fin_stats['cagr_5y_revenue']
             df.loc[symbol, 'revenueGrowthTTM'] = fin_stats['revenue_growth_TTM']
             df.loc[symbol, 'netIncomeGrowth'] = fin_stats['trim_mean_10y_netIncome_growth']
             df.loc[symbol, 'netIncomeGrowthTTM'] = fin_stats['netIncome_growth_TTM']
@@ -410,7 +410,7 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
     df['total_return_10y'] = df['total_return_10y'].replace([np.inf, -np.inf], np.nan)
 
     features = ['price', 'lastDiv', 'yield', 'sector', 'industry', 'mktCap', 'ipoDate',
-               'revenueGrowth', 'revenueGrowthTTM', 'netIncomeGrowth', 'netIncomeGrowthTTM', 'medianProfitMargin', 
+               'revenueGrowth', 'revenueCAGR5Y', 'revenueGrowthTTM', 'netIncomeGrowth', 'netIncomeGrowthTTM', 'medianProfitMargin',
                'earningTTM', 'revenueTTM', 'peRatio', 'psRatio',
                'avgFlatAnnualDivIncrease', 'numDividendYear', 'positiveYear', 'maximumCutPct', 'max10CutPct', 'numOfYear', 'DScore',
                'return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
@@ -446,5 +446,5 @@ def compute_div_score(cp_df: pd.DataFrame, fin_dict: dict, div_dict: dict, sl: s
 
 if __name__ == '__main__':
     
-    # run_daily(exch='jkse', mcap_filter=100_000_000_000, dividend_years=range(2020, 2026))
-    run_daily(exch='sp500', mcap_filter=10_000_000_000)
+    run_daily(exch='jkse', mcap_filter=100_000_000_000, dividend_years=range(2020, 2026))
+    # run_daily(exch='sp500', mcap_filter=10_000_000_000)
