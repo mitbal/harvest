@@ -1,5 +1,6 @@
 import concurrent.futures
 import datetime
+import hashlib
 
 import altair as alt
 import numpy as np
@@ -172,7 +173,7 @@ def _fetch_profiles(symbols: list[str]) -> pd.DataFrame:
     return pd.concat(frames).loc[lambda frame: ~frame.index.duplicated(keep="first")]
 
 
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL, max_entries=8, show_spinner=False)
 def load_idx_universe() -> pd.DataFrame:
     listed = hd.get_all_idx_stocks()
     symbols = listed["symbol"].dropna().astype(str).unique().tolist()
@@ -380,14 +381,15 @@ def _analyze_stock(
         return None
 
 
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL, max_entries=8, show_spinner=False)
 def run_fundamental_scan(
-    profile_records: tuple[tuple[str, tuple[tuple[str, object], ...]], ...],
+    profile_version: str,
+    _profile_records: tuple[tuple[str, tuple[tuple[str, object], ...]], ...],
     history_years: int,
     schema_version: int,
 ) -> pd.DataFrame:
-    del schema_version  # Included in the cache key to invalidate older result schemas.
-    profiles = {symbol: dict(values) for symbol, values in profile_records}
+    del profile_version, schema_version
+    profiles = {symbol: dict(values) for symbol, values in _profile_records}
     rows = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as executor:
         futures = {
@@ -426,7 +428,7 @@ def run_fundamental_scan(
     return result.sort_values("Score", ascending=False).reset_index(drop=True)
 
 
-@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL, max_entries=16, show_spinner=False)
 def load_stock_detail(
     symbol: str,
     profile_values: tuple,
@@ -444,6 +446,12 @@ def _profile_records(profiles: pd.DataFrame) -> tuple:
         values = tuple((field, row.get(field)) for field in fields)
         records.append((str(symbol), values))
     return tuple(records)
+
+
+def _profile_snapshot(profiles: pd.DataFrame) -> tuple[str, tuple]:
+    records = _profile_records(profiles)
+    version = hashlib.sha256(repr(records).encode()).hexdigest()
+    return version, records
 
 
 def _ratio_chart(history: pd.DataFrame, label: str, years: int):
@@ -502,7 +510,7 @@ with st.form("fundamental_screen"):
         "Valuation history", options=[3, 5, 10], index=1, format_func=lambda value: f"{value} years"
     )
     max_pe = filter_cols[3].number_input(
-        "Maximum current P/E", min_value=5.0, max_value=100.0, value=40.0, step=5.0
+        "Maximum current P/E", min_value=5.0, max_value=100.0, value=20.0, step=5.0
     )
 
     growth_cols = st.columns(4)
@@ -521,7 +529,7 @@ with st.form("fundamental_screen"):
         help="Both multiples must be below their historical medians.",
     )
     submitted = st.form_submit_button(
-        "Run fundamental screen", type="primary", disabled=universe.empty, use_container_width=True
+        "Run fundamental screen", type="primary", disabled=universe.empty, width="stretch"
     )
 
 
@@ -534,8 +542,10 @@ if submitted:
         with st.spinner(
             f"Analyzing earnings, revenue, and valuation history for {len(selected_profiles)} companies..."
         ):
+            profile_version, profile_records = _profile_snapshot(selected_profiles)
             raw_results = run_fundamental_scan(
-                _profile_records(selected_profiles),
+                profile_version,
+                profile_records,
                 int(history_years),
                 SCAN_SCHEMA_VERSION,
             )
@@ -791,10 +801,10 @@ valuation_tab, growth_tab, checklist_tab = st.tabs(
 with valuation_tab:
     chart_cols = st.columns(2)
     chart_cols[0].altair_chart(
-        _ratio_chart(detail["pe_history"], "P/E", history_years), use_container_width=True
+        _ratio_chart(detail["pe_history"], "P/E", history_years), width="stretch"
     )
     chart_cols[1].altair_chart(
-        _ratio_chart(detail["ps_history"], "P/S", history_years), use_container_width=True
+        _ratio_chart(detail["ps_history"], "P/S", history_years), width="stretch"
     )
     st.caption(
         "The shaded band covers the historical 5th-to-95th percentile range. Dashed lines show the "
@@ -823,7 +833,7 @@ with growth_tab:
         )
         .properties(height=330)
     )
-    st.altair_chart(growth_chart, use_container_width=True)
+    st.altair_chart(growth_chart, width="stretch")
     growth_metrics = st.columns(4)
     growth_metrics[0].metric("Revenue growth TTM", f"{detail_row['Revenue Growth TTM']:.1f}%")
     growth_metrics[1].metric("Earnings growth TTM", f"{detail_row['Earnings Growth TTM']:.1f}%")
