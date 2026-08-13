@@ -3,6 +3,7 @@ import io
 import json
 import html
 import time
+import hashlib
 import logging
 import concurrent.futures
 from urllib.parse import quote
@@ -87,7 +88,7 @@ def get_div_score_table(key='jkse_div_score', show_spinner='Downloading dividend
     return final_df.set_index('stock')
 
 
-@st.cache_data(max_entries=256, ttl=60*60, show_spinner=False)
+@st.cache_data(max_entries=64, ttl=60 * 60, show_spinner=False)
 def get_specific_stock_detail(stock_name, sl):
     """Pure data-fetching function — no UI side-effects so cache is safe to share."""
     start_time = time.time()
@@ -207,31 +208,30 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
     return pd.Series(stats, name=stock_name)
 
 
-@st.cache_data(max_entries=512, show_spinner=False)
-def calculate_missing_stats_cached(stock_name, fin_json, cp_json, price_json, sdf_json, n_share):
-    """
-    Cached wrapper around calculate_missing_stats.
-    DataFrames are passed as JSON strings so Streamlit can hash them.
-    """
-    fin      = pd.read_json(fin_json)      if fin_json      else pd.DataFrame()
-    cp_df    = pd.read_json(cp_json)      if cp_json       else pd.DataFrame()
-    price_df = pd.read_json(price_json)   if price_json    else pd.DataFrame()
-    sdf      = pd.read_json(sdf_json)     if sdf_json      else None
-    return calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
+def _dataframe_version(*frames):
+    digest = hashlib.sha256()
+    for frame in frames:
+        if frame is None:
+            digest.update(b'none')
+            continue
+        normalized = frame.to_frame() if isinstance(frame, pd.Series) else frame
+        digest.update(repr(tuple(normalized.columns)).encode())
+        digest.update(pd.util.hash_pandas_object(normalized, index=True).values.tobytes())
+    return digest.hexdigest()
 
 
 # Columns from filtered_df that rating logic actually needs — serialise only these as the cache key
 _RATING_COLS = ['peRatio', 'numDividendYear', 'yield', 'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin', 'sector']
 
 
-@st.cache_data(max_entries=512, show_spinner=False)
-def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json):
+@st.cache_data(max_entries=64, ttl=6 * 60 * 60, show_spinner=False)
+def _calculate_stock_ratings_cached(stock_name, data_version, _ranking_df, _stock_data):
     """
-    Cached implementation — DataFrames are passed as JSON strings so Streamlit hashes
-    them cheaply. Only the narrow columns needed for rating are serialised.
+    Cached implementation keyed by a compact digest of the ranking inputs.
     """
-    ranking_df = pd.read_json(io.StringIO(ranking_df_json))
-    stock_data = pd.read_json(io.StringIO(stock_data_json), typ='series')
+    del data_version
+    ranking_df = _ranking_df
+    stock_data = _stock_data
 
     # 1. Valuation Rating (inverted PE, lower is better)
     positive_pe_mask = ranking_df['peRatio'] > 0
@@ -344,8 +344,7 @@ def _calculate_stock_ratings_cached(stock_name, ranking_df_json, stock_data_json
 
 def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=None):
     """
-    Public wrapper: resolves stock_data, narrows DataFrames to only the columns
-    needed for rating, serialises them to JSON, then delegates to the cached impl.
+    Public wrapper: resolves stock_data and narrows inputs to the rating columns.
     """
     if stock_data is None:
         if stock_name in filtered_df.index:
@@ -364,8 +363,9 @@ def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=N
 
     return _calculate_stock_ratings_cached(
         stock_name,
-        ranking_df.to_json(),
-        pd.Series(stock_series).to_json(),
+        _dataframe_version(ranking_df, pd.Series(stock_series)),
+        ranking_df,
+        pd.Series(stock_series),
     )
 
 def get_rating_color(score):
@@ -663,7 +663,9 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
                 fin['netIncome'] = fin['netIncome'] * exchange_rate
             fin['reportedCurrency'] = currency
 
-    fin_stats = cached_calc_fin_stats(fin.to_json(), currency)
+    fin_stats = cached_calc_fin_stats(
+        stock_name, _dataframe_version(fin), fin, currency
+    )
 
     if stock_name in filtered_df.index:
         stock_data = filtered_df.loc[stock_name]
@@ -834,19 +836,21 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
         st.caption('  ·  '.join(legend_parts) + '  |  RSI overbought > 70 (🔴) · oversold < 30 (🟢)')
 
 
-@st.cache_data(max_entries=256, show_spinner=False)
-def cached_calc_ratio_history(price_df_json, fin_json, n_shares, ratio, reported_currency, target_currency):
-    """Cached wrapper — roll-over PE/PS ratio history only recomputed when inputs change."""
-    price_df = pd.read_json(io.StringIO(price_df_json))
-    fin      = pd.read_json(io.StringIO(fin_json))
-    return hd.calc_ratio_history(price_df, fin, n_shares=n_shares, ratio=ratio,
+@st.cache_data(max_entries=64, ttl=6 * 60 * 60, show_spinner=False)
+def cached_calc_ratio_history(
+    stock_name, period, data_version, _price_df, _fin, n_shares,
+    ratio, reported_currency, target_currency,
+):
+    """Cache ratio history by stock, period, and source-data digest."""
+    del stock_name, period, data_version
+    return hd.calc_ratio_history(_price_df, _fin, n_shares=n_shares, ratio=ratio,
                                  reported_currency=reported_currency, target_currency=target_currency)
 
-@st.cache_data(max_entries=512, show_spinner=False)
-def cached_calc_fin_stats(fin_json, target_currency):
-    """Cached wrapper — fin stats recomputed only when the financial data changes."""
-    fin = pd.read_json(io.StringIO(fin_json))
-    return hd.calc_fin_stats(fin, target_currency=target_currency)
+@st.cache_data(max_entries=128, ttl=6 * 60 * 60, show_spinner=False)
+def cached_calc_fin_stats(stock_name, data_version, _fin, target_currency):
+    """Cache financial stats by stock and source-data digest."""
+    del stock_name, data_version
+    return hd.calc_fin_stats(_fin, target_currency=target_currency)
 
 def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=None, sdf=None):
     cols = st.columns(2, gap='large')
@@ -858,16 +862,20 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     fin_currency = fin.loc[0, 'reportedCurrency']
     target_currency = 'IDR' if sl == 'JKSE' else 'USD'
 
-    # Serialise to JSON once — the cached helpers use these as cache keys
-    last_year_json = last_year_df.to_json()
-    fin_json_val   = fin.to_json()
+    valuation_version = _dataframe_version(last_year_df, fin)
 
     if val_metric == 'Price-to-Earnings (P/E) Ratio':
         ratio = 'P/E'
-        pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'pe', fin_currency, target_currency)
+        pe_df = cached_calc_ratio_history(
+            stock_name, year, valuation_version, last_year_df, fin,
+            n_share, 'pe', fin_currency, target_currency,
+        )
     else:
         ratio = 'P/S'
-        pe_df = cached_calc_ratio_history(last_year_json, fin_json_val, n_share, 'ps', fin_currency, target_currency)
+        pe_df = cached_calc_ratio_history(
+            stock_name, year, valuation_version, last_year_df, fin,
+            n_share, 'ps', fin_currency, target_currency,
+        )
 
     pe_df['date'] = pd.to_datetime(pe_df['date'], errors='coerce')
 
@@ -1092,12 +1100,11 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
             st.altair_chart(chart, width='stretch')
 
 
-@st.cache_data(max_entries=256, show_spinner=False)
-def _calc_best_buy_cached(price_json, sdf_json):
-    """Cached wrapper for calc_best_buy_timing — DataFrames passed as JSON."""
-    price_df = pd.read_json(io.StringIO(price_json))
-    sdf = pd.read_json(io.StringIO(sdf_json)) if sdf_json else None
-    return hd.calc_best_buy_timing(price_df, sdf)
+@st.cache_data(max_entries=64, ttl=6 * 60 * 60, show_spinner=False)
+def _calc_best_buy_cached(stock_name, data_version, _price_df, _sdf):
+    """Cache buy-timing results by stock and source-data digest."""
+    del stock_name, data_version
+    return hd.calc_best_buy_timing(_price_df, _sdf)
 
 
 def render_best_buy_timing(price_df, sdf, stock_name):
@@ -1109,8 +1116,9 @@ def render_best_buy_timing(price_df, sdf, stock_name):
     import calendar as _cal
 
     try:
-        sdf_json = sdf.to_json() if sdf is not None and not sdf.empty else None
-        seasonality_df, pre_ex_df, ex_drop_stats = _calc_best_buy_cached(price_df.to_json(), sdf_json)
+        seasonality_df, pre_ex_df, ex_drop_stats = _calc_best_buy_cached(
+            stock_name, _dataframe_version(price_df, sdf), price_df, sdf
+        )
     except Exception as e:
         st.warning(f'Could not compute buy-timing analysis: {e}')
         return
@@ -1620,10 +1628,11 @@ final_df = final_df[_keep]
 # ---------------------------------------------------------------------------
 # Cached compute pipeline — only re-runs when final_df changes
 # ---------------------------------------------------------------------------
-@st.cache_data(max_entries=16, show_spinner=False)
-def get_processed_df(df):
+@st.cache_data(max_entries=8, ttl=6 * 60 * 60, show_spinner=False)
+def _get_processed_df_cached(data_version, _df):
     """Compute all derived columns and sort. Cached so it only runs when data changes."""
-    df = df.copy()
+    del data_version
+    df = _df.copy()
 
     df['marginTTM'] = df['earningTTM'] / df['revenueTTM'] * 100
     df['mc_penalty'] = df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
@@ -1689,6 +1698,10 @@ def get_processed_df(df):
     df = df.drop(columns='_is_payer')
     df.insert(0, 'Rank', range(1, len(df) + 1))
     return df
+
+
+def get_processed_df(df):
+    return _get_processed_df_cached(_dataframe_version(df), df)
 
 
 full_table_section = st.container(border=True)
