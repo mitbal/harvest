@@ -17,6 +17,7 @@ import harvest.data as hd
 from harvest.utils import setup_logging
 
 
+st.set_page_config(page_title='Market Heatmap - Panen Dividen')
 st.title('Market Heatmap')
 st.caption('Explore daily market performance by company. Tile size and color follow the selected measures.')
 
@@ -163,7 +164,7 @@ def get_stock_universe(key: str) -> pd.DataFrame:
 
 # ── Load historical prices for a date range from Supabase ────────────────── #
 
-@st.cache_data(max_entries=64, ttl=60 * 60, show_spinner='Fetching historical prices…')
+@st.cache_data(max_entries=16, ttl=60 * 60, show_spinner='Fetching historical prices…')
 def get_prices_for_date_range(
     symbols: tuple,       # tuple so it is hashable for caching
     date_from: str,
@@ -593,7 +594,7 @@ def _market_changed():
     st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
 
 
-primary_cols = st.columns(2)
+primary_cols = st.columns(4)
 stock_select = primary_cols[0].selectbox(
     'Market',
     _MARKET_OPTIONS,
@@ -657,7 +658,7 @@ _size_default_idx = (
     if _size_qp in _SIZE_OPTIONS else 0
 )
 
-heatmap_cols = st.columns(2)
+heatmap_cols = primary_cols[2:]
 size_var = heatmap_cols[0].selectbox(
     'Tile size',
     options=_SIZE_OPTIONS,
@@ -806,6 +807,8 @@ returns_df = calc_daily_return_for_date(prices_df, target_ts)
 _effective_date = selected_date
 _data_source = 'Supabase historical prices'
 _as_of_label = selected_date_str
+_price_notice = None
+_price_notice_icon = None
 
 
 def _has_reported_returns(frame):
@@ -821,11 +824,11 @@ if not _has_reported_returns(returns_df):
             returns_df = live_returns
             _data_source = 'FMP live/latest company profiles'
             _as_of_label = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')
-            st.info(
+            _price_notice = (
                 f'Historical prices are not available for **{selected_date_str}** yet. '
-                f'Showing **live/latest** profile changes as of **{_as_of_label}**.',
-                icon='📡'
+                f'Showing **live/latest** profile changes as of **{_as_of_label}**.'
             )
+            _price_notice_icon = '📡'
 
     # Try available historical dates newest-first until one has a usable
     # predecessor. The latest row alone may be incomplete during ingestion.
@@ -844,11 +847,11 @@ if not _has_reported_returns(returns_df):
                 target_ts = pd.Timestamp(candidate_date)
                 date_to_str = candidate_date.strftime('%Y-%m-%d')
                 _as_of_label = date_to_str
-                st.info(
+                _price_notice = (
                     f'No complete session was available for **{selected_date_str}**. '
-                    f'Showing the most recent usable trading date: **{date_to_str}**.',
-                    icon='ℹ️'
+                    f'Showing the most recent usable trading date: **{date_to_str}**.'
                 )
+                _price_notice_icon = 'ℹ️'
                 break
 
 # ── KPI row ───────────────────────────────────────────────────────────────── #
@@ -983,7 +986,9 @@ else:
         group_secs=group_secs,
     )
 
-    st.caption('Click a stock tile to open its full analysis in Dividend Ranking.')
+    treemap_caption = 'Click a stock tile to open its full analysis in Dividend Ranking.'
+    if _price_notice:
+        treemap_caption = f'{_price_notice_icon} {_price_notice}  \n{treemap_caption}'
 
     target_market = 'JKSE' if sl == 'JKSE' else 'S&P500'
     click_event_js = (
@@ -1004,6 +1009,7 @@ else:
         width='100%',
         key='mw_treemap',
     )
+    st.caption(treemap_caption)
 
     if color_threshold:
         st.caption(
