@@ -32,6 +32,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application files
 COPY apps ./apps
+COPY asset ./asset
 COPY static ./static
 COPY harvest ./harvest
 COPY articles ./articles
