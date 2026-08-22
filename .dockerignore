@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.ipynb_checkpoints
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Streamlit
+.streamlit/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and Artifacts
+data/jkse/*
+!data/jkse/syariah.csv
+data/sp500/
+data/logs/
+data/images/
+*.log
+*.pkl
+# Un-comment the next line if you don't need CSVs in the image
+# *.csv

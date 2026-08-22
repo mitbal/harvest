@@ -1,0 +1,27 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir uv
+
+COPY requirements-pipeline.txt .
+RUN uv venv /opt/venv && \
+    uv pip install --python /opt/venv/bin/python -r requirements-pipeline.txt
+
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
+
+COPY harvest ./harvest
+COPY pipeline ./pipeline
+COPY data/jkse/syariah.csv ./data/jkse/syariah.csv
+
+CMD ["python", "-m", "pipeline.daily_data", "--help"]

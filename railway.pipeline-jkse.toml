@@ -1,0 +1,15 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.pipeline"
+watchPatterns = [
+  "harvest/**",
+  "pipeline/**",
+  "data/jkse/syariah.csv",
+  "requirements-pipeline.txt",
+  "Dockerfile.pipeline",
+]
+
+[deploy]
+startCommand = "timeout --signal=TERM --kill-after=60s 6h python -m pipeline.daily_data --exchange jkse"
+cronSchedule = "0 16 * * 1-5"
+restartPolicyType = "NEVER"

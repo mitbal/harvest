@@ -1,0 +1,3 @@
+-r requirements-pipeline.txt
+prefect==3.4.15
+importlib-metadata==8.7.0

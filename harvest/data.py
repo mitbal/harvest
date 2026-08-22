@@ -38,7 +38,6 @@ def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
 
 # from datetime import datetime, timedelta
 
-import scipy
 import numpy as np
 import pandas as pd
 import PIL.Image as Image
@@ -100,7 +99,8 @@ def get_company_profile(stocks, api_key=None):
     
     stock_param = ','.join(stocks)
     url = f'https://financialmodelingprep.com/api/v3/profile/{stock_param}?apikey={api_key}'
-    r  = requests.get(url)
+    r = requests.get(url, timeout=_FMP_TIMEOUT)
+    r.raise_for_status()
     cp = r.json()
 
     cp_df = pd.DataFrame(cp).set_index('symbol')
@@ -303,7 +303,8 @@ def get_financial_data(stock, period='quarter', api_key=None):
         api_key = os.environ['FMP_API_KEY']
 
     url = f'https://financialmodelingprep.com/api/v3/income-statement/{stock}?period={period}&apikey={api_key}'
-    r = requests.get(url)
+    r = requests.get(url, timeout=_FMP_TIMEOUT)
+    r.raise_for_status()
     fs = r.json()
     return pd.DataFrame(fs)
 
@@ -562,7 +563,10 @@ def calc_growth_stats(fin_df, metric='revenue'):
         growth = growth[:p*4].dropna()
         
         stats[f'median_{p}y_{metric}_growth'] = np.median(growth) *100
-        stats[f'trim_mean_{p}y_{metric}_growth'] = (scipy.stats.trim_mean(growth, 0.1)) *100
+        ordered_growth = np.sort(growth.to_numpy(dtype=float))
+        trim_count = int(len(ordered_growth) * 0.1)
+        trimmed_growth = ordered_growth[trim_count:-trim_count] if trim_count else ordered_growth
+        stats[f'trim_mean_{p}y_{metric}_growth'] = np.mean(trimmed_growth) * 100
 
         # Compounded annual growth rate over p years:
         # (current rolling TTM value / value p years ago) ^ (1/p) - 1

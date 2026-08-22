@@ -3,9 +3,13 @@
 *.pkl
 *.ipynb
 *.txt
+!requirements-pipeline.txt
+!requirements-prefect.txt
 *.png
+!asset/home/*.png
 *.json
 articles/
 .DS_Store
 __pycache__/
 .streamlit/secrets.toml
+.coverage

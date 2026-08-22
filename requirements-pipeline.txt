@@ -1,0 +1,7 @@
+redis==8.1.0
+numpy==2.5.2
+pandas==3.0.5
+pyarrow==24.0.0
+requests==2.32.3
+Pillow==11.1.0
+supabase==2.31.0
