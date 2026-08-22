@@ -19,7 +19,7 @@ venv.bak/
 *.egg
 
 # Streamlit
-.streamlit/
+.streamlit/secrets.toml
 
 # Docker
 Dockerfile
