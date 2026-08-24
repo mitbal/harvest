@@ -56,7 +56,7 @@ def get_logger(name, level=logging.INFO):
 logger = get_logger('simulator')
 
 
-@st.cache_data(max_entries=512)
+@st.cache_data(max_entries=32, ttl=6 * 60 * 60)
 def simulate_compounding(initial_value, num_year, avg_yield):
 
     logger.info(f'sim #1 simple compounding. {initial_value=}, {num_year=}, {avg_yield=}')
@@ -65,7 +65,7 @@ def simulate_compounding(initial_value, num_year, avg_yield):
     return return_df
 
 
-@st.cache_data(max_entries=256)
+@st.cache_data(max_entries=32, ttl=6 * 60 * 60)
 def simulate_single_stock_compounding(initial_value, stock_name, start_year, end_year):
     logger.info(f'sim #2 single stock. {stock_name=}, {initial_value=}, {start_year=}, {end_year=}')
     dividends = hd.get_dividend_history_single_stock(stock_name, source='dag')
@@ -82,8 +82,9 @@ def simulate_single_stock_compounding(initial_value, stock_name, start_year, end
     return with_drip, without_drip, transactions
 
 
-@st.cache_data(max_entries=256)
-def simulate_real_multistock_compounding(allocations, start_year, end_year):
+@st.cache_data(max_entries=16, ttl=6 * 60 * 60)
+def simulate_real_multistock_compounding(allocations_tuple, start_year, end_year):
+    allocations = dict(allocations_tuple)
     logger.info(
         f'sim #3 historical multistock. {allocations=}, '
         f'{start_year=}, {end_year=}'
@@ -101,7 +102,7 @@ def simulate_real_multistock_compounding(allocations, start_year, end_year):
 
 ### End of Function definition
 
-@st.cache_data(max_entries=64)
+@st.cache_data(max_entries=16, ttl=6 * 60 * 60)
 def df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
@@ -321,7 +322,9 @@ with st.container(border=True):
     try:
         allocations = hs.build_allocations(allocation_rows)
         aggregate_df, combined_plot_df, transactions = \
-            simulate_real_multistock_compounding(allocations, start_year, end_year)
+            simulate_real_multistock_compounding(
+                tuple(sorted(allocations.items())), start_year, end_year
+            )
     except hs.SimulatorValidationError as e:
         st.error(str(e))
         st.stop()
