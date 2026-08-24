@@ -1142,6 +1142,23 @@ else:
                             _slope, _intercept = np.polyfit(
                                 _regression_source['benchmark_yield'], _regression_source['days_after'], 1
                             )
+                            _actual_days = _regression_source['days_after'].to_numpy(dtype=float)
+                            _predicted_days = (
+                                _slope * _regression_source['benchmark_yield'].to_numpy(dtype=float)
+                                + _intercept
+                            )
+                            _residual_sum_squares = float(np.sum((_actual_days - _predicted_days) ** 2))
+                            _total_sum_squares = float(np.sum((_actual_days - _actual_days.mean()) ** 2))
+                            _r_squared = (
+                                1 - _residual_sum_squares / _total_sum_squares
+                                if _total_sum_squares > 0 else np.nan
+                            )
+                            _rmse = float(np.sqrt(np.mean((_actual_days - _predicted_days) ** 2)))
+                            _correlation = float(
+                                _regression_source['benchmark_yield'].corr(
+                                    _regression_source['days_after']
+                                )
+                            )
                             _x_min = float(_regression_source['benchmark_yield'].min())
                             _x_max = float(_regression_source['benchmark_yield'].max())
                             _regression_df = pd.DataFrame({
@@ -1158,6 +1175,20 @@ else:
                             st.success(
                                 f'Among recovered events, each **+1%** in dividend yield is associated '
                                 f'with **{_slope:+.1f}** recovery days in a descriptive linear fit.'
+                            )
+                            _regression_metrics = st.columns(4)
+                            _regression_metrics[0].metric(
+                                'R²', f'{_r_squared:.3f}' if np.isfinite(_r_squared) else 'N/A'
+                            )
+                            _regression_metrics[1].metric(
+                                'Pearson r',
+                                f'{_correlation:.3f}' if np.isfinite(_correlation) else 'N/A',
+                            )
+                            _regression_metrics[2].metric('RMSE', f'{_rmse:.1f} days')
+                            _regression_metrics[3].metric('Observations', f'{len(_regression_source):,}')
+                            st.caption(
+                                f'Linear fit: recovery days = {_intercept:.1f} '
+                                f'{_slope:+.1f} × benchmark yield (%).'
                             )
                         else:
                             st.info('At least two distinct yield values are required for a regression line.')
@@ -1272,7 +1303,7 @@ else:
                         st.dataframe(
                             _merged_raw,
                             hide_index=True,
-                            use_container_width=True,
+                            width='stretch',
                             column_config={
                                 'symbol': st.column_config.TextColumn('Symbol'),
                                 'ex_date': st.column_config.TextColumn('Ex Date'),
