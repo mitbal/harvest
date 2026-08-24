@@ -10,7 +10,7 @@ from st_supabase_connection import SupabaseConnection
 
 import harvest.data as hd
 
-STRATEGY_ENGINE_VERSION = 7
+STRATEGY_ENGINE_VERSION = 9
 DEFAULT_PROFIT_TARGET = 5.0
 DEFAULT_STOP_LOSS = 2.0
 DEFAULT_MAX_HOLD = 5
@@ -23,16 +23,18 @@ STRATEGY_SQUEEZE = "Volatility Squeeze Breakout"
 STRATEGY_TREND_PULLBACK = "Trend Pullback"
 STRATEGY_RELATIVE_STRENGTH = "Relative-Strength Pullback"
 STRATEGY_CROSS_MOMENTUM = "Cross-Sectional Momentum"
+STRATEGY_SUPERTREND_PULLBACK = "Close-Based Supertrend Pullback"
 
 STRATEGY_TYPES = [
     STRATEGY_REGIME_RSI,
     STRATEGY_BOLLINGER_LOWER,
     STRATEGY_RSI_RECOVERY,
-    STRATEGY_DONCHIAN,
-    STRATEGY_SQUEEZE,
-    STRATEGY_TREND_PULLBACK,
-    STRATEGY_RELATIVE_STRENGTH,
-    STRATEGY_CROSS_MOMENTUM,
+    # STRATEGY_DONCHIAN,
+    # STRATEGY_SQUEEZE,
+    # STRATEGY_TREND_PULLBACK,
+    # STRATEGY_RELATIVE_STRENGTH,
+    # STRATEGY_CROSS_MOMENTUM,
+    STRATEGY_SUPERTREND_PULLBACK,
 ]
 
 STRATEGY_PARAMETER_LABELS = {
@@ -44,6 +46,7 @@ STRATEGY_PARAMETER_LABELS = {
     STRATEGY_TREND_PULLBACK: ("Fast EMA", "Slow EMA", "Pullback Tolerance %", "Setup Window"),
     STRATEGY_RELATIVE_STRENGTH: ("RS Lookback", "Min Outperformance %", "RSI Period", "Recovery Level"),
     STRATEGY_CROSS_MOMENTUM: ("Momentum Lookback", "Top Percentile", "RSI Period", "Recovery Level"),
+    STRATEGY_SUPERTREND_PULLBACK: ("ATR Period", "ATR Multiplier", "Pullback Drop %", "Support Proximity %"),
 }
 
 STRATEGY_PARAMETER_INPUTS = {
@@ -55,6 +58,7 @@ STRATEGY_PARAMETER_INPUTS = {
     STRATEGY_TREND_PULLBACK: ((2.0, 100.0, 1.0), (5.0, 200.0, 5.0), (0.0, 10.0, 0.5), (1.0, 20.0, 1.0)),
     STRATEGY_RELATIVE_STRENGTH: ((2.0, 252.0, 5.0), (0.0, 30.0, 1.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
     STRATEGY_CROSS_MOMENTUM: ((2.0, 252.0, 5.0), (50.0, 100.0, 5.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
+    STRATEGY_SUPERTREND_PULLBACK: ((2.0, 50.0, 1.0), (0.5, 10.0, 0.25), (0.25, 10.0, 0.25), (0.0, 10.0, 0.25)),
 }
 
 
@@ -118,7 +122,7 @@ st.sidebar.markdown(
 
     * **Mean reversion:** regime RSI, Bollinger lower-band, and RSI recovery.
     * **Trend and momentum:** Donchian, squeeze, EMA pullback, relative strength,
-      and cross-sectional momentum.
+      cross-sectional momentum, and close-based Supertrend pullback.
     * **Execution:** a completed closing setup enters on the next session in the
       backtest; live setups remain provisional until today's close.
 
@@ -212,6 +216,59 @@ def _wilder_rsi(close: pd.Series, period: int) -> pd.Series:
     ema_down = down.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
     rs  = ema_up / ema_down
     return 100 - (100 / (1 + rs))
+
+
+def _close_supertrend(
+    close: pd.Series,
+    period: int,
+    multiplier: float,
+) -> tuple[pd.Series, pd.Series]:
+    """Calculate Supertrend bands when only daily closes are available."""
+    true_range = close.diff().abs()
+    atr = true_range.ewm(
+        alpha=1 / period, adjust=False, min_periods=period,
+    ).mean()
+    close_values = close.to_numpy(dtype=float)
+    atr_values = atr.to_numpy(dtype=float)
+    basic_upper = close_values + multiplier * atr_values
+    basic_lower = close_values - multiplier * atr_values
+    final_upper = np.full(len(close), np.nan)
+    final_lower = np.full(len(close), np.nan)
+    direction = np.zeros(len(close), dtype=np.int8)
+
+    for i in range(len(close)):
+        if not np.isfinite(atr_values[i]):
+            continue
+        if i == 0 or not np.isfinite(final_upper[i - 1]):
+            final_upper[i] = basic_upper[i]
+            final_lower[i] = basic_lower[i]
+            direction[i] = -1
+            continue
+
+        previous_close = close_values[i - 1]
+        previous_upper = final_upper[i - 1]
+        previous_lower = final_lower[i - 1]
+        final_upper[i] = (
+            basic_upper[i]
+            if basic_upper[i] < previous_upper or previous_close > previous_upper
+            else previous_upper
+        )
+        final_lower[i] = (
+            basic_lower[i]
+            if basic_lower[i] > previous_lower or previous_close < previous_lower
+            else previous_lower
+        )
+
+        if direction[i - 1] == 1:
+            direction[i] = -1 if close_values[i] < final_lower[i] else 1
+        else:
+            direction[i] = 1 if close_values[i] > final_upper[i] else -1
+
+    supertrend = np.where(direction == 1, final_lower, final_upper)
+    return (
+        pd.Series(supertrend, index=close.index),
+        pd.Series(direction, index=close.index),
+    )
 
 
 def _align_to_prices(series: pd.Series | None, index: pd.Index) -> pd.Series:
@@ -330,6 +387,24 @@ def _strategy_components(
         setup = (percentile >= float(param_b)) & recovery & (regime == 'bull')
         strategy_exit = percentile < 50
         indicator = percentile
+    elif strategy_type == STRATEGY_SUPERTREND_PULLBACK:
+        supertrend, direction = _close_supertrend(
+            close, int(param_a), float(param_b),
+        )
+        support_distance = (close / supertrend - 1) * 100
+        bullish = direction == 1
+        established_bullish = (
+            bullish
+            & bullish.shift(1, fill_value=False)
+            & bullish.shift(2, fill_value=False)
+        )
+        price_drop = close.pct_change() * 100 <= -float(param_c)
+        reached_support = support_distance <= float(param_d)
+        eligible_support = established_bullish & reached_support
+        fresh_support_touch = eligible_support & ~eligible_support.shift(1, fill_value=False)
+        setup = (established_bullish & price_drop) | fresh_support_touch
+        strategy_exit = direction == -1
+        indicator = support_distance
     else:
         raise ValueError(f"Unknown swing strategy: {strategy_type}")
 
@@ -353,6 +428,8 @@ def _strategy_warmup(
         return max(int(param_a), int(param_c), 50) + 5
     if strategy_type == STRATEGY_RSI_RECOVERY:
         return max(int(param_a), int(param_c), 50) + 10
+    if strategy_type == STRATEGY_SUPERTREND_PULLBACK:
+        return max(int(param_a) + 5, 20)
     return max(int(param_a), int(param_b), int(param_c), 50) + 5
 
 
@@ -489,9 +566,9 @@ with st.container():
     st.subheader("Top Ranked Shortlist", divider='blue')
     filter_cols = st.columns(4)
     min_mcap_trill = filter_cols[0].number_input("Min Market Cap (Trillion IDR)", value=1.0, step=1.0, key="dt_mcap")
-    min_pe = filter_cols[1].number_input("Minimum PE", value=5.0, step=1.0, key="dt_minpe")
-    max_pe = filter_cols[2].number_input("Maximum PE", value=50.0, step=1.0, key="dt_maxpe")
-    max_stocks = filter_cols[3].number_input("Max Stocks Output", min_value=10, max_value=200, value=50, step=10, key="dt_maxs")
+    min_pe = filter_cols[1].number_input("Minimum PE", value=1.0, step=1.0, key="dt_minpe")
+    max_pe = filter_cols[2].number_input("Maximum PE", value=20.0, step=1.0, key="dt_maxpe")
+    max_stocks = filter_cols[3].number_input("Max Stocks Output", min_value=10, max_value=200, value=200, step=10, key="dt_maxs")
     rank_cols = st.columns(3)
     volatility_weight = rank_cols[0].slider(
         "Volatility Weight", min_value=0, max_value=100, value=60, step=5,
@@ -641,6 +718,7 @@ SEARCH_PRESETS = {
             STRATEGY_TREND_PULLBACK: [(20, 50, 2.0, 5)],
             STRATEGY_RELATIVE_STRENGTH: [(20, 2.0, 14, 40)],
             STRATEGY_CROSS_MOMENTUM: [(20, 80, 14, 40)],
+            STRATEGY_SUPERTREND_PULLBACK: [(10, 3.0, 2.0, 0.5)],
         },
         "hold_days": [5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -655,6 +733,7 @@ SEARCH_PRESETS = {
             STRATEGY_TREND_PULLBACK: [(10, 30, 1.5, 3), (20, 50, 2.0, 5)],
             STRATEGY_RELATIVE_STRENGTH: [(20, 0.0, 14, 40), (60, 3.0, 14, 45)],
             STRATEGY_CROSS_MOMENTUM: [(20, 75, 14, 40), (60, 80, 14, 45)],
+            STRATEGY_SUPERTREND_PULLBACK: [(10, 2.5, 1.5, 0.5), (10, 3.0, 2.0, 1.0)],
         },
         "hold_days": [3, 5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -669,6 +748,7 @@ SEARCH_PRESETS = {
             STRATEGY_TREND_PULLBACK: [(5, 20, 1.0, 3), (10, 30, 1.5, 3), (20, 50, 2.0, 5)],
             STRATEGY_RELATIVE_STRENGTH: [(20, 0.0, 7, 40), (20, 2.0, 14, 40), (60, 3.0, 14, 45)],
             STRATEGY_CROSS_MOMENTUM: [(10, 70, 7, 40), (20, 75, 14, 40), (60, 80, 14, 45)],
+            STRATEGY_SUPERTREND_PULLBACK: [(7, 2.0, 1.5, 0.5), (10, 2.5, 2.0, 0.75), (10, 3.0, 2.5, 1.0)],
         },
         "hold_days": [3, 5, 7],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, 1.5), (DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -811,6 +891,27 @@ def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def _score_stock_strategy_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
+    """Score strategy configurations relative to the candidates for one stock."""
+    candidates = candidates.copy()
+    score_weights = {
+        'Validation Avg Trade': 0.35,
+        'Validation Win Rate': 0.20,
+        'Validation Return': 0.20,
+        'Validation Trades': 0.15,
+    }
+    candidates['Stock Strategy Score'] = 0.0
+    for column, weight in score_weights.items():
+        candidates['Stock Strategy Score'] += (
+            candidates[column].rank(pct=True).fillna(0) * weight * 100
+        )
+    drawdown_control = (
+        -candidates['Validation Drawdown'].abs()
+    ).rank(pct=True).fillna(0) * 100
+    candidates['Stock Strategy Score'] += drawdown_control * 0.10
+    return candidates
+
+
 def _select_stock_strategies(
     results_df: pd.DataFrame,
     global_strategy: dict,
@@ -842,17 +943,7 @@ def _select_stock_strategies(
         if candidates.empty:
             continue
 
-        score_weights = {
-            'Validation Avg Trade': 0.35,
-            'Validation Win Rate': 0.20,
-            'Validation Return': 0.20,
-            'Validation Trades': 0.15,
-        }
-        candidates['Stock Strategy Score'] = 0.0
-        for column, weight in score_weights.items():
-            candidates['Stock Strategy Score'] += candidates[column].rank(pct=True).fillna(0) * weight * 100
-        drawdown_control = (-candidates['Validation Drawdown'].abs()).rank(pct=True).fillna(0) * 100
-        candidates['Stock Strategy Score'] += drawdown_control * 0.10
+        candidates = _score_stock_strategy_candidates(candidates)
         best = candidates.sort_values(
             ['Stock Strategy Score', 'Validation Trades', 'Validation Avg Trade'],
             ascending=False,
@@ -874,6 +965,35 @@ def _select_stock_strategies(
             'return_uplift': float(best['Validation Return'] - global_return),
         }
     return selections
+
+
+def _best_stock_strategy_rows(results_df: pd.DataFrame) -> pd.DataFrame:
+    """Return each stock's highest-scoring configuration on holdout data."""
+    best_rows = []
+    for _, group in results_df.groupby('Symbol'):
+        candidates = group[group['Validation Trades'] > 0].copy()
+        if candidates.empty:
+            continue
+
+        candidates = _score_stock_strategy_candidates(candidates)
+        best_rows.append(candidates.sort_values(
+            ['Stock Strategy Score', 'Validation Trades', 'Validation Avg Trade'],
+            ascending=False,
+        ).iloc[0])
+
+    if not best_rows:
+        return pd.DataFrame()
+    best_df = pd.DataFrame(best_rows).reset_index(drop=True)
+    best_df['Parameters'] = best_df.apply(
+        lambda row: _format_strategy_params(
+            row['Strategy'], row['Param A'], row['Param B'],
+            row['Param C'], row['Param D'],
+        ),
+        axis=1,
+    )
+    return best_df.sort_values(
+        ['Stock Strategy Score', 'Validation Avg Trade'], ascending=False,
+    ).reset_index(drop=True)
 
 
 def _test_stock_strategies(
@@ -1235,6 +1355,7 @@ if results_are_current:
         "Validation Coverage %": st.column_config.ProgressColumn("Stock Coverage", format="%.1f%%", min_value=0, max_value=100),
         "Generalization Gap": st.column_config.NumberColumn("Validation - Train", format="%.2f%%"),
         "Strategy Score": st.column_config.ProgressColumn("Strategy Score", format="%.1f", min_value=0, max_value=100),
+        "Stock Strategy Score": st.column_config.ProgressColumn("Stock Strategy Score", format="%.1f", min_value=0, max_value=100),
     }
 
     tab_strategy, tab_stocks, tab_all = st.tabs([
@@ -1328,17 +1449,42 @@ if results_are_current:
             )
 
         with tab_stocks:
-            st.caption("Per-stock results for the single recommended parameter set.")
-            st.dataframe(
-                recommended_runs.sort_values(
-                    ['Validation Avg Trade', 'Validation Trades'], ascending=False,
+            use_best_stock_strategy = st.checkbox(
+                "Use best strategy for each stock",
+                value=False,
+                key="dt_use_best_stock_strategy_breakdown",
+                help=(
+                    "Choose each stock's highest-scoring configuration using holdout "
+                    "average trade, win rate, return, trade count, and drawdown."
                 ),
-                column_config=col_cfg,
-                column_order=[
+            )
+            if use_best_stock_strategy:
+                stock_breakdown_df = _best_stock_strategy_rows(results_df)
+                st.caption(
+                    "Each row uses that stock's highest-scoring strategy and parameter "
+                    "set on held-out data. Stocks without holdout trades are omitted."
+                )
+                stock_breakdown_order = [
+                    'Symbol', 'Stock Strategy Score', 'Strategy', 'Parameters',
+                    'Max Hold', 'Profit Target', 'Stop Loss',
+                    'Validation Avg Trade', 'Validation Win Rate',
+                    'Validation Return', 'Validation Drawdown', 'Validation Trades',
+                    'Avg Trade', 'Win Rate', '# Trades',
+                ]
+            else:
+                stock_breakdown_df = recommended_runs.sort_values(
+                    ['Validation Avg Trade', 'Validation Trades'], ascending=False,
+                )
+                st.caption("Per-stock results for the single recommended parameter set.")
+                stock_breakdown_order = [
                     'Symbol', 'Validation Avg Trade', 'Validation Win Rate',
                     'Validation Return', 'Validation Drawdown', 'Validation Trades',
                     'Avg Trade', 'Win Rate', '# Trades',
-                ],
+                ]
+            st.dataframe(
+                stock_breakdown_df,
+                column_config=col_cfg,
+                column_order=stock_breakdown_order,
                 hide_index=True, width='stretch',
             )
 
@@ -1572,13 +1718,13 @@ alert_watch_band = scanner_cols[1].number_input("Watch Proximity", min_value=1.0
 
 if stock_strategy_map:
     st.caption(
-        f"All eight strategies are evaluated. Stock-specific optimized parameters apply to "
+        f"All {len(STRATEGY_TYPES)} strategies are evaluated. Stock-specific optimized parameters apply to "
         f"{len(stock_strategy_map)} tickers; other strategies use the global recommendation or baseline presets."
     )
 elif active_strategy:
-    st.caption("All eight strategies are evaluated using the global recommendation where applicable and baseline presets otherwise.")
+    st.caption(f"All {len(STRATEGY_TYPES)} strategies are evaluated using the global recommendation where applicable and baseline presets otherwise.")
 else:
-    st.caption("All eight strategies are evaluated with baseline presets. Run the optimizer to apply validated parameters.")
+    st.caption(f"All {len(STRATEGY_TYPES)} strategies are evaluated with baseline presets. Run the optimizer to apply validated parameters.")
 st.caption(f"Every scanner candidate uses a +{DEFAULT_PROFIT_TARGET:.1f}% profit target.")
 
 scan_button = st.button("Scan Today's Closing Setups", type="primary", disabled=len(shortlist_tickers) == 0)
@@ -1604,6 +1750,9 @@ def _is_near_setup(strategy_type: str, indicator: float, params: tuple[float, ..
         return param_b <= indicator <= param_d + proximity
     if strategy_type in (STRATEGY_BOLLINGER_LOWER, STRATEGY_DONCHIAN, STRATEGY_TREND_PULLBACK):
         return abs(indicator) <= proximity
+    if strategy_type == STRATEGY_SUPERTREND_PULLBACK:
+        watch_width = min(proximity, 1.5)
+        return param_d < indicator <= param_d + watch_width
     if strategy_type == STRATEGY_RELATIVE_STRENGTH:
         return indicator >= param_b - proximity
     if strategy_type == STRATEGY_CROSS_MOMENTUM:
@@ -1712,6 +1861,9 @@ if scan_button:
                 'Price Source': price_sources[ticker],
                 'Parameter Source': item['parameter_source'],
                 'Strategy': strategy_type,
+                'Stock Trend': (
+                    "Bullish" if indicator >= 0 else "Bearish"
+                ) if strategy_type == STRATEGY_SUPERTREND_PULLBACK and np.isfinite(indicator) else "",
                 'Parameters': _format_strategy_params(strategy_type, *params),
                 'Indicator': indicator,
                 'Strategy Score': item['score'],
