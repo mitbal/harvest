@@ -143,12 +143,13 @@ years_df = get_data_from_redis(div_years_key)
 available_years = sorted(years_df['year'].astype(int).unique().tolist())
 if len(available_years) == 0:
     available_years = [current_year]
-default_year = current_year if current_year in available_years else max(available_years)
+completed_years = [year for year in available_years if year < current_year]
+default_year = max(completed_years) if completed_years else max(available_years)
 
 # ── URL query-param defaults ──────────────────────────────────────────────────
 # Supported params:
 #   ?view=yearly|monthly   (default: yearly)
-#   ?year=2025             (default: current / latest available year)
+#   ?year=2025             (source year; defaults to latest completed year)
 #   ?month=3               (1-12, only relevant when view=monthly)
 # Example: ?view=monthly&year=2025&month=6
 qp = st.query_params
