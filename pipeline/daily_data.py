@@ -219,12 +219,13 @@ def prepare_dividend_calendar(
 def _safe_dividend_sums(dividend_frame: pd.DataFrame) -> tuple[float, float]:
     if dividend_frame.empty or not {"date", "adjDividend"}.issubset(dividend_frame.columns):
         return 0.0, 0.0
-    dates = pd.to_datetime(dividend_frame["date"], errors="coerce")
+    dates = pd.to_datetime(dividend_frame["date"], errors="coerce", utc=True).dt.tz_localize(None)
     values = pd.to_numeric(dividend_frame["adjDividend"], errors="coerce").fillna(0)
-    now = pd.Timestamp.now()
+    now = pd.Timestamp.now().tz_localize(None)
+    paid = dates.le(now) & values.gt(0)
     return (
-        float(values[dates >= now - pd.Timedelta(days=365)].sum()),
-        float(values[dates >= now - pd.Timedelta(days=3650)].sum()),
+        float(values[paid & dates.ge(now - pd.Timedelta(days=365))].sum()),
+        float(values[paid & dates.ge(now - pd.Timedelta(days=3650))].sum()),
     )
 
 
@@ -278,19 +279,14 @@ def compute_div_score(
 
             dividend_frame = dividends[symbol].copy()
             if exchange == "jkse":
-                ordinary = dividend_frame[dividend_frame["dividend_type"] != "special"]
-                aggregate = ordinary.groupby("fiscal_year")["adjDividend"].sum()
-                final_years = dividend_frame.loc[
-                    dividend_frame["dividend_type"] == "final", "fiscal_year"
-                ]
-                final_year = final_years.iloc[0] if not final_years.empty else None
+                last_dividend = hd.calc_latest_finalized_dividend_sum(dividend_frame)
+            else:
+                profile_dividend = float(company_profiles.loc[symbol, "lastDiv"])
                 last_dividend = (
-                    float(aggregate.get(final_year, 0))
-                    if final_year is not None and final_year >= datetime.now().year - 2
+                    profile_dividend
+                    if hd.is_dividend_schedule_current(dividend_frame)
                     else 0.0
                 )
-            else:
-                last_dividend = float(company_profiles.loc[symbol, "lastDiv"])
 
             one_year_sum, ten_year_sum = _safe_dividend_sums(dividend_frame)
             frame.loc[symbol, "div_sum_1y"] = one_year_sum
@@ -381,17 +377,21 @@ def _load_company_profiles(exchange: str) -> tuple[pd.DataFrame, list[str]]:
     stocks = hd.get_all_idx_stocks() if exchange == "jkse" else hd.get_all_sp500_stocks()
     if stocks.empty or "symbol" not in stocks.columns:
         raise RuntimeError(f"No stock symbols found for {exchange}")
-    stock_list = stocks["symbol"].dropna().astype(str).tolist()
+    stock_list = stocks["symbol"].dropna().astype(str).drop_duplicates().tolist()
     profiles = hd.get_company_profile(stock_list)
     if profiles.empty:
         raise RuntimeError(f"No company profiles found for {exchange}")
     if "symbol" in profiles.columns:
         profiles = profiles.set_index("symbol")
     profiles.index.name = "symbol"
-    active = profiles[profiles["isActivelyTrading"].fillna(False)].index.astype(str).tolist()
-    if not active:
+    profiles.index = profiles.index.astype(str)
+    profiles = profiles[
+        profiles.index.isin(stock_list)
+        & profiles["isActivelyTrading"].fillna(False).eq(True)
+    ].copy()
+    if profiles.empty:
         raise RuntimeError(f"No actively traded stocks found for {exchange}")
-    return profiles, active
+    return profiles, profiles.index.tolist()
 
 
 def _add_syariah_status(profiles: pd.DataFrame) -> pd.DataFrame:
@@ -440,6 +440,7 @@ def run_daily(
         mode="incremental",
         max_concurrency=max_concurrency,
         use_local_cache=use_local_price_cache,
+        symbols=active_stocks,
     )
 
     supabase = get_supabase_client()
@@ -448,8 +449,9 @@ def run_daily(
         profiles = _add_syariah_status(profiles)
 
     latest_returns = get_latest_returns_from_db(supabase)
+    latest_returns = latest_returns[latest_returns.index.astype(str).isin(active_stocks)]
     if latest_returns.empty:
-        raise RuntimeError("The latest-returns view returned no rows")
+        raise RuntimeError("The latest-returns view returned no rows for active stocks")
     dividend_scores = compute_div_score(
         profiles,
         financials,

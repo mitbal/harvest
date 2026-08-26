@@ -105,6 +105,7 @@ def run_historical_pipeline(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     use_local_cache: bool = False,
     cache_path: Optional[Path] = None,
+    symbols: Optional[list[str]] = None,
 ) -> dict:
     """Fetch historical prices and persist new rows to Supabase."""
     if exchange not in {"jkse", "sp500"}:
@@ -115,11 +116,16 @@ def run_historical_pipeline(
         raise ValueError("max_concurrency must be at least 1")
 
     logger.info("Starting historical-price pipeline for %s in %s mode", exchange, mode)
-    stocks = hd.get_all_idx_stocks() if exchange == "jkse" else hd.get_all_sp500_stocks()
-    if stocks.empty or "symbol" not in stocks.columns:
+    if symbols is None:
+        stocks = hd.get_all_idx_stocks() if exchange == "jkse" else hd.get_all_sp500_stocks()
+        if stocks.empty or "symbol" not in stocks.columns:
+            raise RuntimeError(f"No stock symbols found for {exchange}")
+        selected_symbols = stocks["symbol"].dropna().astype(str).drop_duplicates().tolist()
+    else:
+        selected_symbols = list(dict.fromkeys(str(symbol) for symbol in symbols if symbol))
+    if not selected_symbols:
         raise RuntimeError(f"No stock symbols found for {exchange}")
 
-    symbols = stocks["symbol"].dropna().astype(str).tolist()
     start_date = (
         BACKFILL_START_DATE
         if mode == "backfill"
@@ -131,7 +137,7 @@ def run_historical_pipeline(
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
         futures = {
             executor.submit(_fetch_with_retries, symbol, start_date): symbol
-            for symbol in symbols
+            for symbol in selected_symbols
         }
         for future in as_completed(futures):
             symbol = futures[future]
@@ -159,6 +165,10 @@ def run_historical_pipeline(
     if use_local_cache:
         local_path = cache_path or get_local_path(exchange)
         existing_frame = _load_local_cache(local_path) if mode == "incremental" else pd.DataFrame()
+        if symbols is not None and not existing_frame.empty:
+            existing_frame = existing_frame[
+                existing_frame["symbol"].astype(str).isin(selected_symbols)
+            ]
         final_frame = (
             pd.concat([existing_frame, new_frame], ignore_index=True)
             if not existing_frame.empty
@@ -174,8 +184,8 @@ def run_historical_pipeline(
         "exchange": exchange,
         "mode": mode,
         "start_date": start_date,
-        "symbols_total": len(symbols),
-        "symbols_succeeded": len(symbols) - len(failed_symbols),
+        "symbols_total": len(selected_symbols),
+        "symbols_succeeded": len(selected_symbols) - len(failed_symbols),
         "symbols_failed": len(failed_symbols),
         "failed_symbols": sorted(failed_symbols),
         "rows_upserted": len(new_frame),
