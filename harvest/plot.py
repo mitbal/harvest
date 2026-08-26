@@ -1,4 +1,5 @@
 import calendar
+import copy
 from datetime import datetime
 
 import lesley
@@ -6,6 +7,204 @@ import numpy as np
 import pandas as pd
 import altair as alt
 from streamlit_echarts5 import JsCode
+
+from harvest.chart_style import (
+    CHART_AMBER,
+    CHART_BLUE,
+    CHART_CATEGORY_RANGE,
+    CHART_GRID,
+    CHART_MUTED_TEXT,
+    CHART_NEGATIVE,
+    CHART_NEUTRAL,
+    CHART_POSITIVE,
+    CHART_PRIMARY,
+    CHART_PRIMARY_DARK,
+    CHART_PURPLE,
+    CHART_SURFACE,
+    CHART_TEXT,
+    MARKET_HEATMAP_RANGE,
+)
+
+_ALTAIR_THEME_NAME = 'harvest-professional'
+
+
+def _altair_theme() -> alt.theme.ThemeConfig:
+    """Return the shared visual vocabulary for every Altair chart."""
+    return alt.theme.ThemeConfig({'config': {
+        'font': 'Inter, ui-sans-serif, system-ui, sans-serif',
+        'view': {'stroke': None},
+        'axis': {
+            'domain': False,
+            'gridColor': CHART_GRID,
+            'gridOpacity': 0.58,
+            'gridWidth': 0.8,
+            'labelColor': CHART_MUTED_TEXT,
+            'labelFontSize': 11,
+            'labelPadding': 7,
+            'tickColor': CHART_GRID,
+            'tickSize': 4,
+            'titleColor': CHART_TEXT,
+            'titleFontSize': 12,
+            'titleFontWeight': 600,
+            'titlePadding': 12,
+        },
+        'axisX': {'grid': False},
+        'axisY': {'grid': True},
+        'legend': {
+            'columns': 4,
+            'labelColor': CHART_MUTED_TEXT,
+            'labelFontSize': 11,
+            'labelLimit': 180,
+            'orient': 'top',
+            'padding': 0,
+            'symbolSize': 90,
+            'titleColor': CHART_TEXT,
+            'titleFontSize': 11,
+            'titleFontWeight': 600,
+        },
+        'header': {
+            'labelColor': CHART_TEXT,
+            'labelFontSize': 12,
+            'titleColor': CHART_TEXT,
+            'titleFontSize': 12,
+        },
+        'title': {
+            'anchor': 'start',
+            'color': CHART_TEXT,
+            'fontSize': 16,
+            'fontWeight': 600,
+            'offset': 16,
+        },
+        'range': {'category': list(CHART_CATEGORY_RANGE)},
+        'mark': {'color': CHART_PRIMARY},
+        'bar': {'cornerRadiusEnd': 3},
+        'line': {'strokeWidth': 2.25},
+        'point': {'filled': True, 'size': 55},
+        'area': {'opacity': 0.18},
+        'arc': {'stroke': CHART_SURFACE, 'strokeWidth': 2},
+        'concat': {'spacing': 16},
+    }})
+
+
+def enable_chart_theme() -> None:
+    """Enable the shared Altair theme for the current Streamlit app process."""
+    if _ALTAIR_THEME_NAME not in alt.theme.names():
+        alt.theme.register(_ALTAIR_THEME_NAME, enable=False)(_altair_theme)
+    alt.theme.enable(_ALTAIR_THEME_NAME)
+
+
+def style_calendar_chart(chart):
+    """Remove analytical grid and axis lines from calendar visualizations."""
+    return (
+        chart
+        .configure_axis(grid=False, domain=False, ticks=False)
+        .configure_axisX(grid=False, domain=False, ticks=False)
+        .configure_axisY(grid=False, domain=False, ticks=False)
+        .configure_view(stroke=None)
+    )
+
+
+def style_plotly_chart(fig):
+    """Apply the app chart system to a Plotly or VectorBT figure in place."""
+    fig.update_layout(
+        template='plotly_white',
+        autosize=True,
+        colorway=list(CHART_CATEGORY_RANGE),
+        font={
+            'color': CHART_TEXT,
+            'family': 'Inter, ui-sans-serif, system-ui, sans-serif',
+            'size': 12,
+        },
+        hoverlabel={
+            'bgcolor': '#0F172A',
+            'bordercolor': '#0F172A',
+            'font': {'color': '#F8FAFC', 'size': 12},
+        },
+        margin={'l': 36, 'r': 24, 't': 56, 'b': 40},
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        title={'font': {'color': CHART_TEXT, 'size': 17}, 'x': 0.01, 'xanchor': 'left'},
+        legend={
+            'bgcolor': 'rgba(0,0,0,0)',
+            'font': {'color': CHART_MUTED_TEXT, 'size': 11},
+            'orientation': 'h',
+            'x': 0,
+            'xanchor': 'left',
+            'y': 1.02,
+            'yanchor': 'bottom',
+        },
+    )
+    fig.update_xaxes(
+        showgrid=False,
+        linecolor=CHART_GRID,
+        tickcolor=CHART_GRID,
+        tickfont={'color': CHART_MUTED_TEXT},
+        title={'font': {'color': CHART_TEXT}},
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        gridcolor=CHART_GRID,
+        gridwidth=0.8,
+        linecolor=CHART_GRID,
+        tickcolor=CHART_GRID,
+        tickfont={'color': CHART_MUTED_TEXT},
+        title={'font': {'color': CHART_TEXT}},
+        zerolinecolor=CHART_GRID,
+    )
+    for trace in fig.data:
+        if getattr(trace, 'type', None) == 'candlestick':
+            trace.update(
+                increasing={'line': {'color': CHART_POSITIVE}, 'fillcolor': CHART_POSITIVE},
+                decreasing={'line': {'color': CHART_NEGATIVE}, 'fillcolor': CHART_NEGATIVE},
+            )
+    return fig
+
+
+def style_echarts(option: dict, *, copy_option: bool = True) -> dict:
+    """Apply shared ECharts typography and chrome, copying by default."""
+    styled = copy.deepcopy(option) if copy_option else option
+    targets = [styled]
+    if isinstance(styled.get('baseOption'), dict):
+        targets.append(styled['baseOption'])
+
+    for target in targets:
+        target.setdefault('backgroundColor', 'transparent')
+        target.setdefault('animationDuration', 180)
+        target.setdefault('animationDurationUpdate', 180)
+
+        aria = target.setdefault('aria', {})
+        aria.setdefault('enabled', True)
+
+        text_style = target.setdefault('textStyle', {})
+        text_style.setdefault('color', CHART_TEXT)
+        text_style.setdefault('fontFamily', 'Inter, ui-sans-serif, system-ui, sans-serif')
+        text_style.setdefault('fontSize', 12)
+
+        title = target.get('title')
+        if isinstance(title, dict):
+            title_style = title.setdefault('textStyle', {})
+            title_style.setdefault('color', CHART_TEXT)
+            title_style.setdefault('fontSize', 16)
+            title_style.setdefault('fontWeight', 600)
+
+        legend = target.get('legend')
+        if isinstance(legend, dict):
+            legend_text = legend.setdefault('textStyle', {})
+            legend_text.setdefault('color', CHART_MUTED_TEXT)
+            legend_text.setdefault('fontSize', 11)
+
+        tooltip = target.setdefault('tooltip', {})
+        if isinstance(tooltip, dict):
+            tooltip.setdefault('backgroundColor', '#0F172A')
+            tooltip.setdefault('borderColor', '#0F172A')
+            tooltip.setdefault('borderWidth', 0)
+            tooltip.setdefault('padding', [9, 11])
+            tooltip.setdefault('textStyle', {'color': '#F8FAFC', 'fontSize': 12})
+            tooltip.setdefault(
+                'extraCssText',
+                'border-radius:8px;box-shadow:0 4px 8px rgba(15,23,42,.18);',
+            )
+    return styled
 
 
 def format_currency():
@@ -96,7 +295,7 @@ def plot_fin_chart_enhanced(fin_df, currency='idr', height=320):
         y=alt.Y('value:Q', title='Value', axis=alt.Axis(labelExpr=format_currency())),
         color=alt.Color('metric:N', scale=alt.Scale(
             domain=['revenue', 'netIncome'],
-            range=['#42a5f5', '#26a69a'],
+            range=[CHART_BLUE, CHART_PRIMARY],
         ), legend=alt.Legend(
             title='',
             labelExpr="datum.label === 'revenue' ? 'Revenue' : 'Net Income'",
@@ -111,12 +310,12 @@ def plot_fin_chart_enhanced(fin_df, currency='idr', height=320):
     # ── Net profit margin overlay line (independent right axis) ──────────── #
     margin_line = alt.Chart(df).mark_line(
         point=alt.OverlayMarkDef(filled=True, size=60),
-        color='#ffa726',
+        color=CHART_AMBER,
         strokeWidth=2.5,
     ).encode(
         x=alt.X('year_str:O'),
         y=alt.Y('netProfitMargin:Q', title='Net Profit Margin (%)',
-                axis=alt.Axis(format='.0f', titleColor='#ffa726', labelColor='#ffa726')),
+                axis=alt.Axis(format='.0f', titleColor=CHART_AMBER, labelColor=CHART_AMBER)),
         tooltip=[
             alt.Tooltip('year_str:O',        title='Year'),
             alt.Tooltip('netProfitMargin:Q', title='Net Margin %', format='.1f'),
@@ -147,20 +346,20 @@ def plot_profit_margin_trend(fin_df, currency='idr', height=220):
 
     # Zero reference line
     zero_line = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(
-        strokeDash=[4, 3], color='#aaaaaa', strokeWidth=1
+        strokeDash=[4, 3], color=CHART_NEUTRAL, strokeWidth=1
     ).encode(y='y:Q')
 
     # Median reference
     med = float(rolling['netProfitMargin'].median())
     med_line = alt.Chart(pd.DataFrame({'y': [med]})).mark_rule(
-        strokeDash=[5, 3], color='#ffa726', strokeWidth=1.5, opacity=0.8
+        strokeDash=[5, 3], color=CHART_AMBER, strokeWidth=1.5, opacity=0.8
     ).encode(y='y:Q')
 
     # Area fill — green above 0, red below
     area = alt.Chart(rolling).mark_area(
         interpolate='monotone',
         opacity=0.25,
-        color='#26a69a',
+        color=CHART_PRIMARY,
     ).encode(
         x=alt.X('date:T', title=''),
         y=alt.Y('netProfitMargin:Q', title='TTM Net Margin (%)', scale=alt.Scale(zero=False)),
@@ -168,7 +367,7 @@ def plot_profit_margin_trend(fin_df, currency='idr', height=220):
 
     line = alt.Chart(rolling).mark_line(
         interpolate='monotone',
-        color='#26a69a',
+        color=CHART_PRIMARY,
         strokeWidth=2.5,
     ).encode(
         x=alt.X('date:T'),
@@ -237,7 +436,11 @@ def plot_yearly_income(fin_df, metric, currency='idr'):
         y=alt.Y(f'{metric}:Q', axis=alt.Axis(
             labelExpr=format_currency()
         )),
-        color=alt.condition(alt.datum['growth'] < 0, alt.value('#ff796c'), alt.value('#008631')),
+        color=alt.condition(
+            alt.datum['growth'] < 0,
+            alt.value(CHART_NEGATIVE),
+            alt.value(CHART_POSITIVE),
+        ),
         tooltip=['calendarYear', 'value', alt.Tooltip('growth', format='.2f')]
     ).properties(
         height=300
@@ -266,9 +469,9 @@ def plot_quarter_income(fin_df, metric, currency='idr'):
 
 # MA palette: window → (line colour, dash pattern)
 _MA_STYLES = {
-    20:  ('#f39c12', []),         # amber  – solid
-    50:  ('#3498db', []),         # blue   – solid
-    200: ('#9b59b6', [4, 3]),     # purple – dashed
+    20:  (CHART_AMBER, []),
+    50:  (CHART_BLUE, []),
+    200: (CHART_PURPLE, [4, 3]),
 }
 
 
@@ -289,6 +492,7 @@ def plot_candlestick(
     height: int = 300,
     ma_windows: list | None = None,   # e.g. [20, 50, 200]
     show_rsi: bool = False,
+    initial_range_days: int | None = 365,
 ):
     """
     Interactive candlestick chart with optional MA overlays and RSI panel.
@@ -298,6 +502,7 @@ def plot_candlestick(
     price_df   : DataFrame with columns [date, open, high, low, close, volume]
     ma_windows : list of integers – moving-average windows to overlay (e.g. [20, 50, 200])
     show_rsi   : bool – append an RSI(14) panel below the volume bar
+    initial_range_days : days selected in the volume navigator; None selects all data
     """
     df = price_df.copy()
     df['date'] = pd.to_datetime(df['date'])
@@ -313,17 +518,24 @@ def plot_candlestick(
 
     open_close_color = alt.condition(
         'datum.open <= datum.close',
-        alt.value('#06982d'),
-        alt.value('#ae1325'),
+        alt.value(CHART_POSITIVE),
+        alt.value(CHART_NEGATIVE),
     )
 
-    today        = datetime.today()
-    one_year_ago = today.replace(year=today.year - 1)
-    x_init = (
-        pd.to_datetime([today.strftime('%Y-%m-%d'), one_year_ago.strftime('%Y-%m-%d')])
-        .astype(int) / 1e6
-    )
-    interval = alt.selection_interval(encodings=['x'], value={'x': list(x_init)})
+    latest_date = df['date'].max()
+    earliest_date = df['date'].min()
+    if initial_range_days is None:
+        selection_start = earliest_date
+    else:
+        selection_start = max(
+            latest_date - pd.DateOffset(days=initial_range_days),
+            earliest_date,
+        )
+    x_init = [
+        selection_start.value // 1_000_000,
+        latest_date.value // 1_000_000,
+    ]
+    interval = alt.selection_interval(encodings=['x'], value={'x': x_init})
 
     # ── Candlestick layers ──────────────────────────────────────────────── #
     base = alt.Chart(df).encode(
@@ -352,7 +564,7 @@ def plot_candlestick(
 
     # ── Moving-average overlays ─────────────────────────────────────────── #
     for w in (ma_windows or []):
-        style = _MA_STYLES.get(w, ('#aaaaaa', []))
+        style = _MA_STYLES.get(w, (CHART_NEUTRAL, []))
         col, dash = style
         ma_line = alt.Chart(df).mark_line(
             color=col,
@@ -378,7 +590,7 @@ def plot_candlestick(
         .encode(
             x=alt.X('date:T'),
             y=alt.Y('volume:Q', title='Volume', axis=alt.Axis(labelFontSize=9, format='~s')),
-            color=alt.condition(interval, alt.value('#007FFF'), alt.value('lightgrey')),
+            color=alt.condition(interval, alt.value(CHART_BLUE), alt.value(CHART_GRID)),
             tooltip=[
                 alt.Tooltip('date:T',   title='Date'),
                 alt.Tooltip('volume:Q', title='Volume', format=',.0f'),
@@ -394,24 +606,24 @@ def plot_candlestick(
     if show_rsi:
         # Overbought / oversold reference bands
         ob_band = alt.Chart(pd.DataFrame({'y1': [70], 'y2': [100]})).mark_rect(
-            color='#e74c3c', opacity=0.08
+            color=CHART_NEGATIVE, opacity=0.08
         ).encode(y='y1:Q', y2='y2:Q')
         os_band = alt.Chart(pd.DataFrame({'y1': [0], 'y2': [30]})).mark_rect(
-            color='#27ae60', opacity=0.08
+            color=CHART_POSITIVE, opacity=0.08
         ).encode(y='y1:Q', y2='y2:Q')
         ob_rule = alt.Chart(pd.DataFrame({'y': [70]})).mark_rule(
-            strokeDash=[4, 3], color='#e74c3c', strokeWidth=1, opacity=0.7
+            strokeDash=[4, 3], color=CHART_NEGATIVE, strokeWidth=1, opacity=0.7
         ).encode(y='y:Q')
         os_rule = alt.Chart(pd.DataFrame({'y': [30]})).mark_rule(
-            strokeDash=[4, 3], color='#27ae60', strokeWidth=1, opacity=0.7
+            strokeDash=[4, 3], color=CHART_POSITIVE, strokeWidth=1, opacity=0.7
         ).encode(y='y:Q')
         mid_rule = alt.Chart(pd.DataFrame({'y': [50]})).mark_rule(
-            strokeDash=[2, 4], color='#aaaaaa', strokeWidth=1, opacity=0.5
+            strokeDash=[2, 4], color=CHART_NEUTRAL, strokeWidth=1, opacity=0.5
         ).encode(y='y:Q')
 
         rsi_line = (
             alt.Chart(df)
-            .mark_line(color='#8e44ad', strokeWidth=2)
+            .mark_line(color=CHART_PURPLE, strokeWidth=2)
             .encode(
                 x=alt.X('date:T', scale=alt.Scale(domain=interval)),
                 y=alt.Y('rsi:Q', title='RSI(14)', scale=alt.Scale(domain=[0, 100])),
@@ -439,11 +651,11 @@ def plot_pe_distribution(df, pe, axis_label=None):
 
     kde = alt.Chart(df).transform_density('pe', as_=['PE', 'DENSITY'])
     pes_dist = kde.mark_area(
-        line={'color': 'darkgreen'},
+        line={'color': CHART_PRIMARY_DARK},
         color=alt.Gradient(
             gradient='linear',
-            stops=[alt.GradientStop(color='white', offset=0),
-                alt.GradientStop(color='darkgreen', offset=1)],
+            stops=[alt.GradientStop(color=CHART_SURFACE, offset=0),
+                alt.GradientStop(color=CHART_PRIMARY, offset=1)],
             x1=1,
             x2=1,
             y1=1,
@@ -462,7 +674,7 @@ def plot_pe_distribution(df, pe, axis_label=None):
 
     x_zero = kde.mark_rule().encode(
         x=alt.datum(pe),
-        color=alt.value('red'),
+        color=alt.value(CHART_NEGATIVE),
         size=alt.value(2),
         tooltip=alt.Tooltip(format='.2f', title='Current val')
     )
@@ -485,16 +697,16 @@ def plot_pe_timeseries(pe_df, axis_label=None):
 
     # Shaded overvalued / undervalued regions
     p90_rule = alt.Chart(pd.DataFrame({'y': [p90]})).mark_rule(
-        strokeDash=[4, 3], color='#e74c3c', strokeWidth=1, opacity=0.7
+        strokeDash=[4, 3], color=CHART_NEGATIVE, strokeWidth=1, opacity=0.7
     ).encode(y='y:Q')
     p10_rule = alt.Chart(pd.DataFrame({'y': [p10]})).mark_rule(
-        strokeDash=[4, 3], color='#27ae60', strokeWidth=1, opacity=0.7
+        strokeDash=[4, 3], color=CHART_POSITIVE, strokeWidth=1, opacity=0.7
     ).encode(y='y:Q')
     med_rule = alt.Chart(pd.DataFrame({'y': [median_pe]})).mark_rule(
-        color='#f39c12', strokeWidth=1.5, opacity=0.9
+        color=CHART_AMBER, strokeWidth=1.5, opacity=0.9
     ).encode(y='y:Q')
 
-    line = base.mark_line(color='#3498db', strokeWidth=2).encode(
+    line = base.mark_line(color=CHART_BLUE, strokeWidth=2).encode(
         x='date:T',
         y=alt.Y('pe', title=axis_label).scale(zero=False),
         tooltip=(
@@ -541,7 +753,7 @@ def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
     base = alt.Chart(df)
 
     # Confidence band (p10–p90 multiple applied to current metric)
-    band = base.mark_area(opacity=0.15, color='#f39c12').encode(
+    band = base.mark_area(opacity=0.15, color=CHART_AMBER).encode(
         x=alt.X('date:T', title=''),
         y=alt.Y('fair_value_p10:Q', title='Price', scale=alt.Scale(zero=False)),
         y2=alt.Y2('fair_value_p90:Q'),
@@ -553,7 +765,7 @@ def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
     )
 
     # Median fair-value line
-    fair_line = base.mark_line(strokeDash=[4, 3], color='#f39c12', strokeWidth=2).encode(
+    fair_line = base.mark_line(strokeDash=[4, 3], color=CHART_AMBER, strokeWidth=2).encode(
         x='date:T',
         y=alt.Y('fair_value_median:Q', scale=alt.Scale(zero=False)),
         tooltip=[
@@ -563,7 +775,7 @@ def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
     )
 
     # Actual price line
-    price_line = base.mark_line(color='#2980b9', strokeWidth=2.5).encode(
+    price_line = base.mark_line(color=CHART_BLUE, strokeWidth=2.5).encode(
         x='date:T',
         y=alt.Y('close:Q', scale=alt.Scale(zero=False)),
         tooltip=[
@@ -599,7 +811,7 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
     ).encode(
         alt.X('year:N'),
         alt.Y('adjDividend'),
-        color=alt.condition(alt.datum['inc'] > 0, alt.value('#ff796c'), alt.value('#008631')),
+        color=alt.condition(alt.datum['inc'] > 0, alt.value(CHART_NEGATIVE), alt.value(CHART_POSITIVE)),
         tooltip=['year', alt.Tooltip('adjDividend', format='.2f')]
     ).properties(
         height=450,
@@ -611,9 +823,9 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
         ext_values = [last_val+(i+1)*inc_val for i in range(n_future_years)]
 
         if inc_val > 0:
-            ext_color = alt.value('#008631')
+            ext_color = alt.value(CHART_POSITIVE)
         else:
-            ext_color = alt.value('#ff796c')
+            ext_color = alt.value(CHART_NEGATIVE)
         ext_df = pd.DataFrame({'year': ext_years, 'adjDividend': ext_values})
         div_bar2 = alt.Chart(ext_df).mark_bar(
             cornerRadiusTopLeft=5, 
@@ -721,19 +933,35 @@ def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
         column = alt.vconcat()
         for j in range(3):
             idx = (j*4)+i+1
-            c = lesley.month_plot(div_df['date'], div_df['yield'], labels=labels, title=calendar.month_name[idx], 
-                                        cmap='Greens', domain=domain, show_date=True, month=idx)
+            c = lesley.month_plot(
+                div_df['date'],
+                div_df['yield'],
+                labels=labels,
+                title=calendar.month_name[idx],
+                cmap='Greens',
+                domain=domain,
+                show_date=True,
+                month=idx,
+            )
             column = column & c
         full_chart = full_chart | column
-    return full_chart
+    return style_calendar_chart(full_chart)
 
 
 def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade', group_secs=True):
 
     cmap_options = {
-        'red_green': ['#620000', '#a30000', '#d32f2f', '#434651', '#4caf50', '#388e3c', '#1b5e20'],
-        'green_shade' : ["#79ab78", "#08701b"],
-        'red_shade': ['#000000', '#9f6e73', '#A30000']
+        'red_green': list(MARKET_HEATMAP_RANGE),
+        'green_shade': ['#86B59E', CHART_PRIMARY_DARK],
+        'dividend_green': [
+            '#3F7D55',
+            '#34764C',
+            '#286F44',
+            '#1D673D',
+            '#125D36',
+            '#064E3B',
+        ],
+        'red_shade': ['#475569', '#B36B73', '#991B1B'],
     }
 
     color = cmap_options[colormap]
@@ -744,11 +972,11 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 "itemStyle": {
                     "borderWidth": 1,
                     "gapWidth": 1,
-                    "borderColor": "#eee"
+                    "borderColor": CHART_SURFACE
                 },
                 "upperLabel": {
                     "show": True,
-                    "color": "#111",
+                    "color": CHART_TEXT,
                     "fontWeight": "bold",
                     "fontSize": 14
                 },
@@ -759,11 +987,11 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 "itemStyle": {
                     "borderWidth": 1,
                     "gapWidth": 1,
-                    "borderColor": "#ddd",
+                    "borderColor": CHART_GRID,
                 },
                 "upperLabel": {
                     "show": True,
-                    "color": "#333",
+                    "color": CHART_TEXT,
                     "fontWeight": "600",
                     "fontSize": 12
                 },
@@ -774,11 +1002,11 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 "itemStyle": {
                     "gapWidth": 1,
                     "borderWidth": 1,
-                    "borderColor": "#ccc",
+                    "borderColor": CHART_GRID,
                 },
                 "upperLabel": {
                     "show": True,
-                    "color": "#333",
+                    "color": CHART_TEXT,
                     "fontWeight": "600",
                     "fontSize": 10
                 },
@@ -788,7 +1016,7 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 "itemStyle": {
                     "borderWidth": 1,
                     "gapWidth": 1,
-                    "borderColor": "#ccc",
+                    "borderColor": CHART_GRID,
                 },
                 "label": {
                     "show": True,
@@ -808,11 +1036,11 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 "itemStyle": {
                     "borderWidth": 1,
                     "gapWidth": 1,
-                    "borderColor": "#eee"
+                    "borderColor": CHART_SURFACE
                 },
                 "upperLabel": {
                     "show": True,
-                    "color": "#111",
+                    "color": CHART_TEXT,
                     "fontWeight": "bold",
                     "fontSize": 14
                 },
@@ -823,7 +1051,7 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
                 "itemStyle": {
                     "borderWidth": 1,
                     "gapWidth": 1,
-                    "borderColor": "#ccc",
+                    "borderColor": CHART_GRID,
                 },
                 "label": {
                     "show": True,
@@ -858,12 +1086,12 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
         "upperLabel": {
             "show": True,
             "formatter": "{b}",
-            "color": "#111",
+            "color": CHART_TEXT,
             "fontSize": 14,
             "fontWeight": "bold"
         },
         "itemStyle": {
-            "borderColor": "#fff",
+            "borderColor": CHART_SURFACE,
             "borderWidth": 1,
             "gapWidth": 1
         },
@@ -873,7 +1101,6 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
     }
     ]
 
-    import copy
     gradient_series = copy.deepcopy(base_series)
     gradient_series[0]['visualMin'] = 0
     gradient_series[0]['visualMax'] = 100
@@ -919,7 +1146,7 @@ def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', s
         "series": series,
     }
 
-    return option
+    return style_echarts(option)
 
 
 def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)'):
@@ -944,9 +1171,9 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
             'radius': '70%',
             'center': ['50%', '55%'],
             'axisName': {
-                'color': '#333',
+                'color': CHART_TEXT,
                 'fontSize': 14,
-                'fontWeight': 'bold'
+                'fontWeight': 600,
             }
         },
         'series': [
@@ -971,14 +1198,14 @@ def plot_radar_chart(categories, data, title='Rating', color='rgba(0, 150, 0, 1)
             }
         ]
     }
-    return option
+    return style_echarts(option)
 
 
 def plot_card_distribution(
     df,
     column,
     current_val=None,
-    color='green',
+    color=CHART_PRIMARY,
     height=180,
     show_axis=False,
     comparison_vals=None,
@@ -997,7 +1224,7 @@ def plot_card_distribution(
 
     if valid_df.empty:
         return alt.Chart(pd.DataFrame({'message': ['No valid data']})).mark_text(
-            color='#6b7280', fontSize=13
+            color=CHART_MUTED_TEXT, fontSize=13
         ).encode(text='message:N').properties(height=height)
 
     q05 = float(valid_df[column].quantile(0.05))
@@ -1045,7 +1272,7 @@ def plot_card_distribution(
         )
     else:
         stops = [
-            alt.GradientStop(color='white', offset=0),
+            alt.GradientStop(color=CHART_SURFACE, offset=0),
             alt.GradientStop(color=fill_color_hex, offset=1)
         ]
         kde = alt.Chart(plot_df).transform_density(
@@ -1078,27 +1305,27 @@ def plot_card_distribution(
         mean_df = pd.DataFrame({column: [mean_val], 'label': ['Mean']})
         
         median_rule = alt.Chart(median_df).mark_rule(
-            color='#f39c12', strokeWidth=2, strokeDash=[4, 4]
+            color=CHART_AMBER, strokeWidth=2, strokeDash=[4, 4]
         ).encode(
             x=column,
             tooltip=[alt.Tooltip(column, format='.2f', title='Median')]
         )
         mean_rule = alt.Chart(mean_df).mark_rule(
-            color='#e74c3c', strokeWidth=2, strokeDash=[4, 4]
+            color=CHART_NEGATIVE, strokeWidth=2, strokeDash=[4, 4]
         ).encode(
             x=column,
             tooltip=[alt.Tooltip(column, format='.2f', title='Mean')]
         )
         
         median_text = alt.Chart(median_df).mark_text(
-            align='left', baseline='bottom', dy=-5, dx=2, color='#f39c12', fontSize=10, fontWeight='bold'
+            align='left', baseline='bottom', dy=-5, dx=2, color=CHART_AMBER, fontSize=10, fontWeight='bold'
         ).encode(
             x=column,
             y=alt.value(10),
             text='label'
         )
         mean_text = alt.Chart(mean_df).mark_text(
-            align='right', baseline='bottom', dy=-5, dx=-2, color='#e74c3c', fontSize=10, fontWeight='bold'
+            align='right', baseline='bottom', dy=-5, dx=-2, color=CHART_NEGATIVE, fontSize=10, fontWeight='bold'
         ).encode(
             x=column,
             y=alt.value(10),
@@ -1201,7 +1428,7 @@ def plot_card_distribution(
     return alt.layer(*layers).resolve_scale(y='independent').properties(height=height)
 
 
-def plot_card_histogram(df, column, current_val, color='green', height=180):
+def plot_card_histogram(df, column, current_val, color=CHART_PRIMARY, height=180):
     
     if color.startswith('#'):
         bar_color = color
@@ -1290,12 +1517,12 @@ def plot_scatter(
         
         # Add vertical line for x median
         vline = alt.Chart(pd.DataFrame({x_col: [x_median]})).mark_rule(
-            color='gray', strokeDash=[5, 5], opacity=0.7, strokeWidth=1.5
+            color=CHART_NEUTRAL, strokeDash=[5, 5], opacity=0.7, strokeWidth=1.5
         ).encode(x=f"{x_col}:Q")
         
         # Add horizontal line for y median
         hline = alt.Chart(pd.DataFrame({y_col: [y_median]})).mark_rule(
-            color='gray', strokeDash=[5, 5], opacity=0.7, strokeWidth=1.5
+            color=CHART_NEUTRAL, strokeDash=[5, 5], opacity=0.7, strokeWidth=1.5
         ).encode(y=f"{y_col}:Q")
         
         layers.extend([vline, hline])
@@ -1341,23 +1568,23 @@ def plot_ddm_gauge(diff: float) -> dict:
 
     if diff > 1.5:
         zone_label = "Very Undervalued"
-        zone_color = "#27ae60"
+        zone_color = CHART_POSITIVE
     elif diff > 1.05:
         zone_label = "Undervalued"
-        zone_color = "#2ecc71"
+        zone_color = '#16A34A'
     elif diff >= 0.95:
         zone_label = "Fair Price"
-        zone_color = "#f39c12"
+        zone_color = CHART_AMBER
     elif diff >= 0.5:
         zone_label = "Overvalued"
-        zone_color = "#e74c3c"
+        zone_color = CHART_NEGATIVE
     else:
         zone_label = "Very Overvalued"
-        zone_color = "#922b21"
+        zone_color = '#991B1B'
 
     gauge_val = _ratio_to_gauge(diff)
 
-    return {
+    return style_echarts({
         "backgroundColor": "transparent",
         "series": [
             {
@@ -1373,11 +1600,11 @@ def plot_ddm_gauge(diff: float) -> dict:
                     "lineStyle": {
                         "width": 22,
                         "color": [
-                            [0.20, "#922b21"],  # Very Overvalued
-                            [0.40, "#e74c3c"],  # Overvalued
-                            [0.60, "#f39c12"],  # Fair Price
-                            [0.80, "#2ecc71"],  # Undervalued
-                            [1.00, "#27ae60"],  # Very Undervalued
+                            [0.20, '#991B1B'],
+                            [0.40, CHART_NEGATIVE],
+                            [0.60, CHART_AMBER],
+                            [0.80, '#16A34A'],
+                            [1.00, CHART_POSITIVE],
                         ],
                     }
                 },
@@ -1402,4 +1629,4 @@ def plot_ddm_gauge(diff: float) -> dict:
                 "data": [{"value": gauge_val, "name": zone_label}],
             }
         ],
-    }
+    })
