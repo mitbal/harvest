@@ -406,6 +406,83 @@ def preprocess_div(div_df):
     return full_div_df
 
 
+def calc_fiscal_year_dividend_sum(div_df, fiscal_year, as_of=None, require_final=True):
+    """Return ordinary dividends assigned to one fiscal year."""
+    required = {'date', 'adjDividend', 'fiscal_year'}
+    if div_df is None or div_df.empty or not required.issubset(div_df.columns):
+        return 0.0
+
+    dates = pd.to_datetime(div_df['date'], errors='coerce', utc=True).dt.tz_localize(None).dt.normalize()
+    values = pd.to_numeric(div_df['adjDividend'], errors='coerce').fillna(0)
+    fiscal_years = pd.to_numeric(div_df['fiscal_year'], errors='coerce')
+    end_date = pd.Timestamp.now() if as_of is None else pd.Timestamp(as_of)
+    if end_date.tzinfo is not None:
+        end_date = end_date.tz_convert('UTC').tz_localize(None)
+    eligible = dates.le(end_date.normalize()) & fiscal_years.eq(fiscal_year) & values.gt(0)
+
+    dividend_types = div_df.get('dividend_type', pd.Series('', index=div_df.index)).astype(str).str.strip().str.lower()
+    if require_final and not (eligible & dividend_types.eq('final')).any():
+        return 0.0
+
+    eligible &= ~dividend_types.eq('special')
+    return float(values[eligible].sum())
+
+
+def calc_latest_finalized_dividend_sum(div_df, as_of=None, grace_month=6):
+    """Return the latest finalized fiscal-year dividend within reporting grace."""
+    required = {'date', 'adjDividend', 'fiscal_year', 'dividend_type'}
+    if div_df is None or div_df.empty or not required.issubset(div_df.columns):
+        return 0.0
+
+    end_date = pd.Timestamp.now() if as_of is None else pd.Timestamp(as_of)
+    if end_date.tzinfo is not None:
+        end_date = end_date.tz_convert('UTC').tz_localize(None)
+    end_date = end_date.normalize()
+    dates = pd.to_datetime(div_df['date'], errors='coerce', utc=True).dt.tz_localize(None).dt.normalize()
+    fiscal_years = pd.to_numeric(div_df['fiscal_year'], errors='coerce')
+    dividend_types = div_df['dividend_type'].astype(str).str.strip().str.lower()
+    finalized_years = fiscal_years[dates.le(end_date) & dividend_types.eq('final')].dropna()
+    if finalized_years.empty:
+        return 0.0
+
+    latest_fiscal_year = int(finalized_years.max())
+    minimum_fiscal_year = end_date.year - (2 if end_date.month <= grace_month else 1)
+    if latest_fiscal_year < minimum_fiscal_year:
+        return 0.0
+
+    return calc_fiscal_year_dividend_sum(
+        div_df,
+        fiscal_year=latest_fiscal_year,
+        as_of=end_date,
+    )
+
+
+def is_dividend_schedule_current(div_df, as_of=None, grace_days=60):
+    """Return whether the latest payment is still within its inferred cadence."""
+    if div_df is None or div_df.empty or not {'date', 'adjDividend'}.issubset(div_df.columns):
+        return False
+
+    end_date = pd.Timestamp.now() if as_of is None else pd.Timestamp(as_of)
+    if end_date.tzinfo is not None:
+        end_date = end_date.tz_convert('UTC').tz_localize(None)
+    end_date = end_date.normalize()
+    dates = pd.to_datetime(div_df['date'], errors='coerce', utc=True).dt.tz_localize(None).dt.normalize()
+    values = pd.to_numeric(div_df['adjDividend'], errors='coerce').fillna(0)
+    eligible = dates.le(end_date) & values.gt(0)
+    if 'dividend_type' in div_df.columns:
+        dividend_types = div_df['dividend_type'].astype(str).str.strip().str.lower()
+        eligible &= ~dividend_types.eq('special')
+
+    payment_dates = dates[eligible].dropna().drop_duplicates().sort_values()
+    if payment_dates.empty:
+        return False
+
+    intervals = payment_dates.diff().dt.days.dropna().tail(6)
+    expected_days = float(intervals.median()) if not intervals.empty else 365.0
+    expected_days = min(max(expected_days, 30.0), 365.0)
+    return bool((end_date - payment_dates.iloc[-1]).days <= expected_days + grace_days)
+
+
 def calc_div_stats(div_df_input):
 
     stats = {}
