@@ -14,10 +14,12 @@ from supabase import create_client
 
 import harvest.plot as hp
 import harvest.data as hd
+from harvest import chart_style as cs
 from harvest.utils import setup_logging
 
 
 st.set_page_config(page_title='Market Heatmap - Panen Dividen')
+hp.enable_chart_theme()
 st.title('Market Heatmap')
 st.caption('Explore daily market performance by company. Tile size and color follow the selected measures.')
 
@@ -960,7 +962,7 @@ else:
         color_map = 'red_shade'
         color_threshold = [-1000, -100, -10, -1, 0, 1, 2, 3, 5]
     elif color_var_label == 'Dividend Yield':
-        color_map = 'green_shade'
+        color_map = 'dividend_green'
         color_threshold = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     else:
         color_map = 'green_shade'
@@ -1067,11 +1069,11 @@ else:
             hist_df = pd.DataFrame({
                 'return': bin_centers,
                 'count':  counts,
-                'color':  ['#26a65b' if c >= 0 else '#e53935' for c in bin_centers],
+                'color':  [cs.CHART_POSITIVE if c >= 0 else cs.CHART_NEGATIVE for c in bin_centers],
             })
 
             zero_line = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
-                color='white', strokeWidth=1.5, strokeDash=[4, 3], opacity=0.7
+                color=cs.CHART_NEUTRAL, strokeWidth=1.5, strokeDash=[4, 3], opacity=0.8
             ).encode(x=alt.X('x:Q', scale=alt.Scale(domain=[p2, p98])))
 
             hist = (
@@ -1090,7 +1092,7 @@ else:
                 .properties(height=260)
             )
 
-            st.altair_chart((hist + zero_line), width='stretch')
+            st.altair_chart((hist + zero_line), width='stretch', theme=None)
             if excluded_count:
                 st.caption(
                     f'{excluded_count} extreme observation(s) outside the 2nd–98th '
@@ -1280,7 +1282,7 @@ else:
                 )
 
                 baseline_rule = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                    strokeDash=[4, 3], color='#888888', strokeWidth=1, opacity=0.6
+                    strokeDash=[4, 3], color=cs.CHART_NEUTRAL, strokeWidth=1, opacity=0.7
                 ).encode(y='y:Q')
 
                 perf_chart = (
@@ -1288,7 +1290,7 @@ else:
                     .properties(height=360)
                     .resolve_scale(color='shared')
                 )
-                st.altair_chart(perf_chart, width='stretch')
+                st.altair_chart(perf_chart, width='stretch', theme=None)
 
     # ── Index metric cards (1D return + period return) ───────────────────────#
 
@@ -1456,7 +1458,7 @@ else:
                 ).add_params(fx_sel)
 
                 fx_baseline = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                    strokeDash=[4, 3], color='#888888', strokeWidth=1, opacity=0.6
+                    strokeDash=[4, 3], color=cs.CHART_NEUTRAL, strokeWidth=1, opacity=0.7
                 ).encode(y='y:Q')
 
                 fx_chart = (
@@ -1464,7 +1466,7 @@ else:
                     .properties(height=360)
                     .resolve_scale(color='shared')
                 )
-                st.altair_chart(fx_chart, width='stretch')
+                st.altair_chart(fx_chart, width='stretch', theme=None)
 
     # ── FX metric cards (1D return + period return) ──────────────────────── #
 
