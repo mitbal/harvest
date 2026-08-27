@@ -9,6 +9,7 @@ import numpy as np
 from st_supabase_connection import SupabaseConnection
 
 import harvest.data as hd
+import harvest.plot as hp
 
 STRATEGY_ENGINE_VERSION = 9
 DEFAULT_PROFIT_TARGET = 5.0
@@ -67,6 +68,7 @@ def _load_vectorbt():
     return vectorbt
 
 st.set_page_config(page_title='Short-Term Swing Trading - Panen Dividen')
+hp.enable_chart_theme()
 st.title('Short-Term Swing Trading Strategy Lab')
 
 @st.cache_data(max_entries=64)
@@ -1691,7 +1693,11 @@ if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
                 bear_n = int((entries & (regime_aligned == 'bear')).sum())
                 bull_n = int((entries & (regime_aligned == 'bull')).sum())
                 st.caption(f"Bear entries: {bear_n} | Bull entries: {bull_n} | Total trades: {len(pf.trades)}")
-                st.plotly_chart(pf.plot())
+                st.plotly_chart(
+                    hp.style_plotly_chart(pf.plot()),
+                    width='stretch',
+                    theme=None,
+                )
                 with st.expander('View Trade Log'):
                     st.dataframe(pf.trades.records_readable)
 

@@ -8,6 +8,11 @@ import pandas as pd
 import streamlit as st
 
 import harvest.data as hd
+import harvest.plot as hp
+from harvest import chart_style as cs
+
+
+hp.enable_chart_theme()
 
 
 CACHE_TTL = 6 * 60 * 60
@@ -465,7 +470,7 @@ def _ratio_chart(history: pd.DataFrame, label: str, years: int):
     chart_data["upper_bound"] = upper_bound
     interval = (
         alt.Chart(chart_data)
-        .mark_area(color="#b45309", opacity=0.12)
+        .mark_area(color=cs.CHART_AMBER, opacity=0.12)
         .encode(
             x=alt.X("date:T", title=None),
             y=alt.Y("lower_bound:Q", title=label, scale=alt.Scale(zero=False)),
@@ -474,7 +479,7 @@ def _ratio_chart(history: pd.DataFrame, label: str, years: int):
     )
     line = (
         alt.Chart(chart_data)
-        .mark_line(color="#0f766e", strokeWidth=2)
+        .mark_line(color=cs.CHART_PRIMARY, strokeWidth=2.25)
         .encode(
             x=alt.X("date:T", title=None),
             y=alt.Y("ratio:Q", title=label, scale=alt.Scale(zero=False)),
@@ -483,7 +488,7 @@ def _ratio_chart(history: pd.DataFrame, label: str, years: int):
     )
     mean_rule = (
         alt.Chart(pd.DataFrame({"mean": [mean]}))
-        .mark_rule(color="#b45309", strokeDash=[6, 5])
+        .mark_rule(color=cs.CHART_AMBER, strokeDash=[6, 5])
         .encode(y="mean:Q")
     )
     return (interval + line + mean_rule).properties(height=290)
@@ -801,10 +806,10 @@ valuation_tab, growth_tab, checklist_tab = st.tabs(
 with valuation_tab:
     chart_cols = st.columns(2)
     chart_cols[0].altair_chart(
-        _ratio_chart(detail["pe_history"], "P/E", history_years), width="stretch"
+        _ratio_chart(detail["pe_history"], "P/E", history_years), width="stretch", theme=None
     )
     chart_cols[1].altair_chart(
-        _ratio_chart(detail["ps_history"], "P/S", history_years), width="stretch"
+        _ratio_chart(detail["ps_history"], "P/S", history_years), width="stretch", theme=None
     )
     st.caption(
         "The shaded band covers the historical 5th-to-95th percentile range. Dashed lines show the "
@@ -826,14 +831,17 @@ with growth_tab:
             y=alt.Y("Index:Q", title="TTM index (first period = 100)", scale=alt.Scale(zero=False)),
             color=alt.Color(
                 "Series:N",
-                scale=alt.Scale(domain=["Revenue TTM", "Earnings TTM"], range=["#0f766e", "#b45309"]),
+                scale=alt.Scale(
+                    domain=["Revenue TTM", "Earnings TTM"],
+                    range=[cs.CHART_PRIMARY, cs.CHART_AMBER],
+                ),
                 legend=alt.Legend(title=None, orient="top"),
             ),
             tooltip=["date:T", "Series:N", alt.Tooltip("Index:Q", format=".1f")],
         )
         .properties(height=330)
     )
-    st.altair_chart(growth_chart, width="stretch")
+    st.altair_chart(growth_chart, width="stretch", theme=None)
     growth_metrics = st.columns(4)
     growth_metrics[0].metric("Revenue growth TTM", f"{detail_row['Revenue Growth TTM']:.1f}%")
     growth_metrics[1].metric("Earnings growth TTM", f"{detail_row['Earnings Growth TTM']:.1f}%")
