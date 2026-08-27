@@ -14,12 +14,15 @@ import altair as alt
 import streamlit as st
 
 import harvest.data as hd
+import harvest.plot as hp
+from harvest import chart_style as cs
 from harvest.utils import setup_logging
 
 
 current_year = datetime.today().year
 
 st.set_page_config(page_title='Best Timing - Panen Dividen')
+hp.enable_chart_theme()
 
 st.title('Best Timing')
 sl = st.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
@@ -797,12 +800,12 @@ else:
 
                     _base = alt.Chart(_agg_df)
 
-                    _band = _base.mark_area(opacity=0.18, color='#2ecc71').encode(
+                    _band = _base.mark_area(opacity=0.18, color=cs.CHART_PRIMARY).encode(
                         x=alt.X('month_name:O', sort=MONTH_ORDER, title='Month'),
                         y=alt.Y('q25:Q', title='Relative Price (%)'),
                         y2=alt.Y2('q75:Q'),
                     )
-                    _line = _base.mark_line(point=True, color='#27ae60', strokeWidth=2.5).encode(
+                    _line = _base.mark_line(point=True, color=cs.CHART_PRIMARY, strokeWidth=2.5).encode(
                         x=alt.X('month_name:O', sort=MONTH_ORDER),
                         y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
                         tooltip=[
@@ -814,18 +817,20 @@ else:
                         ]
                     )
                     _ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                        color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+                        color=cs.CHART_NEUTRAL, strokeDash=[6, 4], strokeWidth=1
                     ).encode(y='y:Q')
 
                     _best_data = _agg_df[_agg_df['month_name'] == _best_month_name]
-                    _best_bar = alt.Chart(_best_data).mark_bar(color='#1abc9c', opacity=0.4, width=40).encode(
+                    _best_bar = alt.Chart(_best_data).mark_bar(
+                        color=cs.CHART_PRIMARY_DARK, opacity=0.28, width=40
+                    ).encode(
                         x=alt.X('month_name:O', sort=MONTH_ORDER),
                         y=alt.Y('q25:Q'),
                         y2=alt.Y2('q75:Q'),
                     )
 
                     _agg_chart = (_band + _best_bar + _line + _ref).properties(height=320)
-                    st.altair_chart(_agg_chart, width='stretch')
+                    st.altair_chart(_agg_chart, width='stretch', theme=None)
 
                     _best_val = _best_row['median']
                     st.success(
@@ -849,13 +854,13 @@ else:
                             color=alt.Gradient(
                                 gradient='linear',
                                 stops=[
-                                    alt.GradientStop(color='#1a5276', offset=0),
-                                    alt.GradientStop(color='#3498db', offset=1),
+                                    alt.GradientStop(color=cs.CHART_SURFACE, offset=0),
+                                    alt.GradientStop(color=cs.CHART_BLUE, offset=1),
                                 ],
                                 x1=1, x2=1, y1=1, y2=0
                             ),
-                            line={'color': '#2e86c1'},
-                            opacity=0.75,
+                            line={'color': cs.CHART_BLUE},
+                            opacity=0.55,
                         ).encode(
                             x=alt.X('x:Q', title='Calendar Days Before Ex-Date',
                                     scale=alt.Scale(domain=[0, 180])),
@@ -866,17 +871,17 @@ else:
 
                         _median_rule = alt.Chart(
                             pd.DataFrame({'x': [_median_days], 'label': [f'Median: {_median_days}d']})
-                        ).mark_rule(color='#f39c12', strokeWidth=2, strokeDash=[5, 3]).encode(
+                        ).mark_rule(color=cs.CHART_AMBER, strokeWidth=2, strokeDash=[5, 3]).encode(
                             x='x:Q'
                         )
                         _median_text = alt.Chart(
                             pd.DataFrame({'x': [_median_days + 1.5], 'y': [0], 'label': [f'Median: {_median_days}d']})
                         ).mark_text(
-                            align='left', color='#f39c12', fontSize=11, fontWeight='bold', dy=-8
+                            align='left', color=cs.CHART_AMBER, fontSize=11, fontWeight='bold', dy=-8
                         ).encode(x='x:Q', y=alt.Y('y:Q', impute=alt.ImputeParams(value=0)), text='label:N')
 
                         _kde_full = (_kde_chart + _median_rule + _median_text).properties(height=320)
-                        st.altair_chart(_kde_full, width='stretch')
+                        st.altair_chart(_kde_full, width='stretch', theme=None)
 
                         _n_events = len(_best_days_df)
                         _p25 = int(_best_days_df['days_before'].quantile(0.25))
@@ -973,13 +978,13 @@ else:
                             color=alt.Gradient(
                                 gradient='linear',
                                 stops=[
-                                    alt.GradientStop(color='#4a235a', offset=0),
-                                    alt.GradientStop(color='#c39bd3', offset=1),
+                                    alt.GradientStop(color=cs.CHART_SURFACE, offset=0),
+                                    alt.GradientStop(color=cs.CHART_PURPLE, offset=1),
                                 ],
                                 x1=1, x2=1, y1=1, y2=0
                             ),
-                            line={'color': '#6c3483'},
-                            opacity=0.75,
+                            line={'color': cs.CHART_PURPLE},
+                            opacity=0.5,
                         ).encode(
                             x=alt.X('x:Q', title='Calendar Days After Ex-Date',
                                     scale=alt.Scale(domain=[0, _rec_domain_max])),
@@ -992,10 +997,10 @@ else:
                             _rec_median_rule = alt.Chart(
                                 pd.DataFrame({'x': [_median_rec]})
                             ).mark_rule(
-                                color='#f39c12', strokeWidth=2, strokeDash=[5, 3]
+                                color=cs.CHART_AMBER, strokeWidth=2, strokeDash=[5, 3]
                             ).encode(x='x:Q')
                             _rec_layers += _rec_median_rule
-                        st.altair_chart(_rec_layers.properties(height=320), width='stretch')
+                        st.altair_chart(_rec_layers.properties(height=320), width='stretch', theme=None)
 
                     if _median_rec is None:
                         st.info(
@@ -1108,9 +1113,9 @@ else:
                             title='Status',
                             scale=alt.Scale(
                                 domain=['Recovered', 'Dividend Trap'],
-                                range=['#2e86c1', '#e74c3c'],
+                                range=[cs.CHART_BLUE, cs.CHART_NEGATIVE],
                             ),
-                        ) if _show_scatter_traps else alt.value('#2e86c1')
+                        ) if _show_scatter_traps else alt.value(cs.CHART_BLUE)
                         _point_shape = alt.Shape(
                             'recovery_status:N',
                             title='Status',
@@ -1169,7 +1174,7 @@ else:
                                 ],
                             })
                             _regression = alt.Chart(_regression_df).mark_line(
-                                color='#f39c12', strokeWidth=2.5, strokeDash=[4, 3]
+                                color=cs.CHART_AMBER, strokeWidth=2.5, strokeDash=[4, 3]
                             ).encode(x=_regression_x, y=_regression_y)
                             _scatter_layers += _regression
                             st.success(
@@ -1197,7 +1202,7 @@ else:
                             name='scatter_navigation', bind='scales'
                         )
                         _scatter_layers = _scatter_layers.add_params(_scatter_navigation)
-                        st.altair_chart(_scatter_layers, width='stretch')
+                        st.altair_chart(_scatter_layers, width='stretch', theme=None)
                         _sample_note = ' The chart displays a 5,000-point sample.' if len(_scatter_plot_source) > 5000 else ''
                         if _show_scatter_traps:
                             _scatter_traps = int((~_scatter_plot_source['recovered']).sum())
