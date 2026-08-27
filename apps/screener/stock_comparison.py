@@ -19,6 +19,7 @@ from harvest.utils import setup_logging
 mimetypes.add_type('image/svg+xml', '.svg')
 
 st.set_page_config(page_title='Stock Comparison - Panen Dividen')
+hp.enable_chart_theme()
 st.title('Stock Comparison')
 st.caption(
     'Compare 2-5 stocks across income, valuation, quality, growth, returns, and risk. '
@@ -44,8 +45,8 @@ class MetricSpec(NamedTuple):
 
 
 METRIC_OPTIONS = {
-    'Dividend Yield (%)': MetricSpec('yield', 'Dividend', '{:.2f}%', '%', 'Latest annual dividend yield.', 'higher_better', 'nonnegative'),
-    'Last Dividend': MetricSpec('lastDiv', 'Dividend', '{:,.2f}', 'currency/share', 'Latest annual dividend per share. Compare dividend yield instead when share prices differ.', 'neutral', 'nonnegative'),
+    'Dividend Yield (%)': MetricSpec('yield', 'Dividend', '{:.2f}%', '%', 'Latest finalized fiscal-year ordinary dividend yield.', 'higher_better', 'nonnegative'),
+    'Last Dividend': MetricSpec('lastDiv', 'Dividend', '{:,.2f}', 'currency/share', 'Ordinary dividends per share for the latest finalized fiscal year. Compare dividend yield instead when share prices differ.', 'neutral', 'nonnegative'),
     'Div Growth (Annual)': MetricSpec('avgFlatAnnualDivIncrease', 'Dividend', '{:,.2f}', 'currency/year', 'Average annual dividend increase.', 'higher_better'),
     'Years Paying Dividend': MetricSpec('numDividendYear', 'Dividend', '{:.0f}', 'years', 'Number of years with a dividend payment.', 'higher_better', 'nonnegative'),
     'Years Raised Dividend': MetricSpec('positiveYear', 'Dividend', '{:.0f}', 'years', 'Number of years the dividend increased.', 'higher_better', 'nonnegative'),
@@ -544,7 +545,7 @@ elif active_view == 'dist':
                 color=alt.Color('Stock:N', scale=color_scale, legend=None),
                 tooltip=['Stock:N', alt.Tooltip('Value:Q', title=selected_label, format='.2f')],
             ).properties(height=380)
-        st.altair_chart(chart, width='stretch')
+        st.altair_chart(chart, width='stretch', theme=None)
 
         summary = []
         for stock in selected_stocks:
@@ -686,7 +687,7 @@ else:
                 layers.append(alt.Chart(pd.DataFrame(quadrant_rows)).mark_text(
                     color='#64748B', fontSize=11, opacity=.8
                 ).encode(x=f'{x_spec.source}:Q', y=f'{y_spec.source}:Q', text='quadrant:N'))
-            st.altair_chart(alt.layer(*layers).properties(height=520).interactive(), width='stretch')
+            st.altair_chart(alt.layer(*layers).properties(height=520).interactive(), width='stretch', theme=None)
 
             summary = []
             for stock in selected_stocks:
