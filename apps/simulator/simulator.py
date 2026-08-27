@@ -6,11 +6,14 @@ import altair as alt
 import streamlit as st
 
 import harvest.data as hd
+import harvest.plot as hp
 import harvest.simulator as hs
+from harvest import chart_style as cs
 from harvest.utils import setup_logging
 
 
 st.set_page_config(page_title='Panen Dividen | Compounding Simulator')
+hp.enable_chart_theme()
 st.title('Compounding Simulator')
 
 # Custom CSS for modern look
@@ -157,9 +160,21 @@ with st.container(border=True):
                  alt.Tooltip('returns:Q', title='Returns', format=',.0f')]
     )
 
-    return_chart = base_chart.mark_line(point=alt.OverlayMarkDef(size=60, filled=True), size=3, color='#FA8072').encode(
+    return_chart = base_chart.mark_line(
+        point=alt.OverlayMarkDef(size=60, filled=True),
+        size=2.5,
+        color=cs.CHART_AMBER,
+    ).encode(
         x=alt.X('year:O', title='Year'),
-        y=alt.Y('returns:Q', title='Returns (Passive Income)'),
+        y=alt.Y(
+            'returns:Q',
+            title='Returns (Passive Income)',
+            axis=alt.Axis(titleColor=cs.CHART_AMBER),
+        ),
+        tooltip=[
+            alt.Tooltip('year:O', title='Year'),
+            alt.Tooltip('returns:Q', title='Passive Income', format=',.0f'),
+        ],
     )
 
     compound_chart = alt.layer(investment_chart, return_chart)\
@@ -167,7 +182,7 @@ with st.container(border=True):
         .properties(title='Single Instrument Compounding Projection',
                     height=450)
 
-    cols[1].altair_chart(compound_chart, width="stretch")
+    cols[1].altair_chart(compound_chart, width="stretch", theme=None)
     
     st.download_button(
         label="Download Projection Data (CSV)",
@@ -244,9 +259,12 @@ with st.container(border=True):
     # Combine for visual comparison in the main chart
     plot_df = pd.concat([without_drip, return_df])
 
-    bar_color_scale = alt.Scale(domain=['No DRIP', 'With DRIP'], range=['#87CEFA', '#4682B4'])
+    bar_color_scale = alt.Scale(
+        domain=['No DRIP', 'With DRIP'],
+        range=[cs.CHART_NEUTRAL, cs.CHART_PRIMARY],
+    )
     
-    investment_chart = alt.Chart(plot_df).mark_bar(opacity=0.8, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+    investment_chart = alt.Chart(plot_df).mark_bar(opacity=0.86, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('investment:Q', title='Investment Value'),
         xOffset=alt.XOffset('type:N', sort=['No DRIP', 'With DRIP']),
@@ -254,18 +272,27 @@ with st.container(border=True):
         tooltip=[alt.Tooltip('year:O'), alt.Tooltip('type:N'), alt.Tooltip('investment:Q', format=',.0f')]
     )
 
-    return_chart = alt.Chart(plot_df).mark_line(point=True).encode(
+    return_chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=2.25).encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('returns:Q', title='Dividends'),
-        color=alt.Color('type:N', scale=alt.Scale(range=['#FFD700', '#FF4500']), title='Dividend strategy')
+        color=alt.Color(
+            'type:N',
+            scale=bar_color_scale,
+            title='Strategy',
+        ),
+        tooltip=[
+            alt.Tooltip('year:O', title='Year'),
+            alt.Tooltip('type:N', title='Strategy'),
+            alt.Tooltip('returns:Q', title='Dividends', format=',.0f'),
+        ],
     ).properties(
         title=f'{stock_name} Historical Performance: DRIP Comparison',
         height=430
     )
 
     cols[1].altair_chart((investment_chart + return_chart)\
-                    .resolve_scale(y='independent', color='independent'),
-                    width="stretch")
+                    .resolve_scale(y='independent'),
+                    width="stretch", theme=None)
     
     st.download_button(
         label=f"Download {stock_name} Historical Data (CSV)",
@@ -370,7 +397,7 @@ with st.container(border=True):
 
     combined_plot_df = combined_plot_df.rename(columns={'value': 'Value'})
     
-    investment_chart = alt.Chart(combined_plot_df).mark_bar(opacity=0.8).encode(
+    investment_chart = alt.Chart(combined_plot_df).mark_bar(opacity=0.86).encode(
         x=alt.X('year:O', title='Year'),
         y=alt.Y('Value:Q', title='Portfolio Value'),
         color=alt.Color('stock:N', title='Stock'),
@@ -382,6 +409,11 @@ with st.container(border=True):
         x=alt.X('year:O', title='Year'),
         y=alt.Y('returns:Q', title='Total Dividends'),
         color=alt.Color('strategy:N', title='Dividend strategy'),
+        tooltip=[
+            alt.Tooltip('year:O', title='Year'),
+            alt.Tooltip('strategy:N', title='Strategy'),
+            alt.Tooltip('returns:Q', title='Total Dividends', format=',.0f'),
+        ],
     ).properties(
         title='Multi-Stock Historical DRIP Comparison',
         height=430
@@ -391,7 +423,8 @@ with st.container(border=True):
         (investment_chart + return_chart).resolve_scale(
             y='independent', color='independent'
         ),
-        width="stretch"
+        width="stretch",
+        theme=None,
     )
     
     st.download_button(
