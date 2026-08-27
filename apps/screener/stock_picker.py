@@ -14,15 +14,18 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_echarts5 import st_echarts
 from datetime import date, datetime, timedelta
 
 import harvest.plot as hp
 import harvest.data as hd
+from harvest import chart_style as cs
 from harvest.utils import setup_logging
 
 
 st.set_page_config(page_title='Dividend Ranking - Panen Dividen', layout='wide')
+hp.enable_chart_theme()
 st.title('Dividend Ranking')
 
 api_key = os.getenv('FMP_API_KEY')
@@ -36,6 +39,15 @@ if missing_config:
 PROJECTION_HORIZON_YRS = 5   # Number of forecast years for dividend extrapolation
 MIN_VALUATION_OBSERVATIONS = 30
 MIN_SECTOR_PEERS = 3
+_RESEARCH_SECTIONS = {
+    'dividends': 'Dividends',
+    'financials': 'Financials',
+    'valuation': 'Valuation',
+    'price-technicals': 'Price and technicals',
+    'buy-timing': 'Buy timing',
+    'compounding': 'Compounding simulation',
+}
+_RESEARCH_SECTION_KEYS = {label: key for key, label in _RESEARCH_SECTIONS.items()}
 ### Start of Function definition
 
 
@@ -149,14 +161,13 @@ def calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share):
         div_pp = hd.preprocess_div(sdf)
         div_stats = hd.calc_div_stats(div_pp)
         
-        stats['yield'] = (sdf['adjDividend'].iloc[0] * 4 / stats['price'] * 100) if stats['price'] > 0 else 0 # Rough estimate of annual yield if quarterly
-        # Use last year total for more accurate yield
-        if not div_pp.empty:
-            last_year_div = div_pp['adjDividend'].iloc[-1]
-            stats['yield'] = (last_year_div / stats['price'] * 100) if stats['price'] > 0 else 0
-            stats['lastDiv'] = last_year_div
+        if stock_name.endswith('.JK'):
+            annual_dividend = hd.calc_latest_finalized_dividend_sum(sdf)
         else:
-            stats['lastDiv'] = 0
+            profile_dividend = cp_df.loc[stock_name].get('lastDiv', 0) if stock_name in cp_df.index else 0
+            annual_dividend = profile_dividend if hd.is_dividend_schedule_current(sdf) else 0
+        stats['yield'] = (annual_dividend / stats['price'] * 100) if stats['price'] > 0 else 0
+        stats['lastDiv'] = annual_dividend
             
         stats['numDividendYear'] = div_stats.get('num_dividend_year', 0)
         stats['positiveYear'] = div_stats.get('num_positive_year', 0)
@@ -370,21 +381,56 @@ def calculate_stock_ratings(stock_name, filtered_df, final_df=None, stock_data=N
 
 def get_rating_color(score):
     if score is None or not np.isfinite(score):
-        return '#616161'
+        return cs.CHART_NEUTRAL
     if score >= 80:
-        return '#1b5e20' # Dark Green
+        return cs.CHART_POSITIVE
     elif score >= 60:
-        return '#2e7d32' # Medium Green
+        return '#16A34A'
     elif score >= 40:
-        return '#e37400' # Dark Yellow/Amber
+        return cs.CHART_AMBER
     elif score >= 20: 
-        return '#e65100' # Dark Orange
+        return '#C2410C'
     else:
-        return '#c62828' # Dark Red
+        return cs.CHART_NEGATIVE
 
 def add_anchor(name):
     """Adds an invisible HTML anchor for direct URL linking."""
-    st.markdown(f"<div id='{name}'></div>", unsafe_allow_html=True)
+    st.markdown(f"<div id='{name}' style='scroll-margin-top:1rem'></div>", unsafe_allow_html=True)
+
+
+def _normalize_research_section(value):
+    normalized = str(value or '').strip().lower().replace('_', '-').replace(' ', '-')
+    aliases = {
+        'price-and-technicals': 'price-technicals',
+        'compounding-simulation': 'compounding',
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in _RESEARCH_SECTIONS else 'dividends'
+
+
+def _scroll_to_anchor(name):
+    """Scroll the parent Streamlit page to an anchor after the rerun completes."""
+    target_id = json.dumps(name)
+    components.html(
+        f"""
+        <script>
+        const targetId = {target_id};
+        const reducedMotion = window.parent.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        window.requestAnimationFrame(() => {{
+            window.setTimeout(() => {{
+                const target = window.parent.document.getElementById(targetId);
+                if (target) {{
+                    target.scrollIntoView({{
+                        behavior: reducedMotion ? 'auto' : 'smooth',
+                        block: 'start'
+                    }});
+                }}
+            }}, 100);
+        }});
+        </script>
+        """,
+        height=0,
+    )
 
 def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=None):
     if color is None:
@@ -401,7 +447,7 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=N
             st.write(f"**{label}**: {value}")
             
     if chart:
-        st.altair_chart(chart, width='stretch', key=key)
+        st.altair_chart(chart, width='stretch', key=key, theme=None)
 
 def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df):
     
@@ -631,7 +677,7 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
         with col_chart:
             # st.caption('**Blue bars** = Historical Dividends &nbsp;·&nbsp; **Orange line** = Trend &nbsp;·&nbsp; **Green dashed** = 5Y Projection')
             yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_val, inc_val=inc_val)
-            st.altair_chart(yearly_dividend_chart, width='stretch')
+            st.altair_chart(yearly_dividend_chart, width='stretch', theme=None)
             
         with col_table:
             st.dataframe(
@@ -717,7 +763,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
             '*(red bars = YoY decline)*'
         )
         fin_chart = hp.plot_fin_chart_enhanced(fin, currency=currency, height=350)
-        st.altair_chart(fin_chart, width='stretch')
+        st.altair_chart(fin_chart, width='stretch', theme=None)
 
 
     else:
@@ -731,7 +777,7 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
         st.markdown(f'#### 📊 Quarterly {metric_choice}')
         st.caption('**Bars** coloured by quarter.')
         q_chart = hp.plot_quarterly_breakdown(fin, metric=metric_col, currency=currency, height=300)
-        st.altair_chart(q_chart, width='stretch')
+        st.altair_chart(q_chart, width='stretch', theme=None)
 
 
 def render_price_movement(price_df, stock_name='', stock_row=None):
@@ -808,24 +854,21 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
 
     show_rsi = ctrl_cols[2].toggle('Show RSI', value=True, key=f'pm_rsi_{stock_name}')
 
-    # ── Filter price_df by selected time range ─────────────────────────── #
+    # ── Set the initial volume-navigator selection ─────────────────────── #
     range_map = {'3M': 90, '6M': 180, '1Y': 365, '3Y': 365 * 3}
-    if time_range != 'All':
-        cutoff = df['date'].max() - pd.DateOffset(days=range_map[time_range])
-        plot_df = df[df['date'] >= cutoff]
-    else:
-        plot_df = df
+    initial_range_days = range_map.get(time_range)
 
     ma_windows = [int(m.replace('MA', '')) for m in (ma_options or [])]
 
     candlestick_chart = hp.plot_candlestick(
-        plot_df,
+        df,
         width=900,
         height=320,
         ma_windows=ma_windows if ma_windows else None,
         show_rsi=show_rsi,
+        initial_range_days=initial_range_days,
     )
-    st.altair_chart(candlestick_chart, width='stretch')
+    st.altair_chart(candlestick_chart, width='stretch', theme=None)
 
     # ── MA legend caption ──────────────────────────────────────────────── #
     if ma_windows:
@@ -957,13 +1000,13 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
             f"When the line is near or below the green dashed line, the stock is attractively priced."
         )
         pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
-        st.altair_chart(pe_ts_chart, width='stretch')
+        st.altair_chart(pe_ts_chart, width='stretch', theme=None)
 
     with chart_cols[1]:
         st.markdown(f"#### 📊 {ratio} Distribution")
         st.caption(f"**Red line** = current {ratio}. Left tail = historically cheap zone.")
         pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
-        st.altair_chart(pe_dist_chart, width='stretch')
+        st.altair_chart(pe_dist_chart, width='stretch', theme=None)
 
 
 def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, price_df=None, n_share=None):
@@ -1097,7 +1140,7 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
         )
 
         with res_cols[2]:
-            st.altair_chart(chart, width='stretch')
+            st.altair_chart(chart, width='stretch', theme=None)
 
 
 @st.cache_data(max_entries=64, ttl=6 * 60 * 60, show_spinner=False)
@@ -1145,14 +1188,14 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             base = alt.Chart(seasonality_df)
 
             # IQR band
-            band = base.mark_area(opacity=0.2, color='#2ecc71').encode(
+            band = base.mark_area(opacity=0.18, color=cs.CHART_PRIMARY).encode(
                 x=alt.X('month_name:O', sort=month_order, title='Month'),
                 y=alt.Y('q25:Q', title='Relative Price (%)'),
                 y2=alt.Y2('q75:Q'),
             )
 
             # Median line
-            line = base.mark_line(point=True, color='#2ecc71', strokeWidth=2).encode(
+            line = base.mark_line(point=True, color=cs.CHART_PRIMARY, strokeWidth=2.25).encode(
                 x=alt.X('month_name:O', sort=month_order),
                 y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
                 tooltip=[
@@ -1166,13 +1209,13 @@ def render_best_buy_timing(price_df, sdf, stock_name):
 
             # Reference line at 100
             ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+                color=cs.CHART_NEUTRAL, strokeDash=[6, 4], strokeWidth=1
             ).encode(y='y:Q')
 
             # Highlight bar for cheapest month
             best_data = seasonality_df[seasonality_df['month_name'] == best_month]
             best_bar = alt.Chart(best_data).mark_bar(
-                color='#27ae60', opacity=0.35, width=30
+                color=cs.CHART_PRIMARY_DARK, opacity=0.28, width=30
             ).encode(
                 x=alt.X('month_name:O', sort=month_order),
                 y=alt.Y('q25:Q'),
@@ -1180,7 +1223,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             )
 
             chart = (band + best_bar + line + ref).properties(height=280)
-            st.altair_chart(chart, width='stretch')
+            st.altair_chart(chart, width='stretch', theme=None)
 
             years_observed = pd.to_datetime(price_df['date'], errors='coerce').dt.year.nunique()
             st.info(
@@ -1205,13 +1248,13 @@ def render_best_buy_timing(price_df, sdf, stock_name):
 
             base = alt.Chart(pre_ex_plot)
 
-            band = base.mark_area(opacity=0.2, color='#3498db').encode(
+            band = base.mark_area(opacity=0.18, color=cs.CHART_BLUE).encode(
                 x=alt.X('days_to_ex:Q', title='Days to Ex-Date'),
                 y=alt.Y('q25:Q', title='Relative Price (ex-date = 100)'),
                 y2=alt.Y2('q75:Q'),
             )
 
-            line = base.mark_line(color='#3498db', strokeWidth=2).encode(
+            line = base.mark_line(color=cs.CHART_BLUE, strokeWidth=2.25).encode(
                 x=alt.X('days_to_ex:Q'),
                 y=alt.Y('mean:Q', scale=alt.Scale(zero=False)),
                 tooltip=[
@@ -1223,19 +1266,19 @@ def render_best_buy_timing(price_df, sdf, stock_name):
 
             # Ex-date vertical rule
             ex_rule = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
-                color='#e74c3c', strokeDash=[5, 4], strokeWidth=2
+                color=cs.CHART_NEGATIVE, strokeDash=[5, 4], strokeWidth=2
             ).encode(x='x:Q')
 
             ex_label = alt.Chart(pd.DataFrame({'x': [2], 'y': [pre_ex_plot['mean'].max()], 'text': ['Ex-Date']})).mark_text(
-                align='left', color='#e74c3c', fontSize=11
+                align='left', color=cs.CHART_NEGATIVE, fontSize=11
             ).encode(x='x:Q', y='y:Q', text='text:N')
 
             ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                color='#aaaaaa', strokeDash=[6, 4], strokeWidth=1
+                color=cs.CHART_NEUTRAL, strokeDash=[6, 4], strokeWidth=1
             ).encode(y='y:Q')
 
             chart = (band + line + ref + ex_rule + ex_label).properties(height=280)
-            st.altair_chart(chart, width='stretch')
+            st.altair_chart(chart, width='stretch', theme=None)
 
             # Find the best dip point
             pre_only = pre_ex_plot[pre_ex_plot['days_to_ex'] < 0]
@@ -1423,26 +1466,26 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
         st.caption('Grey dashed = out-of-pocket investment. Blue dashed = total cost (incl. reinvested dividends). Green = portfolio market value.')
 
         topup_area = alt.Chart(porto_df).mark_area(
-            opacity=0.2, color='#95a5a6', interpolate='monotone'
+            opacity=0.16, color=cs.CHART_NEUTRAL, interpolate='monotone'
         ).encode(
             x=alt.X('date:T', title='Date'),
             y=alt.Y('cum_topup:Q', stack=None),
         )
 
         cost_area = alt.Chart(porto_df).mark_area(
-            opacity=0.45, color='#5b8dee', interpolate='monotone'
+            opacity=0.28, color=cs.CHART_BLUE, interpolate='monotone'
         ).encode(
             x=alt.X('date:T', title='Date'),
             y=alt.Y('cum_cost:Q', title=f'Value ({curr_symbol})', stack=None),
         )
         mkt_area = alt.Chart(porto_df).mark_area(
-            opacity=0.35, color='#27ae60', interpolate='monotone'
+            opacity=0.24, color=cs.CHART_PRIMARY, interpolate='monotone'
         ).encode(
             x=alt.X('date:T'),
             y=alt.Y('mkt_value:Q', stack=None),
         )
         mkt_line = alt.Chart(porto_df).mark_line(
-            color='#1e8449', strokeWidth=2.5, interpolate='monotone'
+            color=cs.CHART_PRIMARY_DARK, strokeWidth=2.5, interpolate='monotone'
         ).encode(
             x=alt.X('date:T'),
             y=alt.Y('mkt_value:Q'),
@@ -1454,18 +1497,18 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
             ]
         )
         cost_line = alt.Chart(porto_df).mark_line(
-            color='#2471a3', strokeWidth=1.5, strokeDash=[5, 3], interpolate='monotone'
+            color=cs.CHART_BLUE, strokeWidth=1.5, strokeDash=[5, 3], interpolate='monotone'
         ).encode(
             x=alt.X('date:T'),
             y=alt.Y('cum_cost:Q'),
         )
         topup_line = alt.Chart(porto_df).mark_line(
-            color='#7f8c8d', strokeWidth=1.5, strokeDash=[2, 2], interpolate='monotone'
+            color=cs.CHART_NEUTRAL, strokeWidth=1.5, strokeDash=[2, 2], interpolate='monotone'
         ).encode(
             x=alt.X('date:T'),
             y=alt.Y('cum_topup:Q'),
         )
-        st.altair_chart((topup_area + cost_area + mkt_area + mkt_line + cost_line + topup_line).properties(height=300), width='stretch')
+        st.altair_chart((topup_area + cost_area + mkt_area + mkt_line + cost_line + topup_line).properties(height=300), width='stretch', theme=None)
 
     # ── Chart 2: Annual dividend income snowball ─────────────────────────── #
     with chart_col2:
@@ -1478,7 +1521,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
             annual_div['year_str'] = annual_div['year'].astype(str)
 
             bar = alt.Chart(annual_div).mark_bar(
-                cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color='#f39c12'
+                cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=cs.CHART_AMBER
             ).encode(
                 x=alt.X('year_str:O', title='Year', sort=None),
                 y=alt.Y('dividend_income:Q', title=f'Dividend Income ({curr_symbol})'),
@@ -1488,12 +1531,12 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
                 ]
             )
             trend = alt.Chart(annual_div).mark_line(
-                color='#e67e22', strokeWidth=2, strokeDash=[4, 2]
+                color=cs.CHART_PRIMARY, strokeWidth=2, strokeDash=[4, 2]
             ).encode(
                 x=alt.X('year_str:O', sort=None),
                 y=alt.Y('dividend_income:Q'),
             )
-            st.altair_chart((bar + trend).properties(height=280), width='stretch')
+            st.altair_chart((bar + trend).properties(height=280), width='stretch', theme=None)
         else:
             st.info('No dividend events recorded in this period.')
 
@@ -1510,19 +1553,37 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
         else ('IDR' if sl == 'JKSE' else 'USD')
     )
 
-    section = st.selectbox(
+    section_param = st.query_params.get('section')
+    requested_section_key = _normalize_research_section(section_param)
+    requested_section = _RESEARCH_SECTIONS[requested_section_key]
+    widget_key = f'research_section_{stock_name}'
+    query_state_key = f'_research_section_query_{stock_name}'
+    query_signature = requested_section_key if section_param is not None else None
+
+    # Widget state outlives URL navigation, so refresh it when a deep link changes.
+    if widget_key not in st.session_state or st.session_state.get(query_state_key) != query_signature:
+        st.session_state[widget_key] = requested_section
+        st.session_state[query_state_key] = query_signature
+
+    def _research_section_changed():
+        selected = st.session_state.get(widget_key, requested_section)
+        selected_key = _RESEARCH_SECTION_KEYS.get(selected, 'dividends')
+        if st.query_params.get('section') != selected_key:
+            st.query_params['section'] = selected_key
+        st.session_state[query_state_key] = selected_key
+
+    section = st.segmented_control(
         'Research section',
-        options=[
-            'Dividends',
-            'Financials',
-            'Valuation',
-            'Price and technicals',
-            'Buy timing',
-            'Compounding simulation',
-        ],
-        key=f'research_section_{stock_name}',
-        help='Choose one analysis at a time. Your selection is preserved while viewing this stock.',
+        options=list(_RESEARCH_SECTIONS.values()),
+        key=widget_key,
+        on_change=_research_section_changed,
+        help='Choose one analysis at a time. The selection is saved in the URL for sharing.',
+        width='stretch',
     )
+
+    section_key = _RESEARCH_SECTION_KEYS.get(section, 'dividends')
+    anchor_name = f'research-{section_key}'
+    add_anchor(anchor_name)
 
     if section == 'Dividends':
         st.subheader(f'Dividend history: {stock_name}')
@@ -1546,6 +1607,11 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     else:
         st.subheader(f'Compounding simulation: {stock_name}')
         render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df, currency=currency)
+
+    scroll_target = (stock_name, section_key)
+    if section_param is not None and st.session_state.get('_last_research_scroll_target') != scroll_target:
+        _scroll_to_anchor(anchor_name)
+        st.session_state['_last_research_scroll_target'] = scroll_target
 
 
 
@@ -1851,8 +1917,8 @@ with full_table_section:
                 format='%,.02f',
             ),
             'lastDiv': st.column_config.NumberColumn(
-                'Last Dividend',
-                help='Last Dividend Paid in Last/Current Fiscal Year',
+                'Annual Dividend',
+                help='Ordinary dividends for the latest finalized fiscal year',
                 format='%,.02f',
             ),
             'earningTTM': None,
