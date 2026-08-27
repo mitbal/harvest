@@ -4,6 +4,7 @@ import json
 import html
 import time
 import hashlib
+import inspect
 import logging
 import concurrent.futures
 from urllib.parse import quote
@@ -860,14 +861,16 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
 
     ma_windows = [int(m.replace('MA', '')) for m in (ma_options or [])]
 
-    candlestick_chart = hp.plot_candlestick(
-        df,
-        width=900,
-        height=320,
-        ma_windows=ma_windows if ma_windows else None,
-        show_rsi=show_rsi,
-        initial_range_days=initial_range_days,
-    )
+    chart_kwargs = {
+        'width': 900,
+        'height': 320,
+        'ma_windows': ma_windows if ma_windows else None,
+        'show_rsi': show_rsi,
+    }
+    # Streamlit can retain an imported module across script reruns after plot.py changes.
+    if 'initial_range_days' in inspect.signature(hp.plot_candlestick).parameters:
+        chart_kwargs['initial_range_days'] = initial_range_days
+    candlestick_chart = hp.plot_candlestick(df, **chart_kwargs)
     st.altair_chart(candlestick_chart, width='stretch', theme=None)
 
     # ── MA legend caption ──────────────────────────────────────────────── #
