@@ -15,6 +15,7 @@ import streamlit as st
 
 
 import harvest.plot as hp
+from harvest import chart_style as cs
 from harvest.utils import setup_logging
 
 
@@ -22,6 +23,7 @@ current_year = datetime.today().year
 current_month = datetime.today().month
 
 st.set_page_config(page_title='Dividend Calendar - Panen Dividen')
+hp.enable_chart_theme()
 
 
 sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
@@ -222,7 +224,7 @@ else:
 
 if view_control == 'Full Year':
     cal = hp.plot_dividend_calendar(df, show_next_year=False, sl=sl)
-    st.altair_chart(cal)
+    st.altair_chart(cal, theme=None)
 
     idx = 1
     for i in range(3):
@@ -245,8 +247,17 @@ else:
     cols = st.columns(2)
 
     labels = df.apply(lambda x: f"{x['date'].strftime('%d %b')}: {x['symbol']} ({x['yield']:2.2f}%)", axis=1)
-    month_cal = lesley.month_plot(df['date'], df['yield'], labels=labels, month=month_index, show_date=True, width=500)
-    cols[0].altair_chart(month_cal)
+    month_cal = hp.style_calendar_chart(
+        lesley.month_plot(
+            df['date'],
+            df['yield'],
+            labels=labels,
+            month=month_index,
+            show_date=True,
+            width=500,
+        )
+    )
+    cols[0].altair_chart(month_cal, theme=None)
 
     month_df = prep_div_month(df, month_idx=month_index)
     cols[1].dataframe(
@@ -287,17 +298,17 @@ else:
         monthly_summary = monthly_summary.sort_values('month_name')
 
         combo_base = alt.Chart(monthly_summary)
-        events_bar = combo_base.mark_bar(color='#1f77b4').encode(
+        events_bar = combo_base.mark_bar(color=cs.CHART_PRIMARY).encode(
             x=alt.X('month_name:N', sort=month_order, title='Month'),
             y=alt.Y('events:Q', title='Dividend count'),
             tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('events:Q', title='Count')]
         )
-        yield_line = combo_base.mark_line(color='#ff7f0e', point=True).encode(
+        yield_line = combo_base.mark_line(color=cs.CHART_AMBER, point=True).encode(
             x=alt.X('month_name:N', sort=month_order),
-            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
+            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor=cs.CHART_AMBER), scale=alt.Scale(zero=False)),
             tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
         )
-        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch')
+        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch', theme=None)
     else:
         day_summary = (
             stats_df
@@ -308,17 +319,17 @@ else:
             .rename(columns={'mean': 'avg_yield', 'count': 'events'})
         )
         combo_base = alt.Chart(day_summary)
-        events_bar = combo_base.mark_bar(color='#1f77b4').encode(
+        events_bar = combo_base.mark_bar(color=cs.CHART_PRIMARY).encode(
             x=alt.X('day:O', title='Ex-Date day'),
             y=alt.Y('events:Q', title='Dividend count'),
             tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('events:Q', title='Count')]
         )
-        yield_line = combo_base.mark_line(color='#ff7f0e', point=True).encode(
+        yield_line = combo_base.mark_line(color=cs.CHART_AMBER, point=True).encode(
             x='day:O',
-            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor='#ff7f0e'), scale=alt.Scale(zero=False)),
+            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor=cs.CHART_AMBER), scale=alt.Scale(zero=False)),
             tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
         )
-        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch')
+        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch', theme=None)
 
     kde = alt.Chart(stats_df[['yield']]).transform_density(
         'yield',
@@ -326,20 +337,22 @@ else:
     ).mark_area(
         color=alt.Gradient(
             gradient='linear',
-            stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#008631', offset=1)],
+            stops=[alt.GradientStop(color=cs.CHART_SURFACE, offset=0), alt.GradientStop(color=cs.CHART_PRIMARY, offset=1)],
             x1=1, x2=1, y1=1, y2=0
         ),
-        line={'color': '#008631'}
+        line={'color': cs.CHART_PRIMARY}
     ).encode(
         x=alt.X('Yield:Q', title='Dividend Yield (%)'),
         y=alt.Y('Density:Q', title='', axis=alt.Axis(tickSize=0, domain=False, labelAngle=0, labelFontSize=0)),
         tooltip=[alt.Tooltip('Yield:Q', format='.2f', title='Yield %')]
     )
-    mean_rule = alt.Chart(pd.DataFrame({'mean_yield': [stats_df['yield'].mean()]})).mark_rule(color='red').encode(
+    mean_rule = alt.Chart(pd.DataFrame({'mean_yield': [stats_df['yield'].mean()]})).mark_rule(
+        color=cs.CHART_AMBER, strokeWidth=2, strokeDash=[5, 3]
+    ).encode(
         x='mean_yield:Q',
         tooltip=[alt.Tooltip('mean_yield:Q', format='.2f', title='Average yield')]
     )
-    charts[1].altair_chart((kde + mean_rule).properties(height=260), width='stretch')
+    charts[1].altair_chart((kde + mean_rule).properties(height=260), width='stretch', theme=None)
 
     freq_df = (
         df.groupby('symbol')['date']
