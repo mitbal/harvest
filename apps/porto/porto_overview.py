@@ -16,10 +16,12 @@ from st_supabase_connection import SupabaseConnection
 
 import harvest.plot as hp
 import harvest.data as hd
+from harvest import chart_style as cs
 from harvest.utils import setup_logging
 
 # Must be the very first Streamlit command
 st.set_page_config(page_title='Portfolio Analytics - Panen Dividen', layout='wide')
+hp.enable_chart_theme()
 
 REQUIRED_COLUMNS = {'Symbol', 'Available Lot', 'Average Price'}
 PASTE_RAW_FIELDS_PER_ROW = 11  # expected tokens per stock row in raw paste format
@@ -120,7 +122,7 @@ def render_dividend_timeline(div_lists: list[pd.DataFrame], view_type: str) -> N
         calendar_df = all_divs.copy(deep=True)
         calendar_df['date'] = calendar_df['Date'].map(normalize_calendar_year)
         calendar_df['symbol'] = calendar_df['Symbol']
-        st.altair_chart(hp.plot_dividend_calendar(calendar_df), width='stretch')
+        st.altair_chart(hp.plot_dividend_calendar(calendar_df), width='stretch', theme=None)
     elif view_type == 'Monthly Bar':
         bar_cols = st.columns([1, 2])
         with bar_cols[0]:
@@ -142,10 +144,10 @@ def render_dividend_timeline(div_lists: list[pd.DataFrame], view_type: str) -> N
             ).encode(
                 x=alt.X('month_name:N', sort=month_div['month_name'].tolist(), title='Month'),
                 y=alt.Y('total_dividend:Q', title='Total Dividend (IDR)'),
-                color=alt.value('#16845b'),
+                color=alt.value(cs.CHART_PRIMARY),
                 tooltip=['month_name', alt.Tooltip('total_dividend', format=',d')],
             ).properties(height=300)
-            st.altair_chart(month_bar, width='stretch')
+            st.altair_chart(month_bar, width='stretch', theme=None)
     else:
         for first_month in (1, 7):
             month_cols = st.columns(6)
@@ -698,16 +700,36 @@ with st.container(border=True):
         )
 
     with tabs[1]:
-        div_bar = alt.Chart(df_display).mark_bar().encode(
-            x=alt.X('Symbol'),
-            y=alt.Y('total_dividend')
+        div_bar = alt.Chart(df_display).mark_bar(color=cs.CHART_PRIMARY).encode(
+            x=alt.X(
+                'Symbol:N',
+                title='Holding',
+                sort=alt.SortField(field='total_dividend', order='descending'),
+            ),
+            y=alt.Y('total_dividend:Q', title='Annual Dividend (IDR)'),
+            tooltip=[
+                alt.Tooltip('Symbol:N', title='Holding'),
+                alt.Tooltip('total_dividend:Q', title='Annual Dividend', format=',.0f'),
+            ],
         )
-        yield_bar = alt.Chart(df_display).mark_line(color='orange').encode(
-            x=alt.X('Symbol'),
-            y=alt.Y('yield_on_cost', scale=alt.Scale(domain=[0, 100])),
+        yield_bar = alt.Chart(df_display).mark_line(color=cs.CHART_AMBER, point=True).encode(
+            x=alt.X(
+                'Symbol:N',
+                sort=alt.SortField(field='total_dividend', order='descending'),
+            ),
+            y=alt.Y(
+                'yield_on_cost:Q',
+                title='Yield on Cost (%)',
+                axis=alt.Axis(titleColor=cs.CHART_AMBER),
+                scale=alt.Scale(domain=[0, 100]),
+            ),
+            tooltip=[
+                alt.Tooltip('Symbol:N', title='Holding'),
+                alt.Tooltip('yield_on_cost:Q', title='Yield on Cost', format='.2f'),
+            ],
         )
         combined_chart = (div_bar + yield_bar).resolve_scale(y='independent')
-        st.altair_chart(combined_chart, width="stretch")
+        st.altair_chart(combined_chart, width="stretch", theme=None)
 
     with tabs[2]:
         ctrl_cols = st.columns([2, 1])
@@ -753,7 +775,7 @@ with st.container(border=True):
             show_pct_only=show_pct_only,
             label_scale=label_scale,
             border_color=border_color,
-            border_width=2,
+            border_width=1,
             show_legend=True,
             height=treemap_height,
             key=f'porto_vortree_{st.session_state["vortree_refresh_count"]}'
@@ -799,7 +821,7 @@ if main_event.selection.get('rows'):
                                 last_val=df_display.iloc[main_event.selection['rows'][0]]['div_rate'],
                                 inc_val=stats['historical_mean_flat']
                             )
-                            st.altair_chart(div_bar, width="stretch")
+                            st.altair_chart(div_bar, width="stretch", theme=None)
                         except Exception as e:
                             st.warning(f'Could not render the dividend history chart: {e}')
                             logger.exception(f'Dividend history chart failed for {symbol}')
@@ -846,10 +868,17 @@ with st.expander('Sector Exposure', expanded=False):
         st.markdown("**Diversification**")
         sector_pie = alt.Chart(df).mark_arc(innerRadius=50).encode(
             theta='sum(total_dividend)',
-            color=alt.Color('sector', scale=alt.Scale(scheme='greens'), legend=None),
-            tooltip=['sector', alt.Tooltip('sum(total_dividend)', format=',d')]
+            color=alt.Color(
+                'sector:N',
+                scale=alt.Scale(range=list(cs.CHART_CATEGORY_RANGE)),
+                legend=None,
+            ),
+            tooltip=[
+                alt.Tooltip('sector:N', title='Sector'),
+                alt.Tooltip('sum(total_dividend):Q', title='Annual Dividend', format=',d'),
+            ]
         ).properties(height=250)
-        st.altair_chart(sector_pie, width="stretch")
+        st.altair_chart(sector_pie, width="stretch", theme=None)
 
 
 with st.expander('Dividend Timeline', expanded=False):
@@ -926,15 +955,19 @@ with st.expander('Compounding Projection', expanded=False):
     return_chart = base_chart.mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
         x=alt.X('years:N', title='Compounding Journey'),
         y=alt.Y('returns:Q', title='Annual Income (IDR)'),
-        color=alt.condition(alt.datum['achieved'], alt.value('#059669'), alt.value('#93C5FD')),
+        color=alt.condition(
+            alt.datum['achieved'],
+            alt.value(cs.CHART_POSITIVE),
+            alt.value(cs.CHART_BLUE),
+        ),
         tooltip=['years', alt.Tooltip('returns', format=',.0f')]
     )
 
-    yield_chart = base_chart.mark_line(point=True, color='#D97706').encode(
+    yield_chart = base_chart.mark_line(point=True, color=cs.CHART_AMBER).encode(
         x=alt.X('years:N'),
         y=alt.Y('yield:Q', title='Yield on Cost (%)'),
         tooltip=['years', alt.Tooltip('yield', format='.2f')]
     )
 
     future_chart = (return_chart + yield_chart).resolve_scale(y='independent').properties(height=400)
-    st.altair_chart(future_chart, width="stretch")
+    st.altair_chart(future_chart, width="stretch", theme=None)
