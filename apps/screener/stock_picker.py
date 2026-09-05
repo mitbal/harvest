@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
-import streamlit.components.v1 as components
 from streamlit_echarts5 import st_echarts
 from datetime import date, datetime, timedelta
 
@@ -38,6 +37,8 @@ if missing_config:
 
 # Constants for Dividend Score (DScore) calculation
 PROJECTION_HORIZON_YRS = 5   # Number of forecast years for dividend extrapolation
+NORMAL_MARGIN_BUFFER = 1.25
+SUSTAINABLE_PAYOUT_RATIO = 0.80
 MIN_VALUATION_OBSERVATIONS = 30
 MIN_SECTOR_PEERS = 3
 _RESEARCH_SECTIONS = {
@@ -412,7 +413,7 @@ def _normalize_research_section(value):
 def _scroll_to_anchor(name):
     """Scroll the parent Streamlit page to an anchor after the rerun completes."""
     target_id = json.dumps(name)
-    components.html(
+    st.iframe(
         f"""
         <script>
         const targetId = {target_id};
@@ -430,7 +431,7 @@ def _scroll_to_anchor(name):
         }});
         </script>
         """,
-        height=0,
+        height=1,
     )
 
 def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=None):
@@ -1628,12 +1629,13 @@ if 'market' in st.query_params:
 
 logger = get_logger('screener')
 
-stock_select = st.radio(
+stock_options = ['Indonesian Stock', 'S&P 500 (US and World Stock)']
+stock_select = st.segmented_control(
     'Stock List Selection',
-    ['Indonesian Stock', 'S&P 500 (US and World Stock)'],
-    horizontal=True,
+    options=stock_options,
+    default=stock_options[default_sl],
     key='sl',
-    index=default_sl
+    width='content',
 )
 
 if stock_select == 'Indonesian Stock':
@@ -1731,17 +1733,35 @@ def _get_processed_df_cached(data_version, _df):
     #    discounted a 5-year payer's yield by ~90%)
     maturity = 1 - np.exp(-df['numDividendYear'] / 10)
 
-    # 3. Sustainability via payout ratio. payout = yield/100 * peRatio is identical to
-    #    lastDiv*n_share / earningTTM (mktCap = price*n_share cancels out).
-    #    Smooth penalty above 100% payout: 1.5x -> 0.67, 2x -> 0.5, 3x -> 0.33.
-    #    Missing or negative earnings stay neutral (1.0).
-    payout  = df['yield'] / 100 * df['peRatio'].where(df['peRatio'] > 0)
-    sustain = (1 / (1 + (payout - 1).clip(lower=0))).fillna(1.0)
+    # 3. Normalize earnings when the current net margin materially exceeds its
+    #    historical median. This prevents disposal gains and other one-off income from
+    #    making a proceeds-funded dividend appear sustainably covered.
+    reported_earnings = pd.to_numeric(df['earningTTM'], errors='coerce')
+    revenue_ttm = pd.to_numeric(df['revenueTTM'], errors='coerce')
+    historical_margin = pd.to_numeric(df['medianProfitMargin'], errors='coerce') / 100
+    margin_supported_earnings = revenue_ttm * historical_margin.clip(lower=0) * NORMAL_MARGIN_BUFFER
+    can_normalize = (reported_earnings > 0) & (revenue_ttm > 0) & (historical_margin > 0)
+    organic_earnings = reported_earnings.where(
+        ~can_normalize,
+        np.minimum(reported_earnings, margin_supported_earnings),
+    )
 
-    # 4. Symmetric growth adjustment: reward growth up to +25%, penalize decline down
-    #    to -100% (multiplier floors at 0, never negative). Missing data stays neutral.
-    rev_adj = (1 + df['revenueGrowthTTM'].clip(-100, 25) / 100).fillna(1.0)
-    inc_adj = (1 + df['netIncomeGrowthTTM'].clip(-100, 25) / 100).fillna(1.0)
+    dividend_cash = (
+        pd.to_numeric(df['yield'], errors='coerce')
+        / 100
+        * pd.to_numeric(df['mktCap'], errors='coerce')
+    )
+    organic_payout = dividend_cash / organic_earnings.where(organic_earnings > 0)
+    sustain = (1 / np.maximum(1, organic_payout / SUSTAINABLE_PAYOUT_RATIO)).fillna(0)
+
+    # 4. A profit increase is treated as organic only to the extent that revenue
+    #    confirms it. This removes the score boost from income spikes without sales
+    #    growth while preserving downside from either declining measure.
+    organic_growth = np.minimum(
+        pd.to_numeric(df['revenueGrowthTTM'], errors='coerce'),
+        pd.to_numeric(df['netIncomeGrowthTTM'], errors='coerce'),
+    )
+    growth_adj = (1 + organic_growth.clip(-100, 25) / 100).fillna(1.0)
 
     # 5. Yield capped at 12% so distressed high-yielders can't dominate on yield alone.
     df['DScore'] = (
@@ -1749,8 +1769,7 @@ def _get_processed_df_cached(data_version, _df):
         * maturity
         * (100 - df['max10CutPct']) / 100
         * df['mc_penalty']
-        * rev_adj
-        * inc_adj
+        * growth_adj
         * sustain
         * is_payer  # gate: zero-yield stocks always score 0, below any payer
     )
@@ -1914,7 +1933,8 @@ with full_table_section:
                 'Dividend Score',
                 help=('Risk-adjusted projected forward yield: projected 5y dividend yield (growth capped at '
                       '+5%/yr, decline floored at -20%/yr, yield capped at 12%), scaled by dividend-track-record '
-                      'maturity, worst 10y dividend cut, payout sustainability (>100% payout is penalized), '
+                      'maturity, worst 10y dividend cut, normalized payout sustainability (earnings are capped '
+                      'at 125% of the historical median margin and payout above 80% is penalized), organic '
                       'revenue/income growth (reward up to +25%, decline to -100%), and market cap '
                       '(small caps are structurally discounted)'),
                 format='%,.02f',
@@ -1984,7 +2004,7 @@ with full_table_section:
             options=list(_TABLE_PRESETS),
             default='Essentials',
             help='Switch between focused column sets. Ranking and row selection remain unchanged.',
-        )
+        ) or 'Essentials'
         column_order = [column for column in _TABLE_PRESETS[table_preset] if column in display_df.columns]
         event = st.dataframe(
             display_df,
