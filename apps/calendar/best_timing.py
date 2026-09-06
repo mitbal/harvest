@@ -561,6 +561,75 @@ def _season_sector_table(
     ])
 
 
+def _stock_statistics_table(stock_event_table, sector='All'):
+    columns = [
+        'symbol', 'sector', 'n_events', 'best_month', 'median_days_before',
+        'low_recovered', 'low_traps', 'low_trap_rate', 'low_median_recovery',
+        'cum_recovered', 'cum_traps', 'cum_trap_rate', 'cum_median_recovery',
+        'additional_low_recoveries',
+    ]
+    if stock_event_table is None or stock_event_table.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = stock_event_table
+    if sector and sector != 'All':
+        rows = rows[rows['sector'] == sector]
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+
+    best_month_by_symbol = {}
+    if {'rel_price', 'month_name'}.issubset(rows.columns):
+        monthly = rows[rows['record_type'] == 'monthly'].copy()
+        monthly['rel_price'] = pd.to_numeric(monthly['rel_price'], errors='coerce')
+        monthly = monthly.dropna(subset=['symbol', 'rel_price'])
+        for symbol, symbol_months in monthly.groupby('symbol'):
+            best_month_by_symbol[symbol] = symbol_months.loc[
+                symbol_months['rel_price'].idxmin(), 'month_name'
+            ]
+
+    events = rows[rows['record_type'] == 'event'].copy()
+    if events.empty:
+        return pd.DataFrame(columns=columns)
+
+    stock_rows = []
+    for symbol, symbol_events in events.groupby('symbol', sort=True):
+        sector_values = symbol_events['sector'].dropna()
+        sector_name = sector_values.iloc[0] if not sector_values.empty else 'Unknown'
+        days_before = pd.to_numeric(symbol_events['days_before'], errors='coerce').dropna()
+        low_recovery = symbol_events[['low_days_after', 'low_recovered']].rename(
+            columns={'low_days_after': 'days_after', 'low_recovered': 'recovered'}
+        ).dropna(subset=['days_after'])
+        cum_recovery = symbol_events[['cum_days_after', 'cum_recovered']].rename(
+            columns={'cum_days_after': 'days_after', 'cum_recovered': 'recovered'}
+        ).dropna(subset=['days_after'])
+        low_stats = _recovery_stats(low_recovery)
+        cum_stats = _recovery_stats(cum_recovery)
+        low_total = len(low_recovery)
+        cum_total = len(cum_recovery)
+
+        stock_rows.append({
+            'symbol': symbol,
+            'sector': sector_name,
+            'n_events': len(symbol_events),
+            'best_month': best_month_by_symbol.get(symbol),
+            'median_days_before': int(days_before.median()) if not days_before.empty else None,
+            'low_recovered': low_stats['recovered'],
+            'low_traps': low_stats['censored'],
+            'low_trap_rate': low_stats['censored'] / low_total * 100 if low_total else None,
+            'low_median_recovery': low_stats['median'],
+            'cum_recovered': cum_stats['recovered'],
+            'cum_traps': cum_stats['censored'],
+            'cum_trap_rate': cum_stats['censored'] / cum_total * 100 if cum_total else None,
+            'cum_median_recovery': cum_stats['median'],
+        })
+
+    return pd.DataFrame(stock_rows, columns=columns).sort_values(
+        ['cum_traps', 'cum_trap_rate', 'n_events', 'symbol'],
+        ascending=[False, False, False, True],
+        na_position='last',
+    ).reset_index(drop=True)
+
+
 _n_stocks = len(_all_symbols)
 
 _sector_options = ['All']
@@ -783,6 +852,9 @@ else:
                 _agg_df, _best_days_df, _low_recovery_df, _cum_recovery_df,
                 _best_raw_df, _low_recovery_raw_df, _cum_recovery_raw_df,
             ) = _seasonality_for_sector(_stock_event_table, _selected_sector)
+            _stock_statistics = _stock_statistics_table(
+                _stock_event_table, _selected_sector
+            )
 
             if _agg_df.empty:
                 st.warning(f'No seasonality data for sector "{_selected_sector}".')
@@ -1310,7 +1382,7 @@ else:
                             hide_index=True,
                             width='stretch',
                             column_config={
-                                'symbol': st.column_config.TextColumn('Symbol'),
+                                'symbol': st.column_config.TextColumn('Symbol', pinned=True),
                                 'ex_date': st.column_config.TextColumn('Ex Date'),
                                 'dividend_amount': st.column_config.NumberColumn('Dividend', format='%.2f'),
                                 'ex_price': st.column_config.NumberColumn('Ex Price', format='%.2f'),
@@ -1341,3 +1413,72 @@ else:
                             },
                         )
                         st.caption(f'{len(_merged_raw)} events')
+
+            with st.expander(
+                f'Stock Recovery Statistics ({len(_stock_statistics)} stocks)',
+                expanded=True,
+            ):
+                if _stock_statistics.empty:
+                    st.info('No stock-level recovery statistics are available for this cohort.')
+                else:
+                    st.caption(
+                        'One row per stock, ordered by cum-entry trap count. Trap rates use only '
+                        'events with a recovery observation. Median recovery uses Kaplan-Meier '
+                        'estimates so unrecovered events remain censored.'
+                    )
+                    st.dataframe(
+                        _stock_statistics,
+                        hide_index=True,
+                        width='stretch',
+                        column_config={
+                            'symbol': st.column_config.TextColumn('Symbol', pinned=True),
+                            'sector': st.column_config.TextColumn('Sector'),
+                            'n_events': st.column_config.NumberColumn(
+                                'Events',
+                                help='Eligible dividend events with a modeled pre-ex entry.',
+                                format='%d',
+                            ),
+                            'best_month': st.column_config.TextColumn('Cheapest Month'),
+                            'median_days_before': st.column_config.NumberColumn(
+                                'Median Days Before',
+                                help='Median calendar days before ex-date when the 180-day low occurred.',
+                                format='%d',
+                            ),
+                            'low_recovered': st.column_config.NumberColumn(
+                                'Low Entry Recovered', format='%d'
+                            ),
+                            'low_traps': st.column_config.NumberColumn(
+                                'Low Entry Traps',
+                                help='Modeled low-entry events that remained unrecovered during follow-up.',
+                                format='%d',
+                            ),
+                            'low_trap_rate': st.column_config.NumberColumn(
+                                'Low Entry Trap Rate', format='%.1f%%'
+                            ),
+                            'low_median_recovery': st.column_config.NumberColumn(
+                                'Low Entry Median Recovery',
+                                help='Kaplan-Meier median calendar days after ex-date.',
+                                format='%d',
+                            ),
+                            'cum_recovered': st.column_config.NumberColumn(
+                                'Cum Entry Recovered', format='%d'
+                            ),
+                            'cum_traps': st.column_config.NumberColumn(
+                                'Cum Entry Traps',
+                                help='Cum-entry events that remained unrecovered during follow-up.',
+                                format='%d',
+                            ),
+                            'cum_trap_rate': st.column_config.NumberColumn(
+                                'Cum Entry Trap Rate', format='%.1f%%'
+                            ),
+                            'cum_median_recovery': st.column_config.NumberColumn(
+                                'Cum Entry Median Recovery',
+                                help='Kaplan-Meier median calendar days after ex-date.',
+                                format='%d',
+                            )
+                        },
+                    )
+                    st.caption(
+                        'A trap means the selected entry price was not regained during the observed '
+                        'follow-up window, capped at 365 calendar days. Recent events may have shorter follow-up.'
+                    )
