@@ -297,7 +297,19 @@ def get_dividend_history(stocks, api_key=None):
     return divs
 
 
-def get_financial_data(stock, period='quarter', api_key=None):
+def get_financial_data(stock, period='quarter', api_key=None, source='fmp'):
+
+    if source == 'fmp':
+        return get_financial_data_fmp(stock, period, api_key)
+    elif source == 'dag':
+        if period != 'quarter':
+            raise ValueError("Daguerreo financial data only supports period='quarter'.")
+        return get_financial_data_dag(stock)
+    else:
+        raise ValueError("Invalid source. Currently only 'fmp' and 'dag' are supported.")
+
+
+def get_financial_data_fmp(stock, period='quarter', api_key=None):
 
     if api_key is None:
         api_key = os.environ['FMP_API_KEY']
@@ -307,6 +319,30 @@ def get_financial_data(stock, period='quarter', api_key=None):
     r.raise_for_status()
     fs = r.json()
     return pd.DataFrame(fs)
+
+
+def get_financial_data_dag(stock):
+    ticker = stock.upper().removesuffix('.JK')
+    cache_key = f'income_statements/{ticker}'
+    if cache_key in _dag_not_found_cache:
+        return None
+
+    url = f'{_DAGUERREO_DATA_BASE}/jkse/income_statements/{ticker}.csv'
+    r = _dag_fetch_with_retry(url)
+    if r.status_code == 200 and r.text.strip() and '404: Not Found' not in r.text:
+        df = pd.read_csv(io.StringIO(r.text))
+        df.rename(columns={
+            'reported_currency': 'reportedCurrency',
+            'calendar_year': 'calendarYear',
+            'gross_profit': 'grossProfit',
+            'net_income': 'netIncome',
+        }, inplace=True)
+        return df.sort_values('date', ascending=False).reset_index(drop=True)
+
+    if r.status_code == 404:
+        _dag_not_found_cache.add(cache_key)
+    print(f"No financial data available for {stock} (HTTP {r.status_code}).")
+    return None
 
 
 def get_shares_outstanding(stock, api_key=None):
