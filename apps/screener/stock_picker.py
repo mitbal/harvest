@@ -1629,19 +1629,41 @@ if 'market' in st.query_params:
 
 logger = get_logger('screener')
 
-stock_options = ['Indonesian Stock', 'S&P 500 (US and World Stock)']
-stock_select = st.segmented_control(
-    'Stock List Selection',
-    options=stock_options,
-    default=stock_options[default_sl],
-    key='sl',
-    width='content',
+full_table_section = st.container(border=True)
+
+# Table controls share a single row: stock list, table view, syariah filter
+table_controls = full_table_section.container(
+    horizontal=True,
+    vertical_alignment='bottom',
+    gap='large',
 )
+
+stock_options = ['Indonesian Stock', 'S&P 500 (US and World Stock)']
+with table_controls:
+    stock_select = st.segmented_control(
+        'Stock List Selection',
+        options=stock_options,
+        default=stock_options[default_sl],
+        key='sl',
+        width='content',
+    )
 
 if stock_select == 'Indonesian Stock':
     sl = 'JKSE'
 else:
     sl = 'S&P500'
+
+table_preset_slot = table_controls.container(width='content')
+
+is_syariah = False
+if sl == 'JKSE':
+    syariah_filter = table_controls.segmented_control(
+        'Syariah filter',
+        options=['All', 'Syariah only'],
+        default='All',
+        width='content',
+    )
+    is_syariah = syariah_filter == 'Syariah only'
 
 if sl == 'JKSE':
     key = 'div_score_jkse'
@@ -1792,13 +1814,10 @@ def get_processed_df(df):
     return _get_processed_df_cached(_dataframe_version(df), df)
 
 
-full_table_section = st.container(border=True)
 with full_table_section:
 
-    if sl == 'JKSE':
-        is_syariah = st.toggle('Syariah Only?', value=False)
-        if is_syariah:
-            final_df = final_df[final_df['is_syariah'] == True]
+    if is_syariah:
+        final_df = final_df[final_df['is_syariah'] == True]
 
     filtered_df = get_processed_df(final_df)
 
@@ -1999,7 +2018,7 @@ with full_table_section:
 
         }
 
-        table_preset = st.segmented_control(
+        table_preset = table_preset_slot.segmented_control(
             'Table view',
             options=list(_TABLE_PRESETS),
             default='Essentials',
