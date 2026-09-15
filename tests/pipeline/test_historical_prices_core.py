@@ -53,10 +53,32 @@ def test_empty_price_stage_fails():
             historical_prices_core.run_historical_pipeline(max_concurrency=1)
 
 
+def test_supplied_symbols_define_the_historical_price_universe():
+    client = MagicMock()
+
+    with patch.object(
+        historical_prices_core.hd, "get_all_idx_stocks"
+    ) as get_stocks, patch.object(
+        historical_prices_core, "_fetch_with_retries", return_value=_prices("ACTIVE")
+    ) as fetch, patch.object(
+        historical_prices_core, "get_supabase_client", return_value=client
+    ), patch.object(historical_prices_core, "upsert_to_db"):
+        summary = historical_prices_core.run_historical_pipeline(
+            symbols=["ACTIVE", "ACTIVE"], max_concurrency=1
+        )
+
+    get_stocks.assert_not_called()
+    assert fetch.call_args.args[0] == "ACTIVE"
+    assert summary["symbols_total"] == 1
+
+
 def test_local_cache_keeps_new_corrections(tmp_path):
     cache_path = tmp_path / "historical_prices.pkl"
     with cache_path.open("wb") as cache_file:
-        pickle.dump(_prices("TEST", close=90.0), cache_file)
+        pickle.dump(
+            pd.concat([_prices("TEST", close=90.0), _prices("INACTIVE")]),
+            cache_file,
+        )
     client = MagicMock()
 
     with patch.object(
@@ -70,11 +92,13 @@ def test_local_cache_keeps_new_corrections(tmp_path):
             max_concurrency=1,
             use_local_cache=True,
             cache_path=cache_path,
+            symbols=["TEST"],
         )
 
     with cache_path.open("rb") as cache_file:
         cached = pickle.load(cache_file)
     assert cached.loc[0, "close"] == 100.0
+    assert cached["symbol"].tolist() == ["TEST"]
 
 
 def test_database_failure_does_not_replace_local_cache(tmp_path):

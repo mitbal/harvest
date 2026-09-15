@@ -75,6 +75,27 @@ def test_download_data_treats_empty_dataframes_as_failures():
             )
 
 
+def test_load_company_profiles_keeps_only_listed_active_stocks():
+    listed = pd.DataFrame({"symbol": ["ACTIVE", "INACTIVE", "ACTIVE"]})
+    profiles = pd.DataFrame(
+        {
+            "symbol": ["ACTIVE", "INACTIVE", "UNLISTED"],
+            "isActivelyTrading": [True, False, True],
+        }
+    )
+
+    with patch.object(
+        daily_data.hd, "get_all_idx_stocks", return_value=listed
+    ), patch.object(
+        daily_data.hd, "get_company_profile", return_value=profiles
+    ) as get_profiles:
+        result, symbols = daily_data._load_company_profiles("jkse")
+
+    get_profiles.assert_called_once_with(["ACTIVE", "INACTIVE"])
+    assert result.index.tolist() == ["ACTIVE"]
+    assert symbols == ["ACTIVE"]
+
+
 def test_store_frames_to_redis_uses_one_transaction():
     client = MagicMock()
     transaction = client.pipeline.return_value.__enter__.return_value
@@ -126,7 +147,7 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         daily_data,
         "run_historical_pipeline",
         return_value={"rows_upserted": 1},
-    ), patch.object(
+    ) as run_historical, patch.object(
         daily_data, "get_supabase_client", return_value=supabase
     ), patch.object(
         daily_data, "refresh_returns_view", return_value=None
@@ -137,16 +158,16 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         "get_latest_returns_from_db",
         return_value=pd.DataFrame(
             {
-                "return_7d": [0.01],
-                "return_1m": [0.02],
-                "return_1y": [0.1],
-                "return_10y": [1.0],
+                "return_7d": [0.01, 0.02],
+                "return_1m": [0.02, 0.03],
+                "return_1y": [0.1, 0.2],
+                "return_10y": [1.0, 2.0],
             },
-            index=pd.Index(["TEST.JK"], name="symbol"),
+            index=pd.Index(["TEST.JK", "INACTIVE.JK"], name="symbol"),
         ),
     ), patch.object(
         daily_data, "compute_div_score", return_value=score
-    ), patch.object(
+    ) as compute_score, patch.object(
         daily_data, "prepare_dividend_calendar", return_value=calendar
     ) as prepare_calendar, patch.object(
         daily_data, "store_frames_to_redis"
@@ -163,6 +184,15 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         for args in prepare_calendar.call_args_list
     )
     assert summary["calendar_years"] == years
+    run_historical.assert_called_once_with(
+        exchange="jkse",
+        mode="incremental",
+        max_concurrency=daily_data.DEFAULT_MAX_CONCURRENCY,
+        use_local_cache=False,
+        symbols=["TEST.JK"],
+    )
+    assert compute_score.call_args.kwargs["latest_returns"].index.tolist() == ["TEST.JK"]
+    assert summary["returns_rows"] == 1
     assert f"div_cal_jkse_{years[-1]}" in store_redis.call_args.args[0]
     assert store_storage.call_count == 2
 
