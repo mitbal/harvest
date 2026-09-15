@@ -8,8 +8,13 @@
 *.png
 !asset/home/*.png
 *.json
+!package.json
+!package-lock.json
 articles/
 .DS_Store
 __pycache__/
 .streamlit/secrets.toml
 .coverage
+node_modules/
+playwright-report/
+test-results/

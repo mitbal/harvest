@@ -30,6 +30,7 @@ Environment variables required (same as the app):
 
 import os
 import sys
+import io
 import json
 import time
 import argparse
@@ -163,8 +164,9 @@ def profile_third_party_imports(profiler: MemoryProfiler):
     """Stage 1 – import heavy third-party libs."""
     import numpy as np          # noqa: F401
     import altair as alt        # noqa: F401
-    import seaborn as sns       # noqa: F401
-    profiler.mark("After numpy / altair / seaborn import")
+    import streamlit as st      # noqa: F401
+    from streamlit_echarts5 import st_echarts  # noqa: F401
+    profiler.mark("After numpy / altair / streamlit / ECharts import")
 
 
 def profile_harvest_imports(profiler: MemoryProfiler):
@@ -200,11 +202,15 @@ def profile_div_score_table(profiler: MemoryProfiler, r, market: str = "JKSE"):
 
     print(f"    Redis GET took {elapsed_redis * 1000:.1f} ms  |  payload size = {len(rjson) / 1024:.1f} KB")
 
-    div_score_json = json.loads(rjson)
-    profiler.mark("After json.loads(redis payload)")
-
-    raw_df = pd.DataFrame(json.loads(div_score_json["content"]))
-    profiler.mark("After pd.DataFrame from JSON", show_diff=True)
+    if isinstance(rjson, bytes) and rjson.startswith(b"PAR1"):
+        raw_df = pd.read_parquet(io.BytesIO(rjson))
+        profiler.mark("After pd.read_parquet(redis payload)", show_diff=True)
+    else:
+        div_score_json = json.loads(rjson)
+        profiler.mark("After json.loads(redis payload)")
+        content = div_score_json.get("content", div_score_json)
+        raw_df = pd.DataFrame(json.loads(content) if isinstance(content, str) else content)
+        profiler.mark("After pd.DataFrame from JSON", show_diff=True)
 
     # Rename + merge company profile (same as the app)
     raw_df.rename(columns={"symbol": "stock"}, inplace=True)
@@ -280,26 +286,54 @@ def profile_derived_columns(profiler: MemoryProfiler, pruned_df: pd.DataFrame):
     df["mc_penalty"] = df["mktCap"].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
     df["maximumCutPct"] = df["maximumCutPct"].apply(lambda x: min(x, 0) * -1)
     df["max10CutPct"]   = df["max10CutPct"].apply(lambda x: min(x, 0) * -1)
-    df["maxDivIncrease"]       = df.apply(lambda x: min(x["avgFlatAnnualDivIncrease"], x["lastDiv"] * 0.05), axis=1)
-    df["maxRevGrowthDecrease"] = df.apply(lambda x: min(x["revenueGrowthTTM"], 0), axis=1)
-    df["maxIncGrowthDecrease"] = df.apply(lambda x: min(x["netIncomeGrowthTTM"], 0), axis=1)
-
     return_cols = ["return_7d", "return_1m", "return_1y", "return_10y", "total_return_1y", "total_return_10y"]
     for col in return_cols:
         if col in df.columns:
             df[col] = df[col] * 100
 
-    df["DScore"] = (
-        (df["lastDiv"] + df["maxDivIncrease"] * 5 * (df["positiveYear"] / df["numOfYear"])) / df["price"]
-    ) * 100 \
-      * (df["numDividendYear"] / (df["numDividendYear"] + 25)) \
-      * (1 - np.exp(-df["numDividendYear"] / 5)) \
-      * (100 - df["max10CutPct"]) / 100 \
-      * df["mc_penalty"] \
-      * (1 + df["maxRevGrowthDecrease"] / 100) \
-      * (1 + df["maxIncGrowthDecrease"] / 100)
+    # Dividend Score — mirrors stock_picker.get_processed_df
+    is_payer = df["yield"] > 0
+    reliability = (df["positiveYear"] / df["numOfYear"].replace(0, np.nan)).fillna(1.0)
+    growth_rate = (df["avgFlatAnnualDivIncrease"] / df["lastDiv"].replace(0, np.nan)).clip(-0.20, 0.05).fillna(0)
+    proj_div    = df["lastDiv"] * (1 + growth_rate * 5 * reliability)
+    fwd_yield   = (proj_div / df["price"].replace(0, np.nan) * 100).clip(lower=0)
+    maturity    = 1 - np.exp(-df["numDividendYear"] / 10)
+    reported_earnings = pd.to_numeric(df["earningTTM"], errors="coerce")
+    revenue_ttm = pd.to_numeric(df["revenueTTM"], errors="coerce")
+    historical_margin = pd.to_numeric(df["medianProfitMargin"], errors="coerce") / 100
+    margin_supported_earnings = revenue_ttm * historical_margin.clip(lower=0) * 1.25
+    can_normalize = (reported_earnings > 0) & (revenue_ttm > 0) & (historical_margin > 0)
+    organic_earnings = reported_earnings.where(
+        ~can_normalize,
+        np.minimum(reported_earnings, margin_supported_earnings),
+    )
+    dividend_cash = (
+        pd.to_numeric(df["yield"], errors="coerce")
+        / 100
+        * pd.to_numeric(df["mktCap"], errors="coerce")
+    )
+    organic_payout = dividend_cash / organic_earnings.where(organic_earnings > 0)
+    sustain = (1 / np.maximum(1, organic_payout / 0.80)).fillna(0)
+    organic_growth = np.minimum(
+        pd.to_numeric(df["revenueGrowthTTM"], errors="coerce"),
+        pd.to_numeric(df["netIncomeGrowthTTM"], errors="coerce"),
+    )
+    growth_adj = (1 + organic_growth.clip(-100, 25) / 100).fillna(1.0)
 
-    df = df.fillna(0).sort_values("DScore", ascending=False)
+    df["DScore"] = (
+        np.minimum(fwd_yield, 12)
+        * maturity
+        * (100 - df["max10CutPct"]) / 100
+        * df["mc_penalty"]
+        * growth_adj
+        * sustain
+        * is_payer
+    ).clip(lower=0)
+
+    df["_is_payer"] = is_payer
+    df["DScore"] = df["DScore"] + df["_is_payer"] * 1e-6
+    df = df.fillna(0).sort_values(["_is_payer", "DScore"], ascending=False)
+    df = df.drop(columns="_is_payer")
 
     profiler.mark("After get_processed_df (derived columns + sort)")
     print(f"\n    filtered_df size: {df_mem_mb(df, 'filtered_df'):.2f} MB  "

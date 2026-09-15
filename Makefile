@@ -1,5 +1,5 @@
 run:
-	streamlit run main.py
+	PYTHONPATH="/Users/mitbal/workspace/lesley/:$$PYTHONPATH" streamlit run main.py
 
 build:
 	docker build -t harvest:v1 .
@@ -12,3 +12,6 @@ serve-app:
 
 profile-memory-usage:
 	fil-profile run -m streamlit run main.py
+
+run-test-live:
+	npm run test:live

@@ -107,14 +107,14 @@ def get_specific_stock_detail(stock_name, sl):
     """Pure data-fetching function — no UI side-effects so cache is safe to share."""
     start_time = time.time()
 
+    source = 'dag' if sl == 'JKSE' else 'fmp'
     n_share = hd.get_shares_outstanding(stock_name)['outstandingShares'].tolist()[0]
-    fin     = hd.get_financial_data(stock_name)
+    fin     = hd.get_financial_data(stock_name, source=source)
     cp_df   = hd.get_company_profile([stock_name])
 
     start_date = '2010-01-01'
     price_df   = hd.get_daily_stock_price(stock_name, start_from=start_date)
 
-    source = 'dag' if sl == 'JKSE' else 'fmp'
     sdf    = hd.get_dividend_history_single_stock(stock_name, source=source)
 
     end_time = time.time()

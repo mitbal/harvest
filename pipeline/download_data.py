@@ -28,7 +28,8 @@ def download_all(start_from, exch='jkse'):
     with open(f'data/{exch}/prices.pkl', 'wb') as f:
         pickle.dump(prices, f)
 
-    financials = download_financials(stock_list)
+    financial_source = 'dag' if exch == 'jkse' else 'fmp'
+    financials = download_financials(stock_list, source=financial_source)
     with open(f'data/{exch}/financials.pkl', 'wb') as f:
         pickle.dump(financials, f)
 
@@ -101,12 +102,15 @@ def download_single_price(stock, start_from):
         return None
 
 @flow
-def download_financials(stock_list, start_from=None, max_concurrency=10):  # Added max_concurrency as flow parameter
+def download_financials(stock_list, start_from=None, max_concurrency=10, source='fmp'):  # Added max_concurrency as flow parameter
     """Download price data in parallel using ThreadPoolExecutor."""
 
     fins = {}
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-        futures = {executor.submit(download_single_fin, stock): stock for stock in stock_list}
+        futures = {
+            executor.submit(download_single_fin, stock, source): stock
+            for stock in stock_list
+        }
         for future in tqdm(futures, desc="Downloading financials data"):
             stock = futures[future]
             try:
@@ -120,10 +124,10 @@ def download_financials(stock_list, start_from=None, max_concurrency=10):  # Add
 
 
 @task(cache_policy=INPUTS, cache_expiration=timedelta(days=1), log_prints=True)
-def download_single_fin(stock):
+def download_single_fin(stock, source='fmp'):
     print(f'download financial report {stock}')
     try:
-        fin = hd.get_financial_data(stock, period='quarter')
+        fin = hd.get_financial_data(stock, period='quarter', source=source)
         return fin
     except Exception as e:
         print(f'Error downloading financial report {stock}: {e}')

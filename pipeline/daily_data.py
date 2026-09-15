@@ -194,7 +194,11 @@ def download_data(
 
 
 def download_single_financial(stock: str):
-    return hd.get_financial_data(stock, period="quarter")
+    return hd.get_financial_data(stock, period="quarter", source="dag")
+
+
+def download_single_us_financial(stock: str):
+    return hd.get_financial_data(stock, period="quarter", source="fmp")
 
 
 def download_single_dividend(stock: str):
@@ -428,11 +432,14 @@ def run_daily(
     profiles, active_stocks = _load_company_profiles(exchange)
 
     dividend_function = download_single_dividend if exchange == "jkse" else download_single_us_dividend
+    financial_function = (
+        download_single_financial if exchange == "jkse" else download_single_us_financial
+    )
     dividends, dividend_summary = download_data(
         active_stocks, dividend_function, "dividend", max_concurrency
     )
     financials, financial_summary = download_data(
-        active_stocks, download_single_financial, "financial", max_concurrency
+        active_stocks, financial_function, "financial", max_concurrency
     )
 
     historical_summary = run_historical_pipeline(

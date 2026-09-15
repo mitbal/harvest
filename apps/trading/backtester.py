@@ -303,7 +303,9 @@ def _analyze_stock(
 
         start = (datetime.date.today() - datetime.timedelta(days=(history_years + 1) * 366)).isoformat()
         prices = hd.get_daily_stock_price(symbol, start_from=start)
-        financials = _prepare_financials(hd.get_financial_data(symbol, period="quarter"))
+        financials = _prepare_financials(
+            hd.get_financial_data(symbol, period="quarter", source="dag")
+        )
         if prices is None or prices.empty or len(financials) < 8:
             return None
 
