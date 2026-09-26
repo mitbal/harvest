@@ -1168,23 +1168,23 @@ st.html(
                 <img src="{logo}" alt="Panen Dividen logo">
                 <span>Panen Dividen</span>
             </div>
-            <div class="pd-masthead-note">Ruang kerja investasi berbasis data</div>
+            <div class="pd-masthead-note">A data-driven investing workspace</div>
         </header>
 
         <section class="pd-hero" aria-labelledby="pd-hero-title">
             <div class="pd-hero-copy">
-                <div class="pd-hero-kicker">Dibangun untuk investor Indonesia</div>
-                <h1 id="pd-hero-title">Data jernih. Keputusan lebih tenang.</h1>
+                <div class="pd-hero-kicker">Built for Indonesian investors</div>
+                <h1 id="pd-hero-title">Clear data. Calmer decisions.</h1>
                 <p>
-                    Satukan riset saham dividen, analisis portofolio, timing historis,
-                    simulasi compounding, dan pengujian strategi dalam satu ruang kerja.
+                    Bring dividend stock research, portfolio analytics, historical timing,
+                    compounding simulation, and strategy testing together in one workspace.
                 </p>
                 <div class="pd-actions">
                     <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
-                        Mulai dari Ranking Screener <span aria-hidden="true">→</span>
+                        Start with the Ranking Screener <span aria-hidden="true">→</span>
                     </a>
                     <a class="pd-button pd-button-secondary" href="./porto_overview" target="_self">
-                        Analisis portofolio
+                        Analyze your portfolio
                     </a>
                 </div>
             </div>
@@ -1192,33 +1192,33 @@ st.html(
                 <div class="pd-preview">
                     <div class="pd-preview-bar">
                         <span>Portfolio Analytics</span>
-                        <span class="pd-preview-status">Preview dashboard</span>
+                        <span class="pd-preview-status">Dashboard preview</span>
                     </div>
                     <img
                         src="{portfolio_preview}"
-                        alt="Portfolio Analytics yang menampilkan annual dividend income, target progress, yield on cost, nilai investasi, dan holdings"
+                        alt="Portfolio Analytics showing annual dividend income, target progress, yield on cost, investment value, and holdings"
                         decoding="async"
                         fetchpriority="high"
                     >
                 </div>
                 <div class="pd-hero-chip">
-                    Dari yield on cost hingga target income, lihat portofolio sebagai satu cerita yang utuh.
+                    From yield on cost to income targets, see your portfolio as one complete story.
                 </div>
             </div>
         </section>
 
         <div class="pd-context" aria-label="Product coverage">
-            <span>Fokus IDX dan investor ritel</span>
-            <span>Riset JKSE dan S&amp;P 500</span>
-            <span>9 alat analisis yang saling terhubung</span>
+            <span>Focused on IDX and retail investors</span>
+            <span>Research for JKSE and S&amp;P 500</span>
+            <span>9 analysis tools that work together</span>
         </div>
 
         <section class="pd-section" aria-labelledby="pd-workflow-title">
             <div class="pd-section-header">
-                <h2 id="pd-workflow-title">Satu alur dari ide hingga evaluasi.</h2>
+                <h2 id="pd-workflow-title">One flow from idea to evaluation.</h2>
                 <p>
-                    Mulai dari pertanyaan sederhana, telusuri data yang relevan, lalu uji dampaknya
-                    terhadap tujuan income dan strategi Anda.
+                    Start with a simple question, dig into the data that matters, then test its impact
+                    on your income goals and strategy.
                 </p>
             </div>
 
@@ -1226,17 +1226,17 @@ st.html(
                 <article class="pd-workflow-item">
                     <div class="pd-workflow-copy">
                         <span class="pd-step">1</span>
-                        <h3>Temukan kandidat dengan konteks, bukan sekadar yield.</h3>
+                        <h3>Find candidates with context, not just yield.</h3>
                         <p>
-                            Ranking Screener merangkum kualitas dividen, valuasi, pertumbuhan,
-                            profitabilitas, dan risiko untuk membantu menyusun shortlist yang lebih tajam.
+                            The Ranking Screener brings together dividend quality, valuation, growth,
+                            profitability, and risk to help you build a sharper shortlist.
                         </p>
-                        <a class="pd-text-link" href="./stock_picker" target="_self">Buka screener</a>
+                        <a class="pd-text-link" href="./stock_picker" target="_self">Open the screener</a>
                     </div>
                     <div class="pd-workflow-image">
                         <img
                             src="{ranking_preview}"
-                            alt="Ranking Screener terbaru dengan peringkat saham, dividend yield, Dividend Score, valuasi, profit margin, dan return"
+                            alt="Latest Ranking Screener with stock rankings, dividend yield, Dividend Score, valuation, profit margin, and return"
                             loading="lazy"
                             decoding="async"
                         >
@@ -1246,17 +1246,17 @@ st.html(
                 <article class="pd-workflow-item">
                     <div class="pd-workflow-copy">
                         <span class="pd-step">2</span>
-                        <h3>Pahami kapan income historis terbentuk.</h3>
+                        <h3>Understand when historical income shows up.</h3>
                         <p>
-                            Jelajahi pola pembayaran dividen per bulan, bandingkan yield historis,
-                            dan lanjutkan ke analisis timing sebelum serta sesudah ex-date.
+                            Explore monthly dividend payout patterns, compare historical yields,
+                            and move on to timing analysis before and after the ex-date.
                         </p>
-                        <a class="pd-text-link" href="./calendar" target="_self">Lihat payout calendar</a>
+                        <a class="pd-text-link" href="./calendar" target="_self">View the payout calendar</a>
                     </div>
                     <div class="pd-workflow-image">
                         <img
                             src="{calendar_preview}"
-                            alt="Payout Calendar bulanan dengan tanggal dividen dan saham ber-yield tertinggi pada bulan April"
+                            alt="Monthly Payout Calendar with dividend dates and the highest-yielding stocks in April"
                             loading="lazy"
                             decoding="async"
                         >
@@ -1266,17 +1266,17 @@ st.html(
                 <article class="pd-workflow-item">
                     <div class="pd-workflow-copy">
                         <span class="pd-step">3</span>
-                        <h3>Uji dampaknya terhadap portofolio Anda.</h3>
+                        <h3>Test the impact on your portfolio.</h3>
                         <p>
-                            Pantau income, diversifikasi sektor, dan target portofolio. Bandingkan juga
-                            skenario DRIP dan tanpa DRIP sebelum membuat rencana jangka panjang.
+                            Track income, sector diversification, and portfolio targets. Compare DRIP
+                            and non-DRIP scenarios before committing to a long-term plan.
                         </p>
-                        <a class="pd-text-link" href="./simulator" target="_self">Jalankan simulasi</a>
+                        <a class="pd-text-link" href="./simulator" target="_self">Run a simulation</a>
                     </div>
                     <div class="pd-workflow-image">
                         <img
                             src="{compounding_preview}"
-                            alt="Compounding Simulator yang membandingkan total investasi, nilai portofolio, dividen, yield on cost, dan pertumbuhan tahunan"
+                            alt="Compounding Simulator comparing total invested, portfolio value, dividends, yield on cost, and annual growth"
                             loading="lazy"
                             decoding="async"
                         >
@@ -1288,7 +1288,7 @@ st.html(
         <section class="pd-latest" aria-labelledby="pd-latest-title">
             <div class="pd-latest-inner">
                 <div class="pd-latest-heading">
-                    <h2 id="pd-latest-title">Kemampuan terbaru untuk riset yang lebih dalam.</h2>
+                    <h2 id="pd-latest-title">New capabilities for deeper research.</h2>
                     <span class="pd-new-label">Latest tools</span>
                 </div>
 
@@ -1296,66 +1296,66 @@ st.html(
                     <span class="pd-latest-index">01</span>
                     <h3>Historical DRIP Simulator</h3>
                     <p>
-                        Bandingkan hasil reinvestasi dan tanpa reinvestasi memakai histori satu saham
-                        atau beberapa saham, lengkap dengan alokasi, residual cash, dan transaction log.
+                        Compare reinvesting versus not reinvesting using the history of a single stock
+                        or several, complete with allocation, residual cash, and a transaction log.
                     </p>
-                    <a class="pd-text-link" href="./simulator" target="_self">Coba simulator</a>
+                    <a class="pd-text-link" href="./simulator" target="_self">Try the simulator</a>
                 </article>
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">02</span>
                     <h3>Best Timing Analysis</h3>
                     <p>
-                        Pelajari bulan yang relatif murah, distribusi titik rendah sebelum ex-date,
-                        serta pola recovery setelah ex-date dengan data historis yang dapat diaudit.
+                        Study which months tend to be cheaper, how lows are distributed before the ex-date,
+                        and recovery patterns afterwards, all from auditable historical data.
                     </p>
-                    <a class="pd-text-link" href="./best_timing" target="_self">Pelajari timing</a>
+                    <a class="pd-text-link" href="./best_timing" target="_self">Explore timing</a>
                 </article>
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">03</span>
                     <h3>Growth at a Discount</h3>
                     <p>
-                        Saring perusahaan IDX yang tetap profitable dan bertumbuh saat multiple P/E
-                        serta P/S berada di bawah rentang historisnya. Hasil ditampilkan sebagai skenario, bukan target harga.
+                        Screen IDX companies that stay profitable and keep growing while their P/E and P/S
+                        multiples sit below historical ranges. Results are shown as scenarios, not price targets.
                     </p>
-                    <a class="pd-text-link" href="./backtester" target="_self">Buka long-term screen</a>
+                    <a class="pd-text-link" href="./backtester" target="_self">Open the long-term screen</a>
                 </article>
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">04</span>
                     <h3>Short-Term Swing Trading Lab</h3>
                     <p>
-                        Riset strategi mean-reversion, pullback, relative strength, dan breakout
-                        dengan holdout validation untuk horizon sekitar 1–10 sesi.
+                        Research mean-reversion, pullback, relative strength, and breakout strategies
+                        with holdout validation over roughly a 1–10 session horizon.
                     </p>
-                    <a class="pd-text-link" href="./day_trading" target="_self">Masuk ke lab</a>
+                    <a class="pd-text-link" href="./day_trading" target="_self">Enter the lab</a>
                 </article>
             </div>
         </section>
 
         <section class="pd-insights" aria-labelledby="pd-insights-title">
             <div class="pd-section-header">
-                <h2 id="pd-insights-title">Baca pasar dari lebih dari satu sudut.</h2>
+                <h2 id="pd-insights-title">Read the market from more than one angle.</h2>
                 <p>
-                    Beralih dari gambaran pasar ke perbandingan saham dan pola historis tanpa kehilangan
-                    konteks di sepanjang proses riset.
+                    Move from the market-wide picture to stock comparisons and historical patterns
+                    without losing context along the way.
                 </p>
             </div>
 
             <article class="pd-insight-lead">
                 <div class="pd-insight-copy">
-                    <h3>Lihat arah pasar dalam satu pandangan.</h3>
+                    <h3>See where the market is heading at a glance.</h3>
                     <p>
-                        Market Heatmap menyusun return harian berdasarkan sektor, industri, dan market cap
-                        agar breadth serta pergerakan yang paling menonjol lebih cepat terbaca.
+                        The Market Heatmap arranges daily returns by sector, industry, and market cap
+                        so breadth and the biggest moves are quicker to read.
                     </p>
-                    <a class="pd-text-link" href="./market_watch" target="_self">Buka market heatmap</a>
+                    <a class="pd-text-link" href="./market_watch" target="_self">Open the market heatmap</a>
                 </div>
                 <figure>
                     <img
                         src="{market_preview}"
-                        alt="Market Heatmap IDX berwarna merah dan hijau yang menampilkan return satu hari berdasarkan market cap"
+                        alt="Red and green IDX Market Heatmap showing one-day returns by market cap"
                         loading="lazy"
                         decoding="async"
                     >
@@ -1367,18 +1367,18 @@ st.html(
                     <figure>
                         <img
                             src="{comparison_preview}"
-                            alt="Scatter plot perbandingan saham berdasarkan dividend yield dan PE ratio"
+                            alt="Scatter plot comparing stocks by dividend yield and PE ratio"
                             loading="lazy"
                             decoding="async"
                         >
                     </figure>
                     <div class="pd-insight-copy">
-                        <h3>Bandingkan trade-off, bukan satu angka.</h3>
+                        <h3>Compare trade-offs, not a single number.</h3>
                         <p>
-                            Tempatkan beberapa saham pada dua metrik sekaligus untuk melihat posisi relatif,
-                            outlier, dan kandidat yang lebih sesuai dengan fokus riset Anda.
+                            Plot several stocks across two metrics at once to see relative position,
+                            outliers, and the candidates that best fit your research focus.
                         </p>
-                        <a class="pd-text-link" href="./stock_comparison" target="_self">Bandingkan saham</a>
+                        <a class="pd-text-link" href="./stock_comparison" target="_self">Compare stocks</a>
                     </div>
                 </article>
 
@@ -1386,18 +1386,18 @@ st.html(
                     <figure>
                         <img
                             src="{timing_preview}"
-                            alt="Analisis Best Timing dengan pola harga bulanan dan distribusi hari sebelum ex-date"
+                            alt="Best Timing analysis with monthly price patterns and the distribution of days before the ex-date"
                             loading="lazy"
                             decoding="async"
                         >
                     </figure>
                     <div class="pd-insight-copy">
-                        <h3>Ubah timing menjadi distribusi yang dapat diuji.</h3>
+                        <h3>Turn timing into a distribution you can test.</h3>
                         <p>
-                            Pelajari seasonality dan jarak historis menuju ex-date sebagai pola data,
-                            bukan kepastian waktu beli.
+                            Study seasonality and the historical distance to the ex-date as data patterns,
+                            not as a guaranteed time to buy.
                         </p>
-                        <a class="pd-text-link" href="./best_timing" target="_self">Pelajari timing historis</a>
+                        <a class="pd-text-link" href="./best_timing" target="_self">Explore historical timing</a>
                     </div>
                 </article>
             </div>
@@ -1405,10 +1405,10 @@ st.html(
 
         <section class="pd-section" aria-labelledby="pd-tools-title">
             <div class="pd-tools-header">
-                <h2 id="pd-tools-title">Semua alat, tersusun sesuai cara Anda bekerja.</h2>
+                <h2 id="pd-tools-title">Every tool, arranged around how you work.</h2>
                 <p>
-                    Pilih titik masuk yang paling dekat dengan pertanyaan Anda. Setiap halaman dibuat
-                    untuk menjawab satu keputusan riset dengan lebih jelas.
+                    Pick the entry point closest to your question. Each page is built to answer
+                    one research decision more clearly.
                 </p>
             </div>
 
@@ -1417,23 +1417,23 @@ st.html(
                     <p class="pd-tool-group-title">Dividend research</p>
                     <a class="pd-tool-link" href="./stock_picker" target="_self">
                         <strong>Ranking Screener</strong>
-                        <span>Ranking dividen, valuasi, fundamental, dan risiko dalam satu riset saham.</span>
+                        <span>Dividend, valuation, fundamental, and risk rankings in a single stock research view.</span>
                     </a>
                     <a class="pd-tool-link" href="./calendar" target="_self">
                         <strong>Payout Calendar</strong>
-                        <span>Pola pembayaran historis dan yield per bulan untuk JKSE atau S&amp;P 500.</span>
+                        <span>Historical payout patterns and monthly yields for JKSE or the S&amp;P 500.</span>
                     </a>
                     <a class="pd-tool-link" href="./best_timing" target="_self">
                         <strong>Best Timing</strong>
-                        <span>Seasonality, pola sebelum ex-date, dan recovery setelah pembayaran.</span>
+                        <span>Seasonality, pre-ex-date patterns, and recovery after the payout.</span>
                     </a>
                     <a class="pd-tool-link" href="./porto_overview" target="_self">
                         <strong>Portfolio Analytics</strong>
-                        <span>Income, yield on cost, target, diversifikasi, dan timeline dividen.</span>
+                        <span>Income, yield on cost, targets, diversification, and a dividend timeline.</span>
                     </a>
                     <a class="pd-tool-link" href="./simulator" target="_self">
                         <strong>Compounding Simulator</strong>
-                        <span>Proyeksi sederhana dan historical replay dengan atau tanpa DRIP.</span>
+                        <span>Simple projections and historical replay, with or without DRIP.</span>
                     </a>
                 </div>
 
@@ -1441,11 +1441,11 @@ st.html(
                     <p class="pd-tool-group-title">Market intelligence</p>
                     <a class="pd-tool-link" href="./market_watch" target="_self">
                         <strong>Market Heatmap</strong>
-                        <span>Snapshot breadth, sektor, return, valuasi, yield, dan indikator makro.</span>
+                        <span>A snapshot of breadth, sectors, returns, valuation, yield, and macro indicators.</span>
                     </a>
                     <a class="pd-tool-link" href="./stock_comparison" target="_self">
                         <strong>Stock Comparison</strong>
-                        <span>Bandingkan 2–5 saham pada income, quality, growth, return, dan risk.</span>
+                        <span>Compare 2–5 stocks on income, quality, growth, return, and risk.</span>
                     </a>
                 </div>
 
@@ -1453,31 +1453,31 @@ st.html(
                     <p class="pd-tool-group-title">Strategy research</p>
                     <a class="pd-tool-link" href="./backtester" target="_self">
                         <strong>Position Trading</strong>
-                        <span>Growth at a Discount screen untuk kandidat IDX berorientasi jangka panjang.</span>
+                        <span>A Growth at a Discount screen for long-term oriented IDX candidates.</span>
                     </a>
                     <a class="pd-tool-link" href="./day_trading" target="_self">
                         <strong>Short-Term Swing Trading Lab</strong>
-                        <span>Optimasi, validasi, backtest, dan scanner setup berbasis daily close.</span>
+                        <span>Optimization, validation, backtests, and a setup scanner based on daily closes.</span>
                     </a>
                 </div>
             </div>
         </section>
 
         <section class="pd-closing" aria-labelledby="pd-closing-title">
-            <h2 id="pd-closing-title">Mulai dari satu saham yang ingin Anda pahami.</h2>
+            <h2 id="pd-closing-title">Start with one stock you want to understand.</h2>
             <div class="pd-closing-copy">
                 <p>
-                    Buka Ranking Screener, pilih pasar, lalu telusuri dividen, fundamental,
-                    valuasi, price action, dan simulasi compounding dari satu halaman.
+                    Open the Ranking Screener, pick a market, then explore dividends, fundamentals,
+                    valuation, price action, and compounding simulations from a single page.
                 </p>
                 <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
-                    Mulai riset saham <span aria-hidden="true">→</span>
+                    Start researching stocks <span aria-hidden="true">→</span>
                 </a>
             </div>
         </section>
 
         <footer class="pd-footer">
-            <span>Data dapat terlambat atau mengandung kesalahan. Verifikasi dengan sumber resmi; Panen Dividen bukan rekomendasi investasi atau jaminan hasil.</span>
+            <span>Data may be delayed or contain errors. Verify with official sources; Panen Dividen is not investment advice and does not guarantee results.</span>
             <nav class="pd-footer-links" aria-label="Community and support links">
                 <a href="https://www.reddit.com/r/panendividen" target="_blank" rel="noreferrer">Community</a>
                 <a href="https://github.com/mitbal/harvest/issues" target="_blank" rel="noreferrer">Feedback</a>
