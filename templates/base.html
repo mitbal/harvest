@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="id-ID" prefix="og: http://ogp.me/ns#">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  {% block meta %}{% endblock %}
+  <link rel="icon" href="https://github.com/mitbal/harvest/blob/master/asset/favicon.png?raw=true" type="image/png">
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-V434YW6FCJ"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-V434YW6FCJ');
+  </script>
+  <style>
+    :root { --green: #064E3B; --green-dark: #14532D; --bg: #EFF1EF; --panel: #fff; --line: #d7e0dd; --muted: #52615c; --text: #1f2a26; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
+    header { background: var(--green-dark); color: #fff; padding: 12px 16px; }
+    header a { color: #fff; text-decoration: none; font-weight: 700; }
+    main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+    nav.crumbs { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+    nav.crumbs a { color: var(--muted); }
+    h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 12px; color: var(--green); }
+    h2 { font-size: 1.3rem; margin: 32px 0 12px; color: var(--green); }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+    .cta { display: inline-block; background: var(--green); color: #fff; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-weight: 600; margin: 8px 0; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+    .stat dt { font-size: 13px; color: var(--muted); }
+    .stat dd { margin: 2px 0 0; font-size: 1.15rem; font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); }
+    th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+    th { background: var(--line); font-weight: 600; }
+    td.num, th.num { text-align: right; }
+    .peers { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; }
+    .peers a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; color: var(--green); text-decoration: none; }
+    .muted { color: var(--muted); font-size: 14px; }
+    footer { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 16px; }
+  </style>
+</head>
+<body>
+  <header><a href="/">🪙 Panen Dividen</a></header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>Data hanya untuk informasi, bukan rekomendasi jual/beli saham.</footer>
+</body>
+</html>

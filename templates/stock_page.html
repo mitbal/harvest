@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block meta %}
+  <meta name="description" content="{{ meta_description }}">
+  <link rel="canonical" href="{{ canonical }}">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="id_ID">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:url" content="{{ canonical }}">
+  <meta property="og:image" content="https://github.com/mitbal/harvest/blob/master/asset/calendar.png?raw=true">
+  <script type="application/ld+json">{{ json_ld | safe }}</script>
+{% endblock %}
+
+{% block content %}
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <a href="/">Panen Dividen</a> › <a href="/stock_picker">Ranking Screener</a> › {{ ticker }}
+  </nav>
+
+  <h1>Dividen Saham {{ ticker }} – {{ company }}</h1>
+  <p>{{ summary }}</p>
+  <a class="cta" href="{{ app_url }}">Buka analisis interaktif {{ ticker }} →</a>
+  <p class="muted">Grafik dividen, laporan keuangan, valuasi, waktu beli terbaik, dan simulasi compounding.</p>
+
+  <h2>Ringkasan {{ ticker }}</h2>
+  <dl class="stats">
+    {% for label, value in stats %}
+    <div class="stat"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>
+    {% endfor %}
+  </dl>
+  {% if updated %}<p class="muted">Data diperbarui: {{ updated }}</p>{% endif %}
+
+  {% if yearly_dividends %}
+  <h2>Total Dividen {{ ticker }} per Tahun</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tahun fiskal</th><th class="num">Total dividen per saham</th><th class="num">Jumlah pembagian</th></tr></thead>
+      <tbody>
+        {% for row in yearly_dividends %}
+        <tr><td>{{ row.year }}</td><td class="num">{{ row.total }}</td><td class="num">{{ row.count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if recent_dividends %}
+  <h2>Jadwal & Riwayat Dividen {{ ticker }}</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Ex-date</th><th>Tanggal pembayaran</th><th class="num">Dividen per saham</th><th>Jenis</th></tr></thead>
+      <tbody>
+        {% for row in recent_dividends %}
+        <tr><td>{{ row.ex_date }}</td><td>{{ row.payment_date }}</td><td class="num">{{ row.amount }}</td><td>{{ row.type }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if description %}
+  <h2>Profil {{ company }}</h2>
+  <div class="panel"><p style="margin:0">{{ description }}</p></div>
+  {% endif %}
+
+  {% if peers %}
+  <h2>Saham Dividen Lain di Sektor {{ sector }}</h2>
+  <ul class="peers">
+    {% for peer in peers %}
+    <li><a href="{{ peer.url }}">{{ peer.ticker }} <span class="muted">· yield {{ peer.yield }}</span></a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <p><a class="cta" href="{{ app_url }}">Analisis lengkap {{ ticker }} di Panen Dividen →</a></p>
+{% endblock %}

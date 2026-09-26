@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% set title = "Saham " ~ ticker ~ " tidak ditemukan | Panen Dividen" %}
+
+{% block meta %}
+  <meta name="robots" content="noindex">
+{% endblock %}
+
+{% block content %}
+  <h1>Saham {{ ticker }} tidak ditemukan</h1>
+  <p>Kode saham ini tidak ada dalam daftar saham dividen Bursa Efek Indonesia kami.</p>
+  <a class="cta" href="/stock_picker">Cari di Ranking Screener →</a>
+{% endblock %}
