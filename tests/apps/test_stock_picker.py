@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import pandas as pd
 import streamlit as st
 
@@ -145,5 +146,85 @@ def test_sector_rating_is_unavailable_without_enough_valid_peers():
 
 def test_table_presets_keep_the_default_view_focused():
     assert list(sp._TABLE_PRESETS)[0] == 'Essentials'
-    assert len(sp._TABLE_PRESETS['Essentials']) <= 10
+    assert len(sp._TABLE_PRESETS['Essentials']) <= 11
     assert {'Rank', 'sector', 'industry', 'yield', 'DScore', 'peRatio'} <= set(sp._TABLE_PRESETS['Essentials'])
+
+
+def test_last_dividend_sits_between_price_and_yield():
+    for preset in ('Essentials', 'Dividend income'):
+        columns = sp._TABLE_PRESETS[preset]
+        assert columns.index('lastDiv') == columns.index('price') + 1
+        assert columns.index('yield') == columns.index('lastDiv') + 1
+
+
+def test_market_cap_penalty_uses_the_table_currency():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['LARGE', 'MEGA']
+    comparison['mktCap'] = [1e11, 3e12]  # USD 100B vs USD 3T
+
+    result = sp.get_processed_df(comparison, currency='USD')
+
+    # Both are far above the small-cap threshold, so size must not separate them.
+    assert result.loc['LARGE', 'DScore'] == pytest.approx(result.loc['MEGA', 'DScore'], rel=1e-3)
+
+
+def test_small_idx_caps_are_still_discounted():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['SMALL.JK', 'LARGE.JK']
+    comparison['mktCap'] = [5e11, 1e14]  # IDR 0.5T vs IDR 100T
+
+    result = sp.get_processed_df(comparison, currency='IDR')
+
+    assert result.loc['SMALL.JK', 'DScore'] < result.loc['LARGE.JK', 'DScore'] * 0.3
+
+
+def test_rating_band_labels():
+    assert sp._rating_band(85) == ('Top tier', 'green')
+    assert sp._rating_band(45) == ('Average', 'orange')
+    assert sp._rating_band(5) == ('Bottom tier', 'red')
+    assert sp._rating_band(np.nan) == ('Not rated', 'gray')
+
+
+def test_ddm_defaults_adjust_low_beta_and_cap_growth():
+    inputs = sp.default_ddm_inputs('JKSE', raw_beta=0.18, dividend_cagr=17.7)
+
+    assert inputs['beta'] == pytest.approx(0.67 * 0.18 + 0.33)
+    assert inputs['cost_of_equity'] == pytest.approx(6.5 + inputs['beta'] * 7.0)
+    assert inputs['growth'] == 5.0
+
+
+def test_ddm_default_growth_stays_below_cost_of_equity():
+    inputs = sp.default_ddm_inputs('S&P500', raw_beta=-0.5, dividend_cagr=10.0)
+
+    # Adjusted beta floors at 0, so Ke = 4.5 and growth is held 3 points below it.
+    assert inputs['cost_of_equity'] == pytest.approx(4.5)
+    assert inputs['growth'] == pytest.approx(1.5)
+
+
+def test_ddm_defaults_fall_back_without_beta_or_dividend_growth():
+    inputs = sp.default_ddm_inputs('S&P500', raw_beta=np.nan, dividend_cagr=None)
+
+    assert inputs['beta'] == 1.0
+    assert inputs['growth'] == sp.DDM_FALLBACK_GROWTH
+
+
+def test_gordon_value_is_undefined_when_growth_reaches_discount_rate():
+    assert sp.gordon_value(100.0, 10.0, 5.0) == pytest.approx(105.0 / 0.05)
+    assert sp.gordon_value(100.0, 5.0, 5.0) is None
+
+
+def test_ddm_range_moves_r_and_g_against_and_for_the_stock():
+    low, high = sp.ddm_value_range(100.0, r_pct=10.0, g_pct=5.0)
+
+    assert low == pytest.approx(sp.gordon_value(100.0, 11.0, 4.0))
+    assert high == pytest.approx(sp.gordon_value(100.0, 9.0, 6.0))
+    assert low < sp.gordon_value(100.0, 10.0, 5.0) < high
+
+
+def test_ddm_range_has_no_upper_bound_when_spread_is_too_narrow():
+    low, high = sp.ddm_value_range(100.0, r_pct=7.0, g_pct=5.5)
+
+    assert low is not None
+    assert high is None

@@ -41,6 +41,19 @@ NORMAL_MARGIN_BUFFER = 1.25
 SUSTAINABLE_PAYOUT_RATIO = 0.80
 MIN_VALUATION_OBSERVATIONS = 30
 MIN_SECTOR_PEERS = 3
+# Market cap at which the small-cap discount in DScore is 50%, in the table's currency.
+# IDR 3T is roughly USD 200M, so both markets discount the same economic size.
+MC_PENALTY_MIDPOINT = {'IDR': 3_000_000_000_000, 'USD': 200_000_000}
+# Dividend discount model defaults. Terminal growth is perpetual, so it is capped near
+# long-run nominal growth and kept DDM_MIN_SPREAD points below the cost of equity,
+# where the Gordon formula stops being hypersensitive to small input changes.
+DDM_DEFAULTS = {
+    'JKSE':   {'rf': 6.5, 'erp': 7.0, 'g_cap': 5.0},  # ERP includes a country risk premium
+    'S&P500': {'rf': 4.5, 'erp': 5.0, 'g_cap': 3.0},
+}
+DDM_MIN_SPREAD = 3.0
+DDM_FALLBACK_GROWTH = 2.5
+DDM_RANGE_STEP = 1.0  # points that r and g each move for the low/high range estimate
 _RESEARCH_SECTIONS = {
     'dividends': 'Dividends',
     'financials': 'Financials',
@@ -397,7 +410,8 @@ def get_rating_color(score):
 
 def add_anchor(name):
     """Adds an invisible HTML anchor for direct URL linking."""
-    st.markdown(f"<div id='{name}' style='scroll-margin-top:1rem'></div>", unsafe_allow_html=True)
+    # 4rem clears Streamlit's fixed top toolbar
+    st.markdown(f"<div id='{name}' style='scroll-margin-top:4rem'></div>", unsafe_allow_html=True)
 
 
 def _normalize_research_section(value):
@@ -451,15 +465,16 @@ def render_rating_card(title, score, metrics_dict, chart=None, color=None, key=N
     if chart:
         st.altair_chart(chart, width='stretch', key=key, theme=None)
 
-def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df):
-    
+def resolve_stock_data(stock_name, filtered_df, final_df, fin, cp_df, price_df, sdf, n_share):
+    """Row from the ranking table, or stats computed on the fly for stocks outside it."""
     if stock_name in filtered_df.index:
-        stock_data = filtered_df.loc[stock_name]
-    elif final_df is not None and stock_name in final_df.index:
-        stock_data = final_df.loc[stock_name]
-    else:
-        # Recalculate stats on the fly
-        stock_data = calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
+        return filtered_df.loc[stock_name]
+    if final_df is not None and stock_name in final_df.index:
+        return final_df.loc[stock_name]
+    return calculate_missing_stats(stock_name, fin, cp_df, price_df, sdf, n_share)
+
+
+def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df, stock_data):
 
     ratings = calculate_stock_ratings(stock_name, filtered_df, final_df, stock_data=stock_data)
     
@@ -553,37 +568,114 @@ def render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_
             'Assessment': 'Better than {:.0f}% of stocks'.format(ratings['profitability'])
         }, chart=dist_chart, color=color, key=f"chart_profit_{stock_name}")
 
-def render_company_profile(cp_df, stock_name, sl):
-    _JKSE_LOGO_BASE  = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos'
-    _SP500_LOGO_BASE = 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos'
+_LOGO_BASE = {
+    'JKSE': 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/jkse/logos',
+    'S&P500': 'https://raw.githubusercontent.com/mitbal/daguerreo-data/refs/heads/main/sp500/logos',
+}
 
-    ticker = quote(stock_name.split('.')[0], safe='')
-    logo_url = f'{_JKSE_LOGO_BASE}/{ticker}.svg' if sl == 'JKSE' else f'{_SP500_LOGO_BASE}/{ticker}.svg'
+# (minimum score, label, st.metric delta colour) — scores are percentiles within the list
+_RATING_BANDS = [
+    (80, 'Top tier', 'green'),
+    (60, 'Above average', 'green'),
+    (40, 'Average', 'orange'),
+    (20, 'Below average', 'red'),
+    (0, 'Bottom tier', 'red'),
+]
 
-    col_logo, col_text = st.columns([1, 3])
-    with col_logo:
-        alt_text = html.escape(f'{stock_name} company logo', quote=True)
-        st.markdown(
-            f'<img src="{logo_url}" alt="{alt_text}" style="width:100%;max-width:120px;object-fit:contain;"/>',
-            unsafe_allow_html=True,
+
+def _rating_band(score):
+    if score is None or not np.isfinite(score):
+        return 'Not rated', 'gray'
+    for threshold, label, color in _RATING_BANDS:
+        if score >= threshold:
+            return label, color
+    return _RATING_BANDS[-1][1:]
+
+
+def _format_price(value, currency):
+    """IDR trades in whole rupiah; other currencies keep cents."""
+    return f'{value:,.0f}' if currency == 'IDR' else f'{value:,.2f}'
+
+
+def _profile_text(profile, field):
+    value = profile.get(field)
+    return str(value) if isinstance(value, str) and value.strip() else ''
+
+
+def render_stock_header(stock_name, sl, cp_df, stock_data, filtered_df, final_df, currency):
+    """Summary card for the selected stock: identity, price, yield, rank and overall rating."""
+    profile = cp_df.loc[stock_name] if cp_df is not None and stock_name in cp_df.index else pd.Series(dtype=object)
+    company_name = _profile_text(profile, 'companyName') or stock_name
+    subtitle = ' · '.join(
+        part for part in [stock_name, _profile_text(profile, 'sector'), _profile_text(profile, 'industry')] if part
+    )
+
+    price = float(stock_data.get('price', 0) or 0)
+    change = float(stock_data.get('changes', 0) or 0)
+    prev_close = price - change
+    change_pct = change / prev_close * 100 if prev_close > 0 else 0
+
+    ratings = calculate_stock_ratings(stock_name, filtered_df, final_df, stock_data=stock_data)
+    overall = ratings['overall'] if ratings else None
+    band_label, band_color = _rating_band(overall)
+
+    # Logos are only published for stocks in the ranking universe.
+    has_logo = final_df is not None and stock_name in final_df.index
+
+    with st.container(border=True):
+        if has_logo:
+            logo_col, name_col, price_col, yield_col, rank_col, rating_col = st.columns(
+                [1, 5, 2, 2, 2, 2], vertical_alignment='center'
+            )
+            ticker = quote(stock_name.split('.')[0], safe='')
+            alt_text = html.escape(f'{company_name} logo', quote=True)
+            logo_col.markdown(
+                f'<img src="{_LOGO_BASE[sl]}/{ticker}.svg" alt="{alt_text}" '
+                'style="width:100%;max-width:72px;max-height:72px;object-fit:contain;"/>',
+                unsafe_allow_html=True,
+            )
+        else:
+            name_col, price_col, yield_col, rank_col, rating_col = st.columns(
+                [6, 2, 2, 2, 2], vertical_alignment='center'
+            )
+        with name_col:
+            st.subheader(company_name, anchor=False)
+            st.caption(subtitle)
+
+        price_col.metric(
+            'Price', _format_price(price, currency),
+            delta=f'{_format_price(change, currency)} ({change_pct:+.2f}%)' if change else None,
         )
-    with col_text:
-        st.write(cp_df.loc[stock_name, 'description'])
-    
-def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_share=None, currency='IDR', cp_df=None, price_df=None):
+        yield_col.metric(
+            'Dividend yield', f"{stock_data.get('yield', 0):.2f}%",
+            help='Latest finalized annual dividend divided by the current price.',
+        )
+        if stock_name in filtered_df.index:
+            rank_col.metric(
+                'Dividend Score', f"{filtered_df.loc[stock_name, 'DScore']:.2f}",
+                delta=f"Rank #{int(filtered_df.loc[stock_name, 'Rank'])} of {len(filtered_df):,}",
+                delta_color='off', delta_arrow='off',
+            )
+        else:
+            rank_col.metric(
+                'Dividend Score', 'N/A', delta='Not ranked',
+                delta_color='off', delta_arrow='off',
+            )
+        rating_col.metric(
+            'Overall rating', f'{overall:.0f}/100' if band_label != 'Not rated' else 'N/A',
+            delta=band_label, delta_color=band_color, delta_arrow='off',
+            help='Average of valuation, dividend, growth, profitability and sector percentiles '
+                 'against the ranking list. See Score overview for the breakdown.',
+        )
+
+        description = _profile_text(profile, 'description')
+        if description:
+            with st.expander(f'About {company_name}'):
+                st.write(description)
+
+
+def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None, currency='IDR', cp_df=None, price_df=None):
     if sdf is not None and not sdf.empty:
-        try:
-            last_val = final_df.loc[stock_name, 'lastDiv']
-            inc_val = final_df.loc[stock_name, 'avgFlatAnnualDivIncrease']
-        except KeyError as e:
-            logger.warning(f"Stock {stock_name} not found in final_df for dividend stats: {e}")
-            last_val = 0
-            inc_val = 0
-        except Exception as e:
-            logger.error(f"Unexpected error getting dividend stats for {stock_name}: {e}")
-            last_val = 0
-            inc_val = 0
-            
         annual_eps_df = None
         if fin is not None and not fin.empty and 'calendarYear' in fin.columns and 'netIncome' in fin.columns and n_share is not None:
             f = fin.copy()
@@ -677,8 +769,11 @@ def render_dividend_history(sdf, final_df, stock_name, filtered_df, fin=None, n_
         col_chart, col_table = st.columns([3, 1])
         
         with col_chart:
-            # st.caption('**Blue bars** = Historical Dividends &nbsp;·&nbsp; **Orange line** = Trend &nbsp;·&nbsp; **Green dashed** = 5Y Projection')
-            yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_val, inc_val=inc_val)
+            st.caption(
+                'Green = raised or held &nbsp;·&nbsp; Red = cut &nbsp;·&nbsp; '
+                f'Grey = {datetime.now().year} so far &nbsp;·&nbsp; Faded = 5-year projection'
+            )
+            yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_div, inc_val=inc_val)
             st.altair_chart(yearly_dividend_chart, width='stretch', theme=None)
             
         with col_table:
@@ -987,10 +1082,13 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
                   f'cheaper than {100 - percentile:.0f}% of all historical trading days '
                   f'in the last {year} year(s). Lower = historically cheap.'
               ))
-    k4.metric('Fair Value (median)', f'{int(fair_price):,}',
+    k4.metric('Fair Value (median)', _format_price(fair_price, target_currency),
               delta=f'{upside_pct:+.1f}% vs current',
               delta_color='normal')
-    k5.metric('Fair Value Range (p10–p90)', f'{int(fair_price_p10):,} – {int(fair_price_p90):,}',
+    # Two prices do not fit a fifth-width metric, so the upper bound goes on the sub-line.
+    k5.metric('Fair Value Range (p10–p90)', _format_price(fair_price_p10, target_currency),
+              delta=f'to {_format_price(fair_price_p90, target_currency)}',
+              delta_color='off', delta_arrow='off',
               help=f'Implied price range based on historical 10th–90th percentile {ratio}.')
     # st.markdown('---')
 
@@ -1013,6 +1111,51 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         st.altair_chart(pe_dist_chart, width='stretch', theme=None)
 
 
+def adjusted_beta(raw_beta):
+    """Blume adjustment: measured betas drift toward the market average of 1 over time."""
+    if raw_beta is None or not np.isfinite(raw_beta):
+        return 1.0
+    return max(0.0, 0.67 * raw_beta + 0.33)
+
+
+def default_ddm_inputs(market, raw_beta, dividend_cagr):
+    """Default CAPM and terminal-growth inputs (all rates in percent)."""
+    defaults = DDM_DEFAULTS[market]
+    beta = adjusted_beta(raw_beta)
+    cost_of_equity = defaults['rf'] + beta * defaults['erp']
+    if dividend_cagr is not None and np.isfinite(dividend_cagr) and dividend_cagr > 0:
+        growth = min(dividend_cagr, defaults['g_cap'])
+    else:
+        growth = DDM_FALLBACK_GROWTH
+    growth = max(0.0, min(growth, cost_of_equity - DDM_MIN_SPREAD))
+    return {
+        'rf': defaults['rf'],
+        'erp': defaults['erp'],
+        'beta': beta,
+        'cost_of_equity': cost_of_equity,
+        'growth': growth,
+        'growth_cap': defaults['g_cap'],
+    }
+
+
+def gordon_value(last_div, r_pct, g_pct):
+    """Gordon growth value from the latest annual dividend; None when growth reaches r."""
+    if r_pct <= g_pct:
+        return None
+    return last_div * (1 + g_pct / 100) / ((r_pct - g_pct) / 100)
+
+
+def ddm_value_range(last_div, r_pct, g_pct, step=DDM_RANGE_STEP):
+    """Low case: r up and g down by `step` points. High case: the reverse.
+
+    The high case is None when it would put growth at or above the discount rate.
+    Floors match the sensitivity grid (r >= 1%, g >= 0%).
+    """
+    low = gordon_value(last_div, r_pct + step, max(0.0, g_pct - step))
+    high = gordon_value(last_div, max(1.0, r_pct - step), g_pct + step)
+    return low, high
+
+
 def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, price_df=None, n_share=None):
     if stock_name in filtered_df.index:
         stock_data = filtered_df.loc[stock_name]
@@ -1028,33 +1171,47 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
     else:
         cagr_5y = None
     
-    default_g = min(cagr_5y, 5.0) if (cagr_5y is not None and cagr_5y > 0) else 2.5
-    
-    beta = stock_data.get('beta', 1.0)
-    
+    raw_beta = pd.to_numeric(stock_data.get('beta', np.nan), errors='coerce')
+    market = 'JKSE' if stock_name.endswith('.JK') else 'S&P500'
+    defaults = default_ddm_inputs(market, raw_beta, cagr_5y)
+
     # Cost of Equity calculation using CAPM
     st.write("#### Cost of Equity (CAPM)")
     capm_cols = st.columns(3)
-    rf_pct = capm_cols[0].number_input('Risk-Free Rate (%)', value=6.5 if stock_name.endswith('.JK') else 4.5, step=0.1, key=f"ddm_rf_{stock_name}", help="Yield of 10-year government bond")
-    erp_pct = capm_cols[1].number_input('Equity Risk Premium (%)', value=5.0, step=0.1, key=f"ddm_erp_{stock_name}", help="Extra return expected from stocks over risk-free rate")
-    beta_val = capm_cols[2].number_input('Beta', value=float(beta), step=0.01, key=f"ddm_beta_{stock_name}", help="Stock volatility relative to the market")
-    
+    rf_pct = capm_cols[0].number_input('Risk-Free Rate (%)', value=defaults['rf'], step=0.1, key=f"ddm_rf_{stock_name}", help="Yield of 10-year government bond")
+    erp_pct = capm_cols[1].number_input(
+        'Equity Risk Premium (%)', value=defaults['erp'], step=0.1, key=f"ddm_erp_{stock_name}",
+        help='Extra return expected from stocks over the risk-free rate'
+             + (', including a country risk premium for Indonesia.' if market == 'JKSE' else '.'),
+    )
+    raw_beta_text = f'{raw_beta:.2f}' if np.isfinite(raw_beta) else 'unavailable, so 1.0 is used'
+    beta_val = capm_cols[2].number_input(
+        'Beta (adjusted)', value=round(defaults['beta'], 2), step=0.01, key=f"ddm_beta_{stock_name}",
+        help=f'Stock volatility relative to the market. Defaults to the Blume-adjusted beta '
+             f'(0.67 × raw beta + 0.33); raw beta is {raw_beta_text}.',
+    )
+
     capm_ke = rf_pct + (beta_val * erp_pct)
     st.info(f"**Calculated Cost of Equity ($K_e$)**: {rf_pct}% + ({beta_val:.2f} × {erp_pct}%) = **{capm_ke:.2f}%**")
 
+    cagr_text = f'{cagr_5y:.1f}%' if cagr_5y is not None and np.isfinite(cagr_5y) else 'unavailable'
     cols = st.columns(2)
-    r_pct = cols[0].number_input(label='Required Rate of Return (Cost of Equity) %', value=float(capm_ke), min_value=1.0, max_value=50.0, step=0.5, key=f"ddm_r_{stock_name}")
-    g_pct = cols[1].number_input(label='Terminal Dividend Growth Rate %', value=float(default_g), min_value=0.0, max_value=20.0, step=0.5, key=f"ddm_g_{stock_name}")
+    # Keyed on Ke so edits to the CAPM inputs above flow into the required return.
+    r_pct = cols[0].number_input(label='Required Rate of Return (Cost of Equity) %', value=round(float(capm_ke), 2), min_value=1.0, max_value=50.0, step=0.5, key=f"ddm_r_{stock_name}_{capm_ke:.2f}")
+    g_pct = cols[1].number_input(
+        label='Terminal Dividend Growth Rate %', value=round(defaults['growth'], 2),
+        min_value=0.0, max_value=20.0, step=0.5, key=f"ddm_g_{stock_name}",
+        help=f'Perpetual growth rate. Defaults to the 5-year dividend CAGR ({cagr_text}), capped at '
+             f"{defaults['growth_cap']:.1f}% and kept at least {DDM_MIN_SPREAD:.0f} points below "
+             'the cost of equity.',
+    )
     
     if g_pct >= r_pct:
         st.error('Gordon Growth Model requires the Growth Rate to be strictly less than the Required Rate of Return.')
         return
         
-    r = r_pct / 100.0
-    g = g_pct / 100.0
-    
-    next_div = last_div * (1 + g)
-    intrinsic_value = next_div / (r - g) if (r - g) > 0 else 0
+    next_div = last_div * (1 + g_pct / 100)
+    intrinsic_value = gordon_value(last_div, r_pct, g_pct)
     
     if current_price > 0:
         margin_of_safety = (intrinsic_value - current_price) / current_price
@@ -1073,21 +1230,28 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
         assessment = '**Fair Valued**'
         highlight_color = 'green'
         
-    ci_lower = intrinsic_value * 0.9
-    ci_upper = intrinsic_value * 1.1
+    price_currency = 'IDR' if stock_name.endswith('.JK') else 'USD'
+    value_format = ',.0f' if price_currency == 'IDR' else ',.2f'
+    range_low, range_high = ddm_value_range(last_div, r_pct, g_pct)
+    range_high_text = _format_price(range_high, price_currency) if range_high is not None else 'no upper bound'
 
     markdown_table = f"""
     | Metric | Value |
     | ------ | ----- |
-    | Current Price | **:{highlight_color}[{int(current_price):,}]** |
+    | Current Price | **:{highlight_color}[{_format_price(current_price, price_currency)}]** |
     | Next Expected Dividend (D1) | {next_div:,.2f} |
-    | Intrinsic Value (DDM) | {int(intrinsic_value):,} |
-    | Range Estimate | {int(ci_lower):,} - {int(ci_upper):,} |
+    | Intrinsic Value (DDM) | {_format_price(intrinsic_value, price_currency)} |
+    | Range (r and g ±{DDM_RANGE_STEP:.0f} pt) | {_format_price(range_low, price_currency)} – {range_high_text} |
     """
     
     res_cols = st.columns([2, 3, 3])
     with res_cols[0]:
         st.markdown(markdown_table)
+        st.caption(
+            f'Low: cost of equity {r_pct + DDM_RANGE_STEP:.2f}%, growth {max(0.0, g_pct - DDM_RANGE_STEP):.2f}%. '
+            f'High: cost of equity {max(1.0, r_pct - DDM_RANGE_STEP):.2f}%, growth {g_pct + DDM_RANGE_STEP:.2f}%.'
+            + ('' if range_high is not None else ' The high case has growth at or above the cost of equity, where the model has no finite value.')
+        )
         st.write(f'Assessment: {assessment}')
 
     with res_cols[1]:
@@ -1100,13 +1264,7 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
 
     for r_val in r_range:
         for g_val in g_range:
-            r_dec = r_val / 100.0
-            g_dec = g_val / 100.0
-            if r_dec > g_dec:
-                val = (last_div * (1 + g_dec)) / (r_dec - g_dec)
-            else:
-                val = None
-
+            val = gordon_value(last_div, r_val, g_val)
             if val is not None:
                 data.append({
                     'Cost of Equity (r)': f"{r_val:.2f}%",
@@ -1118,6 +1276,14 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
 
     if data:
         heatmap_df = pd.DataFrame(data)
+        # Fills are computed here so each label can take the colour that contrasts with its cell.
+        # The ramp is centred on the current price: yellow is near it, red below, green above.
+        value_low = min(heatmap_df['Intrinsic Value'].min(), current_price)
+        value_high = max(heatmap_df['Intrinsic Value'].max(), current_price)
+        heatmap_df['fill'] = heatmap_df['Intrinsic Value'].apply(
+            lambda v: cs.diverging_color(v, value_low, current_price, value_high)
+        )
+        heatmap_df['label_color'] = heatmap_df['fill'].apply(cs.readable_text_color)
 
         base = alt.Chart(heatmap_df).encode(
             x=alt.X('Growth Rate (g):O', sort=alt.EncodingSortField(field='g_val', order='ascending')),
@@ -1125,17 +1291,13 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
         )
 
         heatmap = base.mark_rect().encode(
-            color=alt.Color('Intrinsic Value:Q', scale=alt.Scale(scheme='redyellowgreen', domainMid=current_price), legend=None),
-            tooltip=['Cost of Equity (r)', 'Growth Rate (g)', alt.Tooltip('Intrinsic Value:Q', format=',.0f')]
+            color=alt.Color('fill:N', scale=None),
+            tooltip=['Cost of Equity (r)', 'Growth Rate (g)', alt.Tooltip('Intrinsic Value:Q', format=value_format)]
         )
 
         text = base.mark_text(baseline='middle', fontSize=11).encode(
-            text=alt.Text('Intrinsic Value:Q', format=',.0f'),
-            color=alt.condition(
-                f"datum['Intrinsic Value'] > {current_price}",
-                alt.value('black'),
-                alt.value('white')
-            )
+            text=alt.Text('Intrinsic Value:Q', format=value_format),
+            color=alt.Color('label_color:N', scale=None),
         )
 
         chart = (heatmap + text).properties(
@@ -1547,10 +1709,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
     with st.expander('📋 Raw Transaction Log', expanded=False):
         st.dataframe(pd.DataFrame({'Activity': activities}), hide_index=True)
 
-def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl):
-    with st.expander('Company Profile', expanded=False):    
-        render_company_profile(cp_df, stock_name, sl)
-    
+def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl, allow_section_scroll=True):
     currency = (
         cp_df.loc[stock_name, 'currency']
         if stock_name in cp_df.index and 'currency' in cp_df.columns
@@ -1591,7 +1750,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     if section == 'Dividends':
         st.subheader(f'Dividend history: {stock_name}')
-        render_dividend_history(sdf, filtered_df, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
+        render_dividend_history(sdf, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
     elif section == 'Financials':
         st.subheader(f'Financial information: {stock_name}')
         render_financial_info(fin, currency, stock_name, filtered_df)
@@ -1614,7 +1773,8 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     scroll_target = (stock_name, section_key)
     if section_param is not None and st.session_state.get('_last_research_scroll_target') != scroll_target:
-        _scroll_to_anchor(anchor_name)
+        if allow_section_scroll:
+            _scroll_to_anchor(anchor_name)
         st.session_state['_last_research_scroll_target'] = scroll_target
 
 
@@ -1629,9 +1789,14 @@ if 'market' in st.query_params:
 
 logger = get_logger('screener')
 
+# The stock shown on the previous run. A deep link on the first run keeps its own scroll
+# behaviour; later changes of stock scroll the page down to the stock header.
+_is_first_run = '_stock_picker_viewed' not in st.session_state
+st.session_state.setdefault('_stock_picker_viewed', None)
+
 full_table_section = st.container(border=True)
 
-# Table controls share a single row: stock list, table view, syariah filter
+# Table controls share a single row: stock list and table view
 table_controls = full_table_section.container(
     horizontal=True,
     vertical_alignment='bottom',
@@ -1639,12 +1804,21 @@ table_controls = full_table_section.container(
 )
 
 stock_options = ['Indonesian Stock', 'S&P 500 (US and World Stock)']
+
+
+def _market_changed():
+    # Keep the URL shareable; a ticker from the other market would not resolve.
+    st.query_params['market'] = 'US' if st.session_state.get('sl') == stock_options[1] else 'ID'
+    st.query_params.pop('stock', None)
+
+
 with table_controls:
     stock_select = st.segmented_control(
         'Stock List Selection',
         options=stock_options,
         default=stock_options[default_sl],
         key='sl',
+        on_change=_market_changed,
         width='content',
     )
 
@@ -1654,10 +1828,15 @@ else:
     sl = 'S&P500'
 
 table_preset_slot = table_controls.container(width='content')
+filter_controls = full_table_section.container(
+    horizontal=True,
+    vertical_alignment='bottom',
+    gap='medium',
+)
 
 is_syariah = False
 if sl == 'JKSE':
-    syariah_filter = table_controls.segmented_control(
+    syariah_filter = filter_controls.segmented_control(
         'Syariah filter',
         options=['All', 'Syariah only'],
         default='All',
@@ -1698,11 +1877,11 @@ _KEEP_COLS = [
 
 _TABLE_PRESETS = {
     'Essentials': [
-        'Rank', 'sector', 'industry', 'price', 'yield', 'DScore', 'numDividendYear',
+        'Rank', 'sector', 'industry', 'price', 'lastDiv', 'yield', 'DScore', 'numDividendYear',
         'peRatio', 'medianProfitMargin', 'total_return_1y',
     ],
     'Dividend income': [
-        'Rank', 'price', 'yield', 'lastDiv', 'avgFlatAnnualDivIncrease',
+        'Rank', 'price', 'lastDiv', 'yield', 'avgFlatAnnualDivIncrease',
         'numDividendYear', 'positiveYear', 'max10CutPct', 'DScore',
     ],
     'Fundamentals': [
@@ -1722,13 +1901,13 @@ final_df = final_df[_keep]
 # Cached compute pipeline — only re-runs when final_df changes
 # ---------------------------------------------------------------------------
 @st.cache_data(max_entries=8, ttl=6 * 60 * 60, show_spinner=False)
-def _get_processed_df_cached(data_version, _df):
+def _get_processed_df_cached(data_version, _df, mc_midpoint):
     """Compute all derived columns and sort. Cached so it only runs when data changes."""
     del data_version
     df = _df.copy()
 
     df['marginTTM'] = df['earningTTM'] / df['revenueTTM'] * 100
-    df['mc_penalty'] = df['mktCap'].apply(lambda x: 1 / (1 + np.exp(-2 * (x / 3_000_000_000_000 - 1))))
+    df['mc_penalty'] = 1 / (1 + np.exp(-2 * (df['mktCap'] / mc_midpoint - 1)))
 
     df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
     df['max10CutPct']   = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
@@ -1810,8 +1989,8 @@ def _get_processed_df_cached(data_version, _df):
     return df
 
 
-def get_processed_df(df):
-    return _get_processed_df_cached(_dataframe_version(df), df)
+def get_processed_df(df, currency='IDR'):
+    return _get_processed_df_cached(_dataframe_version(df), df, MC_PENALTY_MIDPOINT[currency])
 
 
 with full_table_section:
@@ -1819,10 +1998,11 @@ with full_table_section:
     if is_syariah:
         final_df = final_df[final_df['is_syariah'] == True]
 
-    filtered_df = get_processed_df(final_df)
+    filtered_df = get_processed_df(final_df, currency)
 
     if sl == 'JKSE':
         divisor = 1_000_000_000_000
+        price_format = '%,.0f'
         mcap_label = 'Market Cap (T IDR)'
         mcap_format = '%,.2f T'
         earning_label = 'Earning TTM (T IDR)'
@@ -1830,6 +2010,7 @@ with full_table_section:
         fin_format = '%,.2f T'
     else:
         divisor = 1_000_000_000
+        price_format = '%,.2f'
         mcap_label = 'Market Cap (B USD)'
         mcap_format = '%,.2f B'
         earning_label = 'Earning TTM (B USD)'
@@ -1844,6 +2025,36 @@ with full_table_section:
     display_df.insert(mcap_pos,         'mktCapDisplay',    display_df['mktCap']     / divisor)
     display_df.insert(earning_pos + 1,  'earningTTMDisplay', display_df['earningTTM'] / divisor)
     display_df.insert(revenue_pos + 2,  'revenueTTMDisplay', display_df['revenueTTM'] / divisor)
+
+    # Filters narrow the visible rows only; Rank stays relative to the full list.
+    sector_options = sorted(s for s in filtered_df['sector'].unique() if isinstance(s, str) and s)
+    with filter_controls:
+        sector_filter = st.multiselect(
+            'Sector', sector_options, placeholder='All sectors', key=f'filter_sector_{sl}',
+        )
+        min_yield = st.number_input(
+            'Min. yield (%)', min_value=0.0, max_value=30.0, value=0.0, step=0.5,
+            key=f'filter_yield_{sl}', width=150,
+        )
+        min_div_years = st.number_input(
+            'Min. years paid', min_value=0, max_value=50, value=0, step=1,
+            key=f'filter_years_{sl}', width=150,
+        )
+        max_pe = st.number_input(
+            'Max. P/E', min_value=0.0, value=0.0, step=1.0, key=f'filter_pe_{sl}', width=150,
+            help='0 means no limit. Loss-making stocks (P/E of 0 or below) are hidden when a limit is set.',
+        )
+
+    filter_mask = pd.Series(True, index=display_df.index)
+    if sector_filter:
+        filter_mask &= display_df['sector'].isin(sector_filter)
+    if min_yield > 0:
+        filter_mask &= display_df['yield'] >= min_yield
+    if min_div_years > 0:
+        filter_mask &= display_df['numDividendYear'] >= min_div_years
+    if max_pe > 0:
+        filter_mask &= (display_df['peRatio'] > 0) & (display_df['peRatio'] <= max_pe)
+    display_df = display_df[filter_mask]
 
     if True:
 
@@ -1865,7 +2076,7 @@ with full_table_section:
             'price': st.column_config.NumberColumn(
                 'Price',
                 help='Current Stock Price',
-                format='%,.0f',
+                format=price_format,
             ),
             'beta': st.column_config.NumberColumn(
                 'Beta',
@@ -1959,8 +2170,9 @@ with full_table_section:
                 format='%,.02f',
             ),
             'lastDiv': st.column_config.NumberColumn(
-                'Annual Dividend',
-                help='Ordinary dividends for the latest finalized fiscal year',
+                'Last Dividend',
+                help='Total ordinary dividends per share for the latest finalized fiscal year. '
+                     'Dividend yield is this amount divided by the current price.',
                 format='%,.02f',
             ),
             'earningTTM': None,
@@ -2025,6 +2237,11 @@ with full_table_section:
             help='Switch between focused column sets. Ranking and row selection remain unchanged.',
         ) or 'Essentials'
         column_order = [column for column in _TABLE_PRESETS[table_preset] if column in display_df.columns]
+        if len(display_df) < len(filtered_df):
+            st.caption(
+                f'Showing {len(display_df):,} of {len(filtered_df):,} stocks. '
+                'Rank is relative to the full list.'
+            )
         event = st.dataframe(
             display_df,
             selection_mode=['single-row'],
@@ -2038,7 +2255,7 @@ with full_table_section:
 
 if len(event.selection['rows']) > 0:
     row_idx = event.selection['rows'][0]
-    stock = filtered_df.iloc[row_idx]
+    stock = display_df.iloc[row_idx]
     stock_name = stock.name
 elif 'stock' in st.query_params:
     stock_name = st.query_params['stock']
@@ -2051,15 +2268,15 @@ if sl == 'JKSE':
         if '.JK' not in stock_name:
             stock_name += '.JK'
 
-    stock_options = sorted(final_df.index.tolist())
+    ticker_options = sorted(final_df.index.tolist())
     try:
-        default_idx = stock_options.index(stock_name) if stock_name else None
+        default_idx = ticker_options.index(stock_name) if stock_name else None
     except ValueError:
         default_idx = None
 
     select_stock = st.selectbox(
         label='Selected stock',
-        options=stock_options,
+        options=ticker_options,
         index=default_idx,
         placeholder='Select a row above or search by ticker...',
         help='Selecting a table row updates this field automatically.',
@@ -2068,6 +2285,8 @@ if sl == 'JKSE':
     if select_stock:
         stock_name = select_stock
     else:
+        st.query_params.pop('stock', None)
+        st.session_state['_stock_picker_viewed'] = None
         st.stop()
 else:
     select_stock = st.text_input(
@@ -2078,9 +2297,15 @@ else:
     )
 
     if select_stock:
-        stock_name = select_stock.upper()
+        stock_name = select_stock.strip().upper()
     else:
+        st.query_params.pop('stock', None)
+        st.session_state['_stock_picker_viewed'] = None
         st.stop()
+
+# Mirror the selection into the URL so the page can be shared or bookmarked.
+if st.query_params.get('stock') != stock_name:
+    st.query_params['stock'] = stock_name
 
 try:
     with st.spinner(f'Loading data for {stock_name}...'):
@@ -2140,6 +2365,13 @@ st.html(f"""
 """)
 # ── End SEO ──────────────────────────────────────────────────────────────── #
 
+stock_changed = not _is_first_run and st.session_state['_stock_picker_viewed'] != stock_name
+st.session_state['_stock_picker_viewed'] = stock_name
+
+stock_data = resolve_stock_data(stock_name, filtered_df, final_df, fin, cp_df, price_df, sdf, n_share)
+add_anchor('stock-detail')
+render_stock_header(stock_name, sl, cp_df, stock_data, filtered_df, final_df, currency)
+
 
 default_dashboard = False
 if 'overview' in st.query_params and st.query_params['overview'].lower() == 'true':
@@ -2154,6 +2386,12 @@ mode = st.segmented_control(
 )
 
 if mode == 'Research':
-    render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl)
+    render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl,
+                        allow_section_scroll=not stock_changed)
 else:
-    render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df)
+    render_dashboard_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, final_df, stock_data)
+
+# Scroll last, once the content below the header exists; earlier the page is too short
+# for the header to reach the top.
+if stock_changed:
+    _scroll_to_anchor('stock-detail')

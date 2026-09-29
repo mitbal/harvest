@@ -50,3 +50,37 @@ def test_comparison_outlier_keeps_actual_value_in_tooltip_data():
     spec = str(chart.to_dict())
     assert "'actual_value': 100.0" in spec
     assert 'Above displayed p5-p95 range' in spec
+
+
+def test_dividend_history_marks_current_year_as_partial_not_a_cut():
+    from datetime import datetime
+
+    this_year = datetime.today().year
+    div_df = pd.DataFrame({
+        'date': [f'{this_year - 2}-04-01', f'{this_year - 1}-04-01', f'{this_year}-04-01'],
+        'adjDividend': [100.0, 120.0, 50.0],  # current year has only paid an interim so far
+    })
+    spec = plot.plot_dividend_history(div_df).to_dict()
+    rows = next(iter(spec['datasets'].values()))
+    status = {row['year']: row['status'] for row in rows}
+
+    assert status[this_year] == 'Year to date'
+    assert status[this_year - 1] == 'Raised or held'
+
+
+def test_diverging_color_centres_the_ramp_on_mid():
+    from harvest import chart_style as cs
+
+    assert cs.diverging_color(50, 0, 50, 100) == cs.RED_YELLOW_GREEN[5]
+    assert cs.diverging_color(0, 0, 50, 100) == cs.RED_YELLOW_GREEN[0]
+    assert cs.diverging_color(100, 0, 50, 100) == cs.RED_YELLOW_GREEN[-1]
+    # Mid below every value (stock looks cheap): the lowest value sits at the yellow centre.
+    assert cs.diverging_color(10, 10, 10, 20) == cs.RED_YELLOW_GREEN[5]
+
+
+def test_readable_text_color_uses_light_text_on_both_dark_ends():
+    from harvest import chart_style as cs
+
+    assert cs.readable_text_color(cs.RED_YELLOW_GREEN[0]) == '#FFFFFF'
+    assert cs.readable_text_color(cs.RED_YELLOW_GREEN[-1]) == '#FFFFFF'
+    assert cs.readable_text_color(cs.RED_YELLOW_GREEN[5]) == cs.CHART_TEXT

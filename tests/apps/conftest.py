@@ -147,11 +147,19 @@ def _build_st_stub():
 
     st.stop = MagicMock()  # no-op — module-level st.stop() must NOT raise
 
-    # Context managers
+    # Context managers — nested containers expose the same widget stubs as st
     def _ctx_mgr(*a, **kw):
         m = MagicMock()
         m.__enter__ = MagicMock(return_value=MagicMock())
         m.__exit__ = MagicMock(return_value=False)
+        m.container = _ctx_mgr
+        m.segmented_control = _segmented_control
+        m.selectbox = _selectbox
+        m.multiselect = _multiselect
+        m.number_input = _number_input
+        m.slider = _slider
+        m.toggle = _toggle
+        m.text_input = _text_input
         return m
 
     st.container    = _ctx_mgr

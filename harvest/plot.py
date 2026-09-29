@@ -803,16 +803,26 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
     df_train = pd.merge(df_temp, yearly, on='year', how='left')
     df_train = df_train.fillna(0)
     
-    # plot the dividend green if it is increased from last year, and red if it is decreased
+    # plot the dividend green if it is increased from last year, and red if it is decreased.
+    # The current year is still accumulating payments, so it is shown neutral instead of as a cut.
     df_train['inc'] = df_train['adjDividend'].shift(1) - df_train['adjDividend']
+    df_train['status'] = np.where(df_train['inc'] > 0, 'Cut', 'Raised or held')
+    df_train.loc[df_train['year'] == datetime.today().year, 'status'] = 'Year to date'
     div_bar = alt.Chart(df_train).mark_bar(
-        cornerRadiusTopLeft=5, 
+        cornerRadiusTopLeft=5,
         cornerRadiusTopRight=5
     ).encode(
         alt.X('year:N'),
         alt.Y('adjDividend'),
-        color=alt.condition(alt.datum['inc'] > 0, alt.value(CHART_NEGATIVE), alt.value(CHART_POSITIVE)),
-        tooltip=['year', alt.Tooltip('adjDividend', format='.2f')]
+        color=alt.Color(
+            'status:N',
+            scale=alt.Scale(
+                domain=['Raised or held', 'Cut', 'Year to date'],
+                range=[CHART_POSITIVE, CHART_NEGATIVE, CHART_NEUTRAL],
+            ),
+            legend=None,
+        ),
+        tooltip=['year', alt.Tooltip('adjDividend', format='.2f'), alt.Tooltip('status:N', title='Status')]
     ).properties(
         height=450,
         width=600
