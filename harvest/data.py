@@ -238,17 +238,17 @@ def get_company_ratio(stock, api_key):
     return pd.DataFrame(ratio)
 
 
-def get_dividend_history_single_stock(stock, api_key=None, source='fmp'):
+def get_dividend_history_single_stock(stock, api_key=None, source='fmp', raise_errors=False):
 
     if source == 'fmp':
-        return get_dividend_history_single_stock_fmp(stock, api_key)
+        return get_dividend_history_single_stock_fmp(stock, api_key, raise_errors=raise_errors)
     elif source == 'dag':
         return get_dividend_history_single_stock_dag(stock)
     else:
         raise ValueError("Invalid source. Currently only 'fmp' is supported.")
 
 
-def get_dividend_history_single_stock_fmp(stock, api_key=None):
+def get_dividend_history_single_stock_fmp(stock, api_key=None, raise_errors=False):
     """
     Downloads dividend history for a single stock from Financial Modeling Prep and returns it as a Pandas DataFrame.
 
@@ -257,6 +257,9 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None):
         api_key (str, optional): Your Financial Modeling Prep API key.
                                  If not provided, it will be read from the
                                  'FMP_API_KEY' environment variable. Defaults to None.
+        raise_errors (bool, optional): Raise on request failures (e.g. HTTP 429)
+                                 instead of returning None, so callers can retry
+                                 rather than mistake a failure for a non-payer.
 
     Returns:
         pandas.DataFrame: A DataFrame containing the dividend history, indexed by date,
@@ -274,7 +277,13 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None):
     except requests.exceptions.RequestException as e:
         status = e.response.status_code if e.response is not None else 'network error'
         print(f"Error fetching dividend history for {stock}: HTTP {status}")
+        if raise_errors:
+            # Re-raise without the original message, which contains the API key.
+            raise RuntimeError(f"FMP dividend request for {stock} failed: HTTP {status}") from None
         return None
+
+    if raise_errors and isinstance(drj, dict) and 'Error Message' in drj:
+        raise RuntimeError(f"FMP dividend request for {stock} failed: {drj['Error Message']}")
 
     if drj and 'historical' in drj:
         try:

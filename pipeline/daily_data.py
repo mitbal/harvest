@@ -209,7 +209,7 @@ def download_single_dividend(stock: str, data_dir: Path):
 
 
 def download_single_us_dividend(stock: str):
-    return hd.get_dividend_history_single_stock(stock, source="fmp")
+    return hd.get_dividend_history_single_stock(stock, source="fmp", raise_errors=True)
 
 
 def prepare_dividend_calendar(

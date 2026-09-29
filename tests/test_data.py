@@ -145,6 +145,39 @@ class TestMarketDataSources:
                 with hd.daguerreo_snapshot():
                     pass
 
+    def test_fmp_dividend_strict_mode_raises_without_api_key(self):
+        response = MagicMock(status_code=429)
+        error = hd.requests.exceptions.HTTPError(
+            "quota error at https://example.test?apikey=secret", response=response
+        )
+
+        with patch("harvest.data.requests.get", side_effect=error):
+            with pytest.raises(RuntimeError, match="HTTP 429") as raised:
+                hd.get_dividend_history_single_stock(
+                    "TEST", api_key="secret", source="fmp", raise_errors=True
+                )
+
+        assert "secret" not in str(raised.value)
+
+    def test_fmp_dividend_strict_mode_raises_on_error_payload(self):
+        response = MagicMock()
+        response.json.return_value = {"Error Message": "Limit Reach"}
+
+        with patch("harvest.data.requests.get", return_value=response):
+            with pytest.raises(RuntimeError, match="Limit Reach"):
+                hd.get_dividend_history_single_stock_fmp(
+                    "TEST", api_key="secret", raise_errors=True
+                )
+
+    def test_fmp_dividend_strict_mode_returns_none_for_non_payer(self):
+        response = MagicMock()
+        response.json.return_value = {"symbol": "TEST", "historical": []}
+
+        with patch("harvest.data.requests.get", return_value=response):
+            assert hd.get_dividend_history_single_stock_fmp(
+                "TEST", api_key="secret", raise_errors=True
+            ) is None
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # preprocess_div

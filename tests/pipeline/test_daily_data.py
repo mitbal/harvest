@@ -476,3 +476,50 @@ def test_prefect_daily_wrapper_delegates_to_plain_core():
         dividend_years=[2026],
         use_local_price_cache=True,
     )
+
+
+def test_rate_limited_us_dividend_is_retried_and_scored():
+    """Regression: an FMP 429 used to drop KO from the dividend map, which
+    left its precomputed yield and lastDiv at the 0.0 placeholders."""
+    rate_limited = MagicMock(status_code=429)
+    rate_limited.raise_for_status.side_effect = daily_data.hd.requests.exceptions.HTTPError(
+        "429 at https://example.test?apikey=fmp-test", response=rate_limited
+    )
+    today = pd.Timestamp.now().normalize()
+    history = [
+        {"date": (today - pd.DateOffset(months=3 * i)).strftime("%Y-%m-%d"),
+         "adjDividend": 0.53, "dividend": 0.53}
+        for i in range(1, 13)
+    ]
+    ok = MagicMock(status_code=200)
+    ok.json.return_value = {"symbol": "KO", "historical": history}
+
+    with patch.dict("os.environ", PIPELINE_ENV), \
+            patch.object(daily_data, "DEFAULT_RETRY_DELAY", 0), \
+            patch("harvest.data.requests.get", side_effect=[rate_limited, ok]):
+        dividends, summary = daily_data.download_data(
+            ["KO"], daily_data.download_single_us_dividend, "dividend", max_concurrency=1
+        )
+
+    assert summary["failed_symbols"] == []
+    assert "KO" in dividends
+
+    profiles = pd.DataFrame(
+        {"price": [70.0], "lastDiv": [2.12], "mktCap": [300_000_000_000],
+         "sector": ["Consumer Defensive"], "industry": ["Beverages"], "ipoDate": ["1962-01-02"]},
+        index=pd.Index(["KO"], name="symbol"),
+    )
+    fin_stats = {
+        "trim_mean_10y_revenue_growth": 5.0, "cagr_5y_revenue": 5.0, "revenue_growth_TTM": 5.0,
+        "trim_mean_10y_netIncome_growth": 5.0, "netIncome_growth_TTM": 5.0,
+        "median_profit_margin": 20.0, "revenueTTM": 50e9, "earningTTM": 10e9,
+    }
+    with patch.object(daily_data.hd, "calc_fin_stats", return_value=fin_stats):
+        scores = daily_data.compute_div_score(
+            profiles, {"KO": pd.DataFrame()}, dividends, exchange="sp500"
+        )
+
+    assert scores.loc["KO", "lastDiv"] == pytest.approx(2.12)
+    assert scores.loc["KO", "yield"] == pytest.approx(2.12 / 70.0 * 100)
+    assert scores.loc["KO", "numDividendYear"] > 0
+
