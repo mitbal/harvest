@@ -14,7 +14,7 @@ pyarrow==24.0.0
 vectorbt==1.1.0
 yfinance==1.5.2
 narwhals==2.24.0
-st-vortree==0.1.8
+st-vortree==0.1.9
 streamlit==1.61.1
 matplotlib==3.11.1
 scikit_learn==1.9.0

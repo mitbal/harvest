@@ -147,8 +147,21 @@ class TestMarketDataValidation:
             "sector": ["Financials"],
         })
 
-        with pytest.raises(ValueError, match="Market Price.*BBCA"):
+        with pytest.raises(ValueError, match="BBCA"):
             po.validate_market_data(frame)
+
+    def test_excludes_invalid_rows_and_keeps_the_rest(self):
+        frame = pd.DataFrame({
+            "Symbol": ["BBCA", "BAD"],
+            "last_price": [9500, None],
+            "div_rate": [250, 10],
+            "sector": ["Financials", "Energy"],
+        })
+
+        result, excluded = po.validate_market_data(frame)
+
+        assert result["Symbol"].tolist() == ["BBCA"]
+        assert excluded == ["BAD"]
 
     def test_accepts_zero_dividend_and_fills_sector(self):
         frame = pd.DataFrame({
@@ -158,15 +171,20 @@ class TestMarketDataValidation:
             "sector": [None],
         })
 
-        result = po.validate_market_data(frame)
+        result, excluded = po.validate_market_data(frame)
 
+        assert excluded == []
         assert result.loc[0, "div_rate"] == 0
         assert result.loc[0, "sector"] == "Unclassified"
 
 
 class TestPortfolioDataLoading:
 
-    def test_rejects_partial_market_data_match(self):
+    @pytest.fixture(autouse=True)
+    def redis_env(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://stub")
+
+    def test_excludes_symbols_without_market_data(self):
         redis_client = MagicMock()
         redis_client.get.return_value = json.dumps([{
             "symbol": "BBCA.JK",
@@ -180,9 +198,84 @@ class TestPortfolioDataLoading:
             "Average Price": [9000, 1000],
         })
 
-        with patch.object(po, "connect_redis", return_value=redis_client):
+        with patch.object(po, "connect_redis", return_value=redis_client), \
+             patch.object(po.hd, "get_company_profile", return_value=pd.DataFrame()):
+            result, unknown = po.get_company_profile_data(portfolio)
+
+        assert result["Symbol"].tolist() == ["BBCA"]
+        assert unknown == ["MISSING"]
+
+    def test_rejects_portfolio_with_no_market_data(self):
+        redis_client = MagicMock()
+        redis_client.get.return_value = json.dumps([{
+            "symbol": "BBCA.JK", "price": 9500, "sector": "Financials", "lastDiv": 250,
+        }])
+        portfolio = pd.DataFrame({
+            "Symbol": ["MISSING"], "Available Lot": [5], "Average Price": [1000],
+        })
+
+        with patch.object(po, "connect_redis", return_value=redis_client), \
+             patch.object(po.hd, "get_company_profile", return_value=pd.DataFrame()):
             with pytest.raises(ValueError, match="MISSING"):
                 po.get_company_profile_data(portfolio)
+
+    def test_fetches_live_profiles_for_symbols_missing_from_cache(self):
+        redis_client = MagicMock()
+        redis_client.get.return_value = json.dumps([{
+            "symbol": "BBCA.JK",
+            "price": 9500,
+            "sector": "Financials",
+            "lastDiv": 250,
+        }])
+        portfolio = pd.DataFrame({
+            "Symbol": ["BNGA", "BBRI"],
+            "Available Lot": [760, 1500],
+            "Average Price": [1360.71, 3082.4],
+        })
+        live_profiles = pd.DataFrame({
+            "price": [1800, 4200],
+            "sector": ["Financial Services", "Financial Services"],
+            "lastDiv": [122.84, 343.4],
+        }, index=pd.Index(["BNGA.JK", "BBRI.JK"], name="symbol"))
+
+        with patch.object(po, "connect_redis", return_value=redis_client), \
+             patch.object(po.hd, "get_company_profile", return_value=live_profiles) as get_profile, \
+             patch.object(po.hd, "get_dividend_history_single_stock_dag", return_value=None):
+            result, unknown = po.get_company_profile_data(portfolio)
+
+        get_profile.assert_called_once_with(["BNGA.JK", "BBRI.JK"])
+        assert result["Symbol"].tolist() == ["BNGA", "BBRI"]
+        assert result["last_price"].tolist() == [1800, 4200]
+        assert result["div_rate"].tolist() == [122.84, 343.4]
+        assert unknown == []
+
+    def test_live_profiles_use_finalized_fiscal_year_dividend(self):
+        redis_client = MagicMock()
+        redis_client.get.return_value = json.dumps([{
+            "symbol": "BBCA.JK", "price": 9500, "sector": "Financials", "lastDiv": 250,
+        }])
+        portfolio = pd.DataFrame({
+            "Symbol": ["BNGA"], "Available Lot": [10], "Average Price": [1500],
+        })
+        live_profiles = pd.DataFrame(
+            {"price": [1800], "sector": ["Financial Services"], "lastDiv": [60.0]},
+            index=pd.Index(["BNGA.JK"], name="symbol"),
+        )
+        history = pd.DataFrame({
+            "date": ["2025-09-01", "2026-04-20"],
+            "adjDividend": [50.0, 110.0],
+            "fiscal_year": [2025, 2025],
+            "dividend_type": ["interim", "final"],
+        })
+
+        with patch.object(po, "connect_redis", return_value=redis_client), \
+             patch.object(po.hd, "get_company_profile", return_value=live_profiles), \
+             patch.object(po.hd, "get_dividend_history_single_stock_dag", return_value=history), \
+             patch.object(po.hd, "calc_latest_finalized_dividend_sum", return_value=160.0) as calc:
+            result, _ = po.get_company_profile_data(portfolio)
+
+        calc.assert_called_once()
+        assert result["div_rate"].tolist() == [160.0]
 
     def test_dividend_failure_does_not_discard_other_stocks(self):
         portfolio = pd.DataFrame({"Symbol": ["FAIL", "BBCA"]})
@@ -256,3 +349,57 @@ class TestPortfolioKpiMath:
         bbca_gain = 10 * (10000 - 9500) * 100
         tlkm_loss = 20 * (3800 - 3600) * 100
         assert abs(delta - (bbca_gain - tlkm_loss)) < 1
+
+
+class TestProjectIncome:
+
+    def test_year_one_is_one_year_of_growth(self):
+        result = po.project_income(1_000_000, 10_000_000, 10.0, 3)
+        assert result["years"].tolist() == ["Year 01", "Year 02", "Year 03"]
+        assert result.loc[0, "returns"] == pytest.approx(1_100_000)
+        assert result.loc[2, "returns"] == pytest.approx(1_331_000)
+
+    def test_yield_includes_reinvested_dividends_in_cost(self):
+        result = po.project_income(1_000_000, 10_000_000, 10.0, 2)
+        # Year 1: 1.1M on 10M + 1M reinvested; Year 2: 1.21M on 11M + 1.1M
+        assert result.loc[0, "yield"] == pytest.approx(1_100_000 / 11_000_000 * 100)
+        assert result.loc[1, "yield"] == pytest.approx(1_210_000 / 12_100_000 * 100)
+
+    def test_zero_growth_keeps_income_flat(self):
+        result = po.project_income(500_000, 10_000_000, 0.0, 5)
+        assert (result["returns"] == 500_000).all()
+
+
+class TestBuildLastYearDividends:
+
+    @pytest.fixture
+    def holdings(self):
+        return pd.DataFrame({
+            "Symbol": ["BBCA", "TLKM"],
+            "current_lot": [10.0, 20.0],
+            "last_price": [10000.0, 4000.0],
+        })
+
+    def test_uses_plain_symbol_and_trailing_year_window(self, holdings):
+        divs = {"BBCA.JK": pd.DataFrame({
+            "date": ["2024-01-10", "2026-03-15", "2026-09-01"],
+            "adjDividend": [100.0, 200.0, 50.0],
+        })}
+
+        result = po.build_last_year_dividends(holdings, divs, today="2026-10-01")
+
+        assert len(result) == 1
+        assert result[0]["Symbol"].tolist() == ["BBCA", "BBCA"]
+        assert result[0]["adjDividend"].tolist() == [200.0, 50.0]
+        assert result[0]["Lot"].tolist() == [10.0, 10.0]
+
+    def test_accepts_datetime_dates(self, holdings):
+        divs = {"TLKM.JK": pd.DataFrame({
+            "date": pd.to_datetime(["2026-06-01"]).tz_localize("Asia/Jakarta"),
+            "adjDividend": [180.0],
+        })}
+
+        result = po.build_last_year_dividends(holdings, divs, today="2026-10-01")
+
+        assert result[0]["Symbol"].tolist() == ["TLKM"]
+        assert result[0]["yield"].tolist() == [pytest.approx(4.5)]

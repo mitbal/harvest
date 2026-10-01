@@ -25,6 +25,7 @@ hp.enable_chart_theme()
 
 REQUIRED_COLUMNS = {'Symbol', 'Available Lot', 'Average Price'}
 PASTE_RAW_FIELDS_PER_ROW = 11  # expected tokens per stock row in raw paste format
+PROJECTION_MAX_GROWTH = 50.0  # upper bound for the income growth input (%)
 
 
 def _is_positive_number(val: str) -> bool:
@@ -96,6 +97,58 @@ def portfolio_to_records(portfolio) -> list[dict]:
     """Return a JSON-safe, record-oriented portfolio payload."""
     normalized = normalize_portfolio(portfolio)
     return json.loads(normalized.to_json(orient='records'))
+
+
+def build_last_year_dividends(holdings: pd.DataFrame, divs: dict, today=None) -> list[pd.DataFrame]:
+    """Return each holding's dividend payments from the trailing 12 months, tagged with symbol and lots."""
+    end_date = pd.Timestamp.today().normalize() if today is None else pd.Timestamp(today)
+    start_date = end_date - pd.Timedelta(days=365)
+
+    div_lists = []
+    for row in holdings.itertuples(index=False):
+        symbol = row.Symbol
+        history = divs.get(f'{symbol}.JK')
+        if history is None:
+            continue
+
+        try:
+            div_df = pd.DataFrame(history)
+            if div_df.empty or 'date' not in div_df.columns or 'adjDividend' not in div_df.columns:
+                continue
+
+            # Accept strings, naive or tz-aware timestamps
+            div_df['date'] = pd.to_datetime(div_df['date'], errors='coerce', utc=True).dt.tz_localize(None)
+            in_window = (div_df['date'] >= start_date) & (div_df['date'] < end_date)
+            last_year_div = div_df[in_window].copy(deep=True)
+            if last_year_div.empty:
+                continue
+
+            last_year_div['Symbol'] = symbol
+            last_year_div['Lot'] = row.current_lot
+            last_year_div['yield'] = last_year_div['adjDividend'] / row.last_price * 100
+            div_lists.append(last_year_div)
+        except Exception as e:
+            logger.warning(f'Skipping dividend timeline entry for {symbol}: {e}')
+
+    return div_lists
+
+
+def project_income(annual_dividend: float, initial_cost: float, growth_pct: float, years: int) -> pd.DataFrame:
+    """Project income when all dividends are reinvested and income grows at growth_pct per year.
+
+    Year N is N years from today. Yield is measured against the original cost plus all
+    dividends reinvested before that year, since reinvested cash is also invested capital.
+    """
+    year_numbers = np.arange(1, years + 1)
+    returns = annual_dividend * (1 + growth_pct / 100) ** year_numbers
+    # Income received in years 0..N-1 has been reinvested by year N
+    previous_income = np.concatenate([[annual_dividend], returns[:-1]])
+    cost_basis = initial_cost + np.cumsum(previous_income)
+    return pd.DataFrame({
+        'years': [f'Year {n:02d}' for n in year_numbers],
+        'returns': returns,
+        'yield': returns / cost_basis * 100,
+    })
 
 
 def render_dividend_timeline(div_lists: list[pd.DataFrame], view_type: str) -> None:
@@ -191,17 +244,17 @@ def get_db_connection() -> SupabaseConnection:
             "password": st.secrets["connections"]["supabase"]["PASSWORD"],
         }
     )
-    print('connection to supabase established')
+    logger.info('connection to supabase established')
     return conn
 
 
 def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
     user_in_db = conn.table("users").select("portfolio").eq("email", user_email).execute()
     if len(user_in_db.data) > 0:
-        logger.info(f'portfolio found for {user_email}')
+        logger.info('portfolio found in db')
         return user_in_db.data[0]['portfolio']
     else:
-        logger.info(f'{user_email} has no portfolio saved in db')
+        logger.info('user has no portfolio saved in db')
         return None
 
 
@@ -211,7 +264,7 @@ def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email:
         {"email": user_email, "portfolio": portfolio, 'modified_at': datetime.now().isoformat()},
         on_conflict="email",
     ).execute()
-    logger.info(f'portfolio updated for {user_email}')
+    logger.info('portfolio updated in db')
 
 
 @st.cache_resource
@@ -320,7 +373,6 @@ def render_kpi(label, value, delta=None, delta_value=None, emphasis=False, tone=
         </div>
     """)
 
-data_input_expand_flag = True
 conn = None
 if 'porto_df' not in st.session_state:
     if st.user.is_logged_in:
@@ -334,8 +386,9 @@ if 'porto_df' not in st.session_state:
             st.session_state['porto_df'] = None
     else:
         st.session_state['porto_df'] = None
-else:
-    data_input_expand_flag = False
+
+# Keep the input panel open until a portfolio exists, regardless of reruns
+data_input_expand_flag = st.session_state['porto_df'] is None
 
 
 # --- Header ---
@@ -444,12 +497,9 @@ with st.expander('Portfolio Data Input', expanded=data_input_expand_flag):
 
                 if submitted_df is not None:
                     st.session_state['porto_df'] = submitted_df
-                    st.success(f'Loaded {len(submitted_df)} portfolio holdings.')
-                    logger.info(f'Porto data submitted via {method}')
-                    logger.info(
-                        f'target: {target}. baseline: {baseline}. '
-                        f'porto: {submitted_df.to_records()}'
-                    )
+                    # Toast stays visible even after the input panel collapses
+                    st.toast(f'Loaded {len(submitted_df)} portfolio holdings.', icon=':material/check_circle:')
+                    logger.info(f'Porto data submitted via {method}: {len(submitted_df)} holdings')
 
 
 @st.cache_data(max_entries=64, ttl=60*60)
@@ -496,6 +546,43 @@ def get_company_profile_data(porto):
         .str.removesuffix('.JK')
     )
     cp_df = cp_df.drop_duplicates(subset='Symbol', keep='first')
+
+    missing_symbols = porto.loc[~porto['Symbol'].isin(cp_df['Symbol']), 'Symbol'].tolist()
+    if missing_symbols:
+        market_symbols = [f'{symbol}.JK' for symbol in missing_symbols]
+        try:
+            live_profiles = hd.get_company_profile(market_symbols)
+        except Exception as e:
+            logger.warning(
+                'Live company profile fallback failed for %s: %s',
+                ', '.join(market_symbols),
+                e,
+            )
+        else:
+            if live_profiles is not None and not live_profiles.empty:
+                live_profiles = live_profiles.copy(deep=True)
+                if 'symbol' in live_profiles.columns:
+                    live_profiles.set_index('symbol', inplace=True)
+                live_profiles['Symbol'] = (
+                    pd.Index(live_profiles.index)
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    .str.removesuffix('.JK')
+                )
+                for col in ['price', 'sector', 'lastDiv']:
+                    if col not in live_profiles.columns:
+                        live_profiles[col] = np.nan
+                # Match the pipeline's definition: latest finalized fiscal-year sum
+                live_profiles['lastDiv'] = [
+                    get_annual_dividend(symbol, fmp_last_div)
+                    for symbol, fmp_last_div in zip(live_profiles['Symbol'], live_profiles['lastDiv'])
+                ]
+                cp_df = pd.concat(
+                    [cp_df, live_profiles[['Symbol', 'price', 'sector', 'lastDiv']]],
+                    ignore_index=True,
+                ).drop_duplicates(subset='Symbol', keep='first')
+
     df = porto.merge(
         cp_df[['Symbol', 'price', 'sector', 'lastDiv']],
         on='Symbol',
@@ -506,33 +593,49 @@ def get_company_profile_data(porto):
     df.rename(columns={'lastDiv': 'div_rate', 'price': 'last_price'}, inplace=True)
 
     unknown = df.loc[df['_merge'] == 'left_only', 'Symbol'].tolist()
-    if unknown:
+    if len(unknown) == len(df):
         raise ValueError(
             'Market data is unavailable for: '
             f'{", ".join(unknown)}. Remove or correct these symbols before continuing.'
         )
 
-    return df.drop(columns='_merge')
+    return df[df['_merge'] == 'both'].drop(columns='_merge').reset_index(drop=True), unknown
 
 
-def validate_market_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate numeric market fields before calculating portfolio totals."""
+def get_annual_dividend(symbol: str, fallback: float) -> float:
+    """Return the latest finalized fiscal-year dividend per share, or fallback if history is unavailable."""
+    try:
+        div_df = hd.get_dividend_history_single_stock_dag(f'{symbol}.JK')
+    except Exception as e:
+        logger.warning('Dividend history lookup failed for %s: %s', symbol, e)
+        return fallback
+    required = {'date', 'adjDividend', 'fiscal_year', 'dividend_type'}
+    if div_df is None or not required.issubset(div_df.columns):
+        return fallback
+    return hd.calc_latest_finalized_dividend_sum(div_df)
+
+
+def validate_market_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Drop holdings with unusable market fields; return the valid rows and the excluded symbols."""
     validated = df.copy(deep=True)
     rules = {
-        'last_price': ('market price', False),
-        'div_rate': ('annual dividend', True),
+        'last_price': False,  # must be > 0
+        'div_rate': True,     # may be 0
     }
-    for column, (label, allow_zero) in rules.items():
+    invalid = pd.Series(False, index=validated.index)
+    for column, allow_zero in rules.items():
         validated[column] = pd.to_numeric(validated[column], errors='coerce')
-        invalid = validated[column].isna() | ~np.isfinite(validated[column])
-        invalid |= validated[column] < 0 if allow_zero else validated[column] <= 0
-        if invalid.any():
-            symbols = ', '.join(validated.loc[invalid, 'Symbol'].astype(str).tolist())
-            requirement = 'zero or greater' if allow_zero else 'greater than zero'
-            raise ValueError(f'{label.title()} must be {requirement}. Check: {symbols}.')
+        column_invalid = validated[column].isna() | ~np.isfinite(validated[column])
+        column_invalid |= validated[column] < 0 if allow_zero else validated[column] <= 0
+        invalid |= column_invalid
+
+    excluded = validated.loc[invalid, 'Symbol'].astype(str).tolist()
+    validated = validated[~invalid].reset_index(drop=True)
+    if validated.empty:
+        raise ValueError(f'Market price or dividend data is invalid for: {", ".join(excluded)}.')
 
     validated['sector'] = validated['sector'].fillna('Unclassified').replace('', 'Unclassified')
-    return validated
+    return validated, excluded
 
 
 @st.cache_data(max_entries=64, ttl=60*60)
@@ -564,8 +667,8 @@ except ValueError as e:
     st.stop()
 
 try:
-    df = get_company_profile_data(st.session_state['porto_df'])
-    df = validate_market_data(df)
+    df, unknown_symbols = get_company_profile_data(st.session_state['porto_df'])
+    df, invalid_symbols = validate_market_data(df)
 except (ConnectionError, EnvironmentError) as e:
     st.error(f'**Connection error:** {e}')
     logger.exception('Failed to connect to data source')
@@ -582,6 +685,14 @@ except Exception as e:
     st.error(f'**Unexpected error loading company profile data:** {e}')
     logger.exception('Unexpected error in get_company_profile_data')
     st.stop()
+
+excluded_symbols = unknown_symbols + invalid_symbols
+if excluded_symbols:
+    st.warning(
+        f'Market data is unavailable for **{", ".join(excluded_symbols)}**. '
+        'These holdings are excluded from the totals below; check the symbols in Portfolio Data Input.',
+        icon=':material/warning:',
+    )
 
 try:
     divs = get_dividend_data(st.session_state['porto_df'])
@@ -649,7 +760,9 @@ with summary_cols[4]:
 # Table List
 with st.container(border=True):
 
-    tabs = st.tabs(['Table View', 'Bar Chart View', 'Voronoi Treemap'])
+    # Lazy tabs: the treemap measures its width once on mount, so it must only be
+    # created while its tab is visible (a hidden tab has zero width)
+    tabs = st.tabs(['Table View', 'Bar Chart View', 'Voronoi Treemap'], key='porto_view_tabs', on_change='rerun')
     
     with tabs[0]:
         st.subheader('Portfolio Holdings', divider='grey')
@@ -666,8 +779,9 @@ with st.container(border=True):
                 help='Dividend Yield based on Current Market Price'
             ),
             'div_rate': st.column_config.NumberColumn(
-                'Last Dividend',
-                format='IDR %,.0f'
+                'Dividend / Share',
+                format='IDR %,.0f',
+                help='Total dividend per share for the latest finalized fiscal year (interim + final)'
             ),
             'avg_price': st.column_config.NumberColumn(
                 'Avg Price',
@@ -721,7 +835,6 @@ with st.container(border=True):
                 'yield_on_cost:Q',
                 title='Yield on Cost (%)',
                 axis=alt.Axis(titleColor=cs.CHART_AMBER),
-                scale=alt.Scale(domain=[0, 100]),
             ),
             tooltip=[
                 alt.Tooltip('Symbol:N', title='Holding'),
@@ -731,55 +844,56 @@ with st.container(border=True):
         combined_chart = (div_bar + yield_bar).resolve_scale(y='independent')
         st.altair_chart(combined_chart, width="stretch", theme=None)
 
-    with tabs[2]:
-        ctrl_cols = st.columns([2, 1])
-        value_metric = ctrl_cols[0].selectbox(
-            'Value metric',
-            options=['total_invested', 'total_dividend'],
-            format_func=lambda x: 'Total Invested' if x == 'total_invested' else 'Total Dividend',
-            key='vortree_metric'
-        )
-        treemap_height = ctrl_cols[1].slider('Chart height', 300, 900, 500, key='vortree_height')
-
-        with st.expander('Advanced treemap options', expanded=False):
-            ctrl_cols2 = st.columns(4)
-            color_scheme = ctrl_cols2[0].selectbox(
-                'Color scheme',
-                ['tableau10', 'category10', 'pastel1'],
-                key='vortree_color'
+    if tabs[2].open:
+        with tabs[2]:
+            ctrl_cols = st.columns([2, 1])
+            value_metric = ctrl_cols[0].selectbox(
+                'Value metric',
+                options=['total_invested', 'total_dividend'],
+                format_func=lambda x: 'Total Invested' if x == 'total_invested' else 'Total Dividend',
+                key='vortree_metric'
             )
-            show_values = ctrl_cols2[1].checkbox('Show values', value=False, key='vortree_show_values')
-            show_pct_only = ctrl_cols2[2].checkbox('Show % only', value=True, key='vortree_pct_only')
-            border_color = ctrl_cols2[3].color_picker('Border color', value='#24332c', key='vortree_border_color')
-            label_scale = st.number_input(
-                'Label scale', min_value=0.1, max_value=3.0,
-                value=1.5, step=0.1, key='vortree_label_scale'
-            )
+            treemap_height = ctrl_cols[1].slider('Chart height', 300, 900, 500, key='vortree_height')
 
-            if 'vortree_refresh_count' not in st.session_state:
-                st.session_state['vortree_refresh_count'] = 0
+            with st.expander('Advanced treemap options', expanded=False):
+                ctrl_cols2 = st.columns(4)
+                color_scheme = ctrl_cols2[0].selectbox(
+                    'Color scheme',
+                    ['tableau10', 'category10', 'pastel1'],
+                    key='vortree_color'
+                )
+                show_values = ctrl_cols2[1].checkbox('Show values', value=False, key='vortree_show_values')
+                show_pct_only = ctrl_cols2[2].checkbox('Show % only', value=True, key='vortree_pct_only')
+                border_color = ctrl_cols2[3].color_picker('Border color', value='#24332c', key='vortree_border_color')
+                label_scale = st.number_input(
+                    'Label scale', min_value=0.1, max_value=3.0,
+                    value=1.5, step=0.1, key='vortree_label_scale'
+                )
 
-            if st.button('Refresh layout', icon=':material/refresh:', key='vortree_refresh'):
-                st.session_state['vortree_refresh_count'] += 1
-                st.rerun()
+                if 'vortree_refresh_count' not in st.session_state:
+                    st.session_state['vortree_refresh_count'] = 0
+
+                if st.button('Refresh layout', icon=':material/refresh:', key='vortree_refresh'):
+                    st.session_state['vortree_refresh_count'] += 1
+                    st.rerun()
         
-        treemap_df = df_display[['Symbol', value_metric]].copy()
-        treemap_df['sector'] = df['sector'].values
-        st_vortree(
-            treemap_df,
-            name_col='Symbol',
-            value_col=value_metric,
-            group_col='sector',
-            color_scheme=color_scheme,
-            show_values=show_values,
-            show_pct_only=show_pct_only,
-            label_scale=label_scale,
-            border_color=border_color,
-            border_width=1,
-            show_legend=True,
-            height=treemap_height,
-            key=f'porto_vortree_{st.session_state["vortree_refresh_count"]}'
-        )
+            treemap_df = df_display[['Symbol', value_metric]].copy()
+            treemap_df['sector'] = df['sector'].values
+            st_vortree(
+                treemap_df,
+                name_col='Symbol',
+                value_col=value_metric,
+                group_col='sector',
+                color_scheme=color_scheme,
+                show_values=show_values,
+                show_pct_only=show_pct_only,
+                label_scale=label_scale,
+                border_color=border_color,
+                border_width=1,
+                show_legend=True,
+                height=treemap_height,
+                key=f'porto_vortree_{st.session_state["vortree_refresh_count"]}'
+            )
 
 
 if main_event.selection.get('rows'):
@@ -887,39 +1001,7 @@ with st.expander('Dividend Timeline', expanded=False):
     with view_cols[0]:
         view_type = st.segmented_control('View Pattern', ['Calendar', 'Monthly Bar', 'Grid Table'], default='Monthly Bar')
 
-    # prepare calendar data
-    div_lists = []
-    for index, row in df.iterrows():
-
-        r = row.to_dict()
-        stock = r['Symbol']+'.JK'
-        if stock not in divs.keys():
-            continue
-
-        try:
-            div_df = pd.DataFrame(divs[stock])
-            if div_df.empty or 'date' not in div_df.columns:
-                continue
-
-            div_df['year'] = div_df['date'].apply(lambda x: x.split('-')[0])
-            div_df['date'] = pd.to_datetime(div_df['date']).dt.tz_localize(None)
-
-            end_date = pd.Timestamp('today').to_datetime64()
-            start_date = (end_date - pd.Timedelta(days=365)).to_datetime64()
-
-            last_year_div = div_df[(pd.to_datetime(div_df['date']) >= start_date) & (pd.to_datetime(div_df['date']) < end_date)].copy(deep=True)
-            last_year_div['Symbol'] = stock
-            last_year_div['Lot'] = r['current_lot']
-            if r.get('last_price', 0) > 0:
-                last_year_div['yield'] = last_year_div['adjDividend'] / r['last_price'] * 100
-            else:
-                last_year_div['yield'] = 0.0
-
-            if not last_year_div.empty:
-                div_lists += [last_year_div]
-        except Exception as e:
-            logger.warning(f'Skipping dividend timeline entry for {stock}: {e}')
-            continue
+    div_lists = build_last_year_dividends(df, divs)
 
     if not div_lists:
         st.info('No dividend payment data was found in the past 12 months.')
@@ -934,23 +1016,23 @@ with st.expander('Compounding Projection', expanded=False):
     with proj_input_cols[0]:
         number_of_year = st.number_input('Years', value=25, min_value=1, max_value=50)
     with proj_input_cols[1]:
+        current_yield = annual_dividend / current_investment_value * 100
         inc = st.number_input(
             'Expected Annual Income Growth (%)',
-            value=total_yield_on_cost,
-            min_value=0.1,
-            max_value=50.0,
+            value=round(float(np.clip(current_yield, 0.0, PROJECTION_MAX_GROWTH)), 2),
+            min_value=0.0,
+            max_value=PROJECTION_MAX_GROWTH,
             step=0.1,
-            help='Assumes dividends are reinvested and income grows at this constant annual rate.'
+            help=(
+                'Defaults to your current yield at market price: reinvesting dividends at '
+                "today's prices grows income by roughly this rate. Add expected company "
+                'dividend growth on top if you want to include it.'
+            ),
         )
-    
-    futures = [0]*number_of_year
-    for i in range(number_of_year):
-        futures[i] = annual_dividend * (1+inc/100)**i
 
-    df_future = pd.DataFrame({'years': [f'Year {i+1:02d}' for i in range(number_of_year)], 'returns': futures})
+    df_future = project_income(annual_dividend, total_investment, inc, number_of_year)
     df_future['achieved'] = df_future['returns'] > (target*1_000_000)
-    df_future['yield'] = df_future['returns'] / total_investment * 100
-    
+
     base_chart = alt.Chart(df_future)
     return_chart = base_chart.mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
         x=alt.X('years:N', title='Compounding Journey'),
@@ -965,8 +1047,8 @@ with st.expander('Compounding Projection', expanded=False):
 
     yield_chart = base_chart.mark_line(point=True, color=cs.CHART_AMBER).encode(
         x=alt.X('years:N'),
-        y=alt.Y('yield:Q', title='Yield on Cost (%)'),
-        tooltip=['years', alt.Tooltip('yield', format='.2f')]
+        y=alt.Y('yield:Q', title='Yield on Total Cost (%)'),
+        tooltip=['years', alt.Tooltip('yield', title='Yield on cost incl. reinvested', format='.2f')]
     )
 
     future_chart = (return_chart + yield_chart).resolve_scale(y='independent').properties(height=400)
