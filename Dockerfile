@@ -37,6 +37,8 @@ COPY static ./static
 COPY harvest ./harvest
 COPY articles ./articles
 COPY main.py ./main.py
+COPY server.py ./server.py
+COPY templates ./templates
 COPY home.py ./home.py
 COPY prep_index_html.py ./prep_index_html.py
 COPY README.md ./README.md

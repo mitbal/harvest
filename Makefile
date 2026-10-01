@@ -1,5 +1,5 @@
 run:
-	PYTHONPATH="/Users/mitbal/workspace/lesley/:$$PYTHONPATH" streamlit run main.py
+	streamlit run server.py
 
 build:
 	docker build -t harvest:v1 .
@@ -8,7 +8,7 @@ run-docker:
 	docker run -p 8501:8501 harvest:v1
 
 serve-app:
-	python prep_index_html.py && streamlit run main.py --server.port=8501 --server.address=0.0.0.0
+	python prep_index_html.py && streamlit run server.py --server.port=8501 --server.address=0.0.0.0
 
 profile-memory-usage:
 	fil-profile run -m streamlit run main.py

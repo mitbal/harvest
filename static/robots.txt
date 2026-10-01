@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://panendividen.com/sitemap.xml
-Sitemap: https://panendividen.com/sitemap_full.xml
+Sitemap: https://panendividen.com/sitemap_stocks.xml
