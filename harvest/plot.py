@@ -931,12 +931,15 @@ CALENDAR_DATE_COLOR = '#000000'
 CALENDAR_CLOSED_COLOR = '#ED2939'
 
 
-def month_plot(dates, values, labels=None, month=1, closed_dates=None, show_date=True, width=250, **kwargs):
+def month_plot(dates, values, labels=None, month=1, closed_dates=None, show_date=True, width=250, height=None, **kwargs):
     """lesley.month_plot whose date numbers are red on weekends and on closed_dates (e.g. exchange holidays).
 
     closed_dates is a list of dates, or a {date: name} dict whose names show as a tooltip on those days.
+    The date layer mirrors lesley 0.4.0's grid: a fixed 7x6 cell grid with square cells of
+    min(width / 7, height / 6), so width and height are upper bounds, not the drawn size.
     """
-    chart = lesley.month_plot(dates, values, labels=labels, month=month, width=width, show_date=False, **kwargs)
+    chart = lesley.month_plot(dates, values, labels=labels, month=month, width=width, height=height,
+                              show_date=False, **kwargs)
     if not show_date:
         return chart
 
@@ -953,11 +956,39 @@ def month_plot(dates, values, labels=None, month=1, closed_dates=None, show_date
     is_holiday = df_month['dates'].isin(holiday_names.keys())
     df_month['is_closed'] = (df_month['dates'].dt.weekday >= 5) | is_holiday
 
-    x = alt.X('days', sort=list(calendar.day_abbr))
-    y = alt.Y('weeks:N')
-    color = alt.condition(alt.datum['is_closed'], alt.value(CALENDAR_CLOSED_COLOR), alt.value(CALENDAR_DATE_COLOR))
+    # White numbers on cells whose (interpolated) color is too dark for black text
+    df_month['on_dark'] = False
+    if kwargs.get('domain') is not None:
+        domain = list(kwargs['domain'])
+        colors = lesley.color_palette(kwargs.get('cmap', 'YlGn'), len(domain), color_range=kwargs.get('color_range'))
+        has_value = ~df_month['is_closed'] & (df_month['values'] > 0)
+        if has_value.any():
+            df_month.loc[has_value, 'on_dark'] = [
+                readable_text_color(_scale_color(v, domain, colors)) == '#FFFFFF'
+                for v in df_month.loc[has_value, 'values']
+            ]
 
-    label = alt.Chart(df_month[~is_holiday]).mark_text(baseline='middle', fontSize=width/20).encode(
+    # Same scales and sizes as lesley's own layers so the numbers sit in its cells
+    days = list(calendar.day_abbr)
+    weeks = df_month['weeks'].drop_duplicates().tolist()
+    while len(weeks) < 6:
+        weeks.append(f'_lesley_empty_week_{len(weeks)}')
+    cell_size = min(width / len(days), (height or int(width * 0.8)) / len(weeks))
+    font_size = min(width / 20, cell_size * 0.6)
+
+    x = alt.X('days:N', sort=days, scale=alt.Scale(domain=days, paddingInner=0.1, paddingOuter=0.05))
+    y = alt.Y('weeks:N', scale=alt.Scale(domain=weeks, paddingInner=0.1, paddingOuter=0.05))
+    # Literal values only: a color field here would join the heatmap's yield color scale, which is
+    # shared across the months of the 4x3 grid and cannot merge with an identity scale
+    color = {
+        'condition': [
+            {'test': 'datum.is_closed', 'value': CALENDAR_CLOSED_COLOR},
+            {'test': 'datum.on_dark', 'value': '#FFFFFF'},
+        ],
+        'value': CALENDAR_DATE_COLOR,
+    }
+
+    label = alt.Chart(df_month[~is_holiday]).mark_text(baseline='middle', fontSize=font_size).encode(
         x, y, alt.Text('day:N'), color=color, tooltip=alt.value(None),
     )
     layers = [chart, label]
@@ -965,11 +996,10 @@ def month_plot(dates, values, labels=None, month=1, closed_dates=None, show_date
     named = df_month[is_holiday & (df_month['holiday'] != '')]
     if not named.empty:
         tooltip = alt.Tooltip('holiday:N', title=' ')
-        cell = width * 0.1
-        # Invisible cell-sized target so the whole holiday cell shows its name, not only the number
-        hover_area = alt.Chart(named).mark_rect(width=cell, height=cell, opacity=0.001).encode(x, y, tooltip=tooltip)
+        # Invisible target filling the cell so the whole holiday cell shows its name, not only the number
+        hover_area = alt.Chart(named).mark_rect(opacity=0.001).encode(x, y, tooltip=tooltip)
         layers.append(hover_area)
-    holiday_label = alt.Chart(df_month[is_holiday]).mark_text(baseline='middle', fontSize=width/20).encode(
+    holiday_label = alt.Chart(df_month[is_holiday]).mark_text(baseline='middle', fontSize=font_size).encode(
         x, y, alt.Text('day:N'), color=color,
         tooltip=alt.Tooltip('holiday:N', title=' ') if not named.empty else alt.value(None),
     )
@@ -977,61 +1007,158 @@ def month_plot(dates, values, labels=None, month=1, closed_dates=None, show_date
     return alt.layer(*layers)
 
 
-DIVIDEND_CALENDAR_CMAP = 'Greens'
+# Saturated greens from a light shade that still stands out on the page background (#EFF1EF)
+# to the brand's dark green; Matplotlib's 'Greens' starts near white and vanished on the background
+DIVIDEND_CALENDAR_COLORS = ['#B5E0A8', '#8ED288', '#5FBB6A', '#3C9F55', '#2A8547', '#1E6B3A', '#14532D']
+
+
+def _relative_luminance(hex_color):
+    channels = [int(hex_color.lstrip('#')[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    channels = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _scale_color(value, domain, colors):
+    """Hex color a piecewise-linear color scale gives value (clamped to the domain), interpolated in RGB."""
+    if value <= domain[0]:
+        return colors[0]
+    if value >= domain[-1]:
+        return colors[-1]
+    i = int(np.searchsorted(domain, value)) - 1
+    t = (value - domain[i]) / (domain[i + 1] - domain[i])
+    lo, hi = ([int(c.lstrip('#')[k:k + 2], 16) for k in (0, 2, 4)] for c in (colors[i], colors[i + 1]))
+    return '#' + ''.join(f'{round(a + (b - a) * t):02x}' for a, b in zip(lo, hi))
+
+
+def readable_text_color(hex_color):
+    """Black or white, whichever contrasts more with the given background."""
+    lum = _relative_luminance(hex_color)
+    return '#000000' if (lum + 0.05) / 0.05 >= 1.05 / (lum + 0.05) else '#FFFFFF'
 
 
 def dividend_calendar_domain(sl='JKSE'):
-    """Yield (%) breakpoints for the calendar color scale; US yields run about 10x lower than JKSE."""
-    domain = [2, 3, 5, 10, 20, 50, 100]
-    if sl != 'JKSE':
-        domain = list(np.array(domain) / 10)
-    return domain
+    """Yield (%) breakpoints for the calendar color scale, one per color.
+
+    A calendar cell shows the highest yield on that date, so the breakpoints follow the spread of
+    per-day highest yields in each market (2024 data, roughly the 10th to 95th percentile):
+    JKSE about 2% to 13%, S&P 500 (quarterly payouts, many per day) about 0.4% to 1.8%.
+    """
+    if sl == 'JKSE':
+        return [1, 2, 3, 4, 6, 8, 12]
+    return [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
+
+
+def _color_values(div_df, sl):
+    """Yields clamped to the color breakpoints. The heatmap scale extrapolates past its ends, so
+    without this a 0.3% yield fades toward white and a 60% yield turns black; tooltips keep the real yield."""
+    domain = dividend_calendar_domain(sl)
+    return div_df['yield'].clip(lower=domain[0], upper=domain[-1])
 
 
 def _dividend_labels(div_df):
     return div_df.apply(lambda x: f"{x['date'].strftime('%d %b')}: {x['symbol']} ({x['yield']:2.2f}%)", axis=1)
 
 
-def plot_dividend_month(div_df, month, sl='JKSE', closed_dates=None, width=500):
+def plot_dividend_month(div_df, month, sl='JKSE', closed_dates=None, width=340, height=None, title=''):
     """Single month of the dividend calendar, colored on the same scale as plot_dividend_calendar."""
     chart = month_plot(
         div_df['date'],
-        div_df['yield'],
+        _color_values(div_df, sl),
         labels=_dividend_labels(div_df),
-        cmap=DIVIDEND_CALENDAR_CMAP,
+        title=title,
+        color_range=DIVIDEND_CALENDAR_COLORS,
         domain=dividend_calendar_domain(sl),
         show_date=True,
         month=month,
         width=width,
+        height=height,
         closed_dates=closed_dates,
     )
     return style_calendar_chart(chart)
 
 
-def plot_dividend_calendar(div_df, sl='JKSE', closed_dates=None):
+def _calendar_legend(sl='JKSE'):
+    """Color key for the calendar heatmap: one swatch per yield breakpoint (unconfigured, for composing)."""
+    domain = dividend_calendar_domain(sl)
+    colors = lesley.color_palette(size=len(domain), color_range=DIVIDEND_CALENDAR_COLORS)
+    keys = pd.DataFrame({
+        'pos': range(len(domain)),
+        'label': [f'{v:g}%' for v in domain],
+        'color': colors,
+    })
+    keys.loc[keys.index[-1], 'label'] += '+'
+    keys['text_color'] = [readable_text_color(c) for c in colors]
+
+    # One 20px strip: each percentage is written inside its swatch
+    base = alt.Chart(keys).encode(x=alt.X('pos:O', axis=None, scale=alt.Scale(paddingInner=0.08)))
+    swatch = base.mark_rect(cornerRadius=4).encode(
+        y=alt.value(0), y2=alt.value(20),
+        color=alt.Color('color:N', scale=None),
+        tooltip=alt.value(None),
+    )
+    label = base.mark_text(fontSize=10, fontWeight=600, baseline='middle').encode(
+        y=alt.value(10), text='label:N', color=alt.Color('text_color:N', scale=None),
+    )
+    return (swatch + label).properties(width=46 * len(domain), height=20)
+
+
+def plot_dividend_calendar_legend(sl='JKSE'):
+    # No chart title: Streamlit sizes the element to the chart height, so a title would push the labels out
+    return _calendar_legend(sl).configure_view(stroke=None)
+
+
+def plot_dividend_calendar(div_df, sl='JKSE', closed_dates=None, width=250, height=None, title=None, legend=False):
+    """Full year as a 4x3 grid of months. With title/legend it is one self-explanatory image to share.
+
+    width/height are per-month limits (see month_plot); the title and color key share one row below the grid.
+    """
 
     domain = dividend_calendar_domain(sl)
     labels = _dividend_labels(div_df)
+    values = _color_values(div_df, sl)
 
-    full_chart = alt.hconcat()
+    full_chart = alt.hconcat(spacing=10)
     for i in range(4):
-        column = alt.vconcat()
+        column = alt.vconcat(spacing=6)
         for j in range(3):
             idx = (j*4)+i+1
             c = month_plot(
                 div_df['date'],
-                div_df['yield'],
+                values,
                 labels=labels,
                 title=calendar.month_name[idx],
-                cmap=DIVIDEND_CALENDAR_CMAP,
+                color_range=DIVIDEND_CALENDAR_COLORS,
                 domain=domain,
                 show_date=True,
                 month=idx,
+                width=width,
+                height=height,
                 closed_dates=closed_dates,
             )
             column = column & c
         full_chart = full_chart | column
-    return style_calendar_chart(full_chart)
+
+    # Title and color key share one row under the grid, which keeps the whole image within one screen
+    footer = []
+    if title:
+        footer.append(alt.Chart(pd.DataFrame({'text': [title]})).mark_text(
+            align='left', baseline='middle', fontSize=16, fontWeight=600, color=CHART_TEXT,
+        ).encode(text='text:N', x=alt.value(0), y=alt.value(10)).properties(width=320, height=20))
+    if legend:
+        footer.append(_calendar_legend(sl))
+    if footer:
+        # Each part keeps its own color scale: the key uses literal colors, the months the yield scale
+        full_chart = alt.vconcat(full_chart, alt.hconcat(*footer, spacing=24), spacing=6).resolve_scale(color='independent')
+    # Compact month titles and weekday labels (the app theme's 16px title + 16px offset is sized for
+    # standalone charts) so the 4x3 grid stays within one screen
+    return (
+        full_chart
+        .configure_axis(grid=False, domain=False, ticks=False, labelPadding=2)
+        .configure_axisX(grid=False, domain=False, ticks=False)
+        .configure_axisY(grid=False, domain=False, ticks=False)
+        .configure_view(stroke=None)
+        .configure_title(fontSize=14, offset=4)
+    )
 
 
 def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade', group_secs=True):

@@ -1,6 +1,6 @@
 """
 tests/apps/test_calendar.py
-Tests for prep_div_month.
+Tests for the payout calendar page helpers.
 Stubs are installed by tests/apps/conftest.py.
 """
 from unittest.mock import patch
@@ -16,7 +16,7 @@ with patch.dict("os.environ", {"REDIS_URL": "redis://stub", "FMP_API_KEY": "stub
 
 # ═════════════════════════════════════════════════════════════════════════════
 
-class TestPrepDivMonth:
+class TestPrepDivTable:
 
     @pytest.fixture
     def full_year_df(self):
@@ -39,25 +39,24 @@ class TestPrepDivMonth:
         return pd.DataFrame(rows)
 
     def test_filters_to_requested_month(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=3)
-        for ex_date in result["ex_date"]:
-            assert "Mar" in ex_date
+        result = cal.prep_div_table(full_year_df, 3)
+        assert (result["ex_date"].dt.month == 3).all()
 
     def test_output_columns(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=1)
+        result = cal.prep_div_table(full_year_df, 1)
         expected = {"rank", "url_link", "ex_date", "div_yield", "dividend", "price"}
         assert expected.issubset(set(result.columns))
 
     def test_multi_row_month(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=5)
+        result = cal.prep_div_table(full_year_df, 5)
         assert len(result) == 2
 
     def test_rank_starts_at_one(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=7)
+        result = cal.prep_div_table(full_year_df, 7)
         assert result["rank"].iloc[0] == 1
 
     def test_url_link_format(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=1)
+        result = cal.prep_div_table(full_year_df, 1)
         for url in result["url_link"]:
             assert url.startswith("https://panendividen.com/stock_picker?market=ID&stock=")
 
@@ -69,12 +68,12 @@ class TestPrepDivMonth:
             "price":       200.0,
             "yield":       0.125,
         }])
-        result = cal.prep_div_month(us_df, month_idx=3, market="US")
+        result = cal.prep_div_table(us_df, 3, market="US")
         assert result["url_link"].iloc[0] == "https://panendividen.com/stock_picker?market=US&stock=AAPL"
 
     def test_url_link_uses_site_url(self, full_year_df):
         with patch.object(cal, "SITE_URL", "http://localhost:8501"):
-            result = cal.prep_div_month(full_year_df, month_idx=1)
+            result = cal.prep_div_table(full_year_df, 1)
         assert result["url_link"].iloc[0].startswith("http://localhost:8501/stock_picker?")
 
     @pytest.mark.parametrize("symbol, expected", [
@@ -99,28 +98,43 @@ class TestPrepDivMonth:
             "price":       pd.Series(dtype=float),
             "yield":       pd.Series(dtype=float),
         })
-        result = cal.prep_div_month(empty, month_idx=6)
+        result = cal.prep_div_table(empty, 6)
         assert result.empty
 
-    def test_div_yield_has_percent_sign(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=2)
-        for dy in result["div_yield"]:
-            assert "%" in dy
-
-    def test_ex_date_formatted_as_dd_mon(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=1)
-        assert result["ex_date"].iloc[0] == "10 Jan"
+    def test_yield_and_date_stay_sortable_types(self, full_year_df):
+        # The table formats them; numeric/datetime values make column sorting correct
+        result = cal.prep_div_table(full_year_df, 2)
+        assert pd.api.types.is_float_dtype(result["div_yield"])
+        assert pd.api.types.is_datetime64_any_dtype(result["ex_date"])
+        assert result["div_yield"].iloc[0] == pytest.approx(4.0)
 
     def test_december_month(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=12)
+        result = cal.prep_div_table(full_year_df, 12)
         assert len(result) == 1
-        assert "Dec" in result["ex_date"].iloc[0]
+        assert result["ex_date"].iloc[0] == pd.Timestamp("2025-12-10")
 
     def test_sorted_highest_yield_first(self, full_year_df):
-        result = cal.prep_div_month(full_year_df, month_idx=5)
-        yields_raw = result["div_yield"].str.rstrip("%").astype(float).tolist()
-        assert yields_raw == sorted(yields_raw, reverse=True)
+        result = cal.prep_div_table(full_year_df, 5)
+        assert result["div_yield"].tolist() == sorted(result["div_yield"], reverse=True)
 
+    def test_does_not_modify_input(self, full_year_df):
+        before = full_year_df.copy()
+        cal.prep_div_table(full_year_df, 5)
+        pd.testing.assert_frame_equal(full_year_df, before)
+
+
+class TestFormatDividend:
+
+    @pytest.mark.parametrize("value, expected", [
+        (350.0, "350"),
+        (1358.18, "1,358.18"),
+        (0.24, "0.24"),
+        (0.2635, "0.2635"),
+        (0.009, "0.009"),
+        (107.1, "107.1"),
+    ])
+    def test_trims_trailing_zeros(self, value, expected):
+        assert cal.format_dividend(value) == expected
 
 class TestProjectToNextYear:
 
