@@ -927,31 +927,107 @@ def plot_supertrend(st_df):
     return c
 
 
-def plot_dividend_calendar(div_df, show_next_year=False, sl='JKSE'):
+CALENDAR_DATE_COLOR = '#000000'
+CALENDAR_CLOSED_COLOR = '#ED2939'
 
-    if show_next_year:
-        div_df['date'] = div_df['date'].apply(lambda x: x.replace(year=x.year+1))
-    
+
+def month_plot(dates, values, labels=None, month=1, closed_dates=None, show_date=True, width=250, **kwargs):
+    """lesley.month_plot whose date numbers are red on weekends and on closed_dates (e.g. exchange holidays).
+
+    closed_dates is a list of dates, or a {date: name} dict whose names show as a tooltip on those days.
+    """
+    chart = lesley.month_plot(dates, values, labels=labels, month=month, width=width, show_date=False, **kwargs)
+    if not show_date:
+        return chart
+
+    if closed_dates is None:
+        closed_dates = {}
+    elif not isinstance(closed_dates, dict):
+        closed_dates = dict.fromkeys(closed_dates, '')
+    holiday_names = {pd.Timestamp(d).normalize(): name for d, name in closed_dates.items()}
+
+    df = lesley.prep_data(dates, values, labels)
+    df_month = df[df['months'] == calendar.month_name[month]].reset_index(drop=True)
+    df_month['day'] = df_month['dates'].dt.day
+    df_month['holiday'] = df_month['dates'].map(holiday_names)
+    is_holiday = df_month['dates'].isin(holiday_names.keys())
+    df_month['is_closed'] = (df_month['dates'].dt.weekday >= 5) | is_holiday
+
+    x = alt.X('days', sort=list(calendar.day_abbr))
+    y = alt.Y('weeks:N')
+    color = alt.condition(alt.datum['is_closed'], alt.value(CALENDAR_CLOSED_COLOR), alt.value(CALENDAR_DATE_COLOR))
+
+    label = alt.Chart(df_month[~is_holiday]).mark_text(baseline='middle', fontSize=width/20).encode(
+        x, y, alt.Text('day:N'), color=color, tooltip=alt.value(None),
+    )
+    layers = [chart, label]
+
+    named = df_month[is_holiday & (df_month['holiday'] != '')]
+    if not named.empty:
+        tooltip = alt.Tooltip('holiday:N', title=' ')
+        cell = width * 0.1
+        # Invisible cell-sized target so the whole holiday cell shows its name, not only the number
+        hover_area = alt.Chart(named).mark_rect(width=cell, height=cell, opacity=0.001).encode(x, y, tooltip=tooltip)
+        layers.append(hover_area)
+    holiday_label = alt.Chart(df_month[is_holiday]).mark_text(baseline='middle', fontSize=width/20).encode(
+        x, y, alt.Text('day:N'), color=color,
+        tooltip=alt.Tooltip('holiday:N', title=' ') if not named.empty else alt.value(None),
+    )
+    layers.append(holiday_label)
+    return alt.layer(*layers)
+
+
+DIVIDEND_CALENDAR_CMAP = 'Greens'
+
+
+def dividend_calendar_domain(sl='JKSE'):
+    """Yield (%) breakpoints for the calendar color scale; US yields run about 10x lower than JKSE."""
     domain = [2, 3, 5, 10, 20, 50, 100]
     if sl != 'JKSE':
-        domain = np.array(domain) / 10
-    
-    labels = div_df.apply(lambda x: f"{x['date'].strftime('%d %b')}: {x['symbol']} ({x['yield']:2.2f}%)", axis=1)
+        domain = list(np.array(domain) / 10)
+    return domain
+
+
+def _dividend_labels(div_df):
+    return div_df.apply(lambda x: f"{x['date'].strftime('%d %b')}: {x['symbol']} ({x['yield']:2.2f}%)", axis=1)
+
+
+def plot_dividend_month(div_df, month, sl='JKSE', closed_dates=None, width=500):
+    """Single month of the dividend calendar, colored on the same scale as plot_dividend_calendar."""
+    chart = month_plot(
+        div_df['date'],
+        div_df['yield'],
+        labels=_dividend_labels(div_df),
+        cmap=DIVIDEND_CALENDAR_CMAP,
+        domain=dividend_calendar_domain(sl),
+        show_date=True,
+        month=month,
+        width=width,
+        closed_dates=closed_dates,
+    )
+    return style_calendar_chart(chart)
+
+
+def plot_dividend_calendar(div_df, sl='JKSE', closed_dates=None):
+
+    domain = dividend_calendar_domain(sl)
+    labels = _dividend_labels(div_df)
 
     full_chart = alt.hconcat()
     for i in range(4):
         column = alt.vconcat()
         for j in range(3):
             idx = (j*4)+i+1
-            c = lesley.month_plot(
+            c = month_plot(
                 div_df['date'],
                 div_df['yield'],
                 labels=labels,
                 title=calendar.month_name[idx],
-                cmap='Greens',
+                cmap=DIVIDEND_CALENDAR_CMAP,
                 domain=domain,
                 show_date=True,
                 month=idx,
+                closed_dates=closed_dates,
             )
             column = column & c
         full_chart = full_chart | column

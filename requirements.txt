@@ -3,6 +3,7 @@ numpy==2.5.2
 pandas==3.0.5
 altair==6.2.2
 lesley==0.4.0
+holidays==0.105
 psutil==7.2.2
 openai==3.0.0
 plotly==6.9.0

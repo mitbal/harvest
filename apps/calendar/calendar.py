@@ -1,14 +1,12 @@
 import os
 import io
 import json
-import time
-import logging
 import calendar
-import concurrent.futures
 from datetime import datetime
 
 import redis
-import lesley
+import holidays
+import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
@@ -28,30 +26,20 @@ hp.enable_chart_theme()
 
 sl = st.sidebar.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
 
-
-if sl is None:
-    print('Please select one of the options above')
-    st.stop()
-
 if sl == 'JKSE':
     exch = 'jkse'
+    market = 'ID'
 else:
     exch = 'sp500'
+    market = 'US'
 
 div_years_key = f'div_cal_years_{exch}'
 div_score_key = f'div_score_{exch}'
 
 url = os.environ['REDIS_URL']
+SITE_URL = os.getenv('SITE_URL', 'https://panendividen.com').rstrip('/')
 
-#### Function definition
-
-
-def get_logger(name, level=logging.INFO):
-
-    logger = setup_logging(name, level)
-    return logger
-
-logger = get_logger('calendar')
+logger = setup_logging('calendar')
 
 
 @st.cache_resource
@@ -62,50 +50,217 @@ def connect_redis(redis_url):
 r = connect_redis(url)
 
 
+class MissingDataError(Exception):
+    """A Redis key the page needs is not there yet (e.g. the pipeline has not run)."""
+
+
 @st.cache_data(max_entries=4, ttl=60*60, show_spinner='Downloading dividend data')
 def get_data_from_redis(key):
-
-    start = time.time()
+    # Raising instead of returning None keeps a missing key out of the cache,
+    # so the page recovers as soon as the pipeline writes it
     j = r.get(key)
     if j is None:
-        logger.error(f'Missing redis key: {key}')
-        st.error('Dividend calendar data is not available. Please refresh after the pipeline finishes.')
-        st.stop()
-    end = time.time()
+        raise MissingDataError(key)
 
     if isinstance(j, bytes) and j.startswith(b'PAR1'):
-        # logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds (parquet)')
         return pd.read_parquet(io.BytesIO(j))
 
     rjson = json.loads(j)
-    
     if 'date' in rjson and 'content' in rjson:
-        last_updated = rjson['date']
-        # logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds, last updated: {last_updated}')
-        content = rjson['content']
-        return pd.DataFrame(json.loads(content))
-    else:
-        # logger.info(f'get redis key: {key}, total time: {end-start:.4f} seconds')
-        return pd.DataFrame(rjson)
+        return pd.DataFrame(json.loads(rjson['content']))
+    return pd.DataFrame(rjson)
 
 
-def prep_div_month(df, month_idx=1):
-    
+def load_data(key):
+    try:
+        return get_data_from_redis(key)
+    except MissingDataError:
+        logger.error(f'Missing redis key: {key}')
+        st.error('Dividend calendar data is not available. Please refresh after the pipeline finishes.')
+        st.stop()
+
+
+def prep_div_month(df, month_idx=1, market='ID'):
+
     month_df = df[df.date.dt.month == month_idx].copy().reset_index(drop=True)
     month_df.sort_values(by='yield', ascending=False, inplace=True)
 
     month_df['rank'] = list(range(1, len(month_df)+1))
     month_df['div_yield'] = month_df['yield'].apply(lambda x: f'{x:2.2f}%')
     month_df['ex_date'] = month_df['date'].dt.strftime('%d %b')
-    month_df['url_link'] = month_df['symbol'].apply(lambda x: f'https://panendividen.com/stock_picker?stock={x}')
-    
+    month_df['url_link'] = month_df['symbol'].apply(lambda x: f'{SITE_URL}/stock_picker?market={market}&stock={x}')
+
     month_df.rename(columns={'symbol': 'stock',
                             'adjDividend': 'dividend'}, inplace=True)
-    
+
     return month_df[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']]
 
 
-#### End of Function definition
+def market_holidays(market, years):
+    """{date: holiday name} for days the exchange is closed: IDX (market 'ID') or NYSE (market 'US')."""
+    if market == 'US':
+        closed = dict(holidays.financial_holidays('NYSE', years=years))
+    else:
+        # IDX closes on public holidays, cuti bersama (government category) and the 31 Dec bourse holiday
+        closed = dict(holidays.Indonesia(years=years, categories=('public', 'government'), language='en_US'))
+        for y in years:
+            closed.setdefault(pd.Timestamp(year=y, month=12, day=31).date(), 'IDX Year-End Holiday')
+    return dict(sorted(closed.items()))
+
+
+def project_to_next_year(dates, market='ID'):
+    """Shift ex-dates one year forward so the calendar grid uses the projected year's weekdays.
+
+    DateOffset maps 29 Feb onto 28 Feb instead of raising like Timestamp.replace.
+    Ex-dates are trading days, so a projection landing on a weekend or exchange holiday
+    moves to the next trading day, or back to the previous one if that would leave the month.
+    """
+    projected = pd.Series(pd.to_datetime(dates)) + pd.DateOffset(years=1)
+    if projected.empty:
+        return projected
+
+    years = sorted(projected.dt.year.unique().tolist())
+    closed = np.array(list(market_holidays(market, years)), dtype='datetime64[D]')
+    days = projected.values.astype('datetime64[D]')
+
+    forward = np.busday_offset(days, 0, roll='forward', holidays=closed)
+    backward = np.busday_offset(days, 0, roll='backward', holidays=closed)
+
+    rolled = pd.Series(pd.to_datetime(forward), index=projected.index)
+    leaves_month = rolled.dt.month != projected.dt.month
+    rolled[leaves_month] = pd.to_datetime(backward[leaves_month.to_numpy()])
+    return rolled
+
+
+def add_yield(df):
+    """Add yield (%) and drop rows that are not a real payout or have no usable price.
+
+    A zero or missing price gives an inf/NaN yield that skews the averages and breaks idxmax;
+    a zero dividend (e.g. a non-payer with a 0.0 row) is not a payout.
+    """
+    df = df.copy()
+    adj = pd.to_numeric(df['adjDividend'], errors='coerce')
+    price = pd.to_numeric(df['price'], errors='coerce')
+    valid = (adj > 0) & (price > 0)
+
+    df['yield'] = (adj / price.where(valid)) * 100
+    valid &= np.isfinite(df['yield'])
+
+    dropped = int((~valid).sum())
+    if dropped:
+        logger.warning(f'Dropped {dropped} dividend rows without a positive dividend and price: '
+                       f'{sorted(df.loc[~valid, "symbol"].astype(str).unique().tolist())}')
+    return df[valid].reset_index(drop=True)
+
+
+def syariah_symbols(div_score_df):
+    """Set of Syariah-compliant symbols, or None when the score data does not carry the flag."""
+    if not {'symbol', 'is_syariah'}.issubset(div_score_df.columns):
+        return None
+    return set(div_score_df.loc[div_score_df['is_syariah'].eq(True), 'symbol'])
+
+
+PAYOUT_FREQUENCIES = [
+    # (label, min payments, max payments)
+    ('Once per year', 1, 1),
+    ('Twice per year', 2, 2),
+    ('3 times per year', 3, 3),
+    ('4 or more times per year', 4, None),
+]
+
+
+def payout_frequency_label(payments):
+    for label, low, high in PAYOUT_FREQUENCIES:
+        if payments >= low and (high is None or payments <= high):
+            return label
+    return None
+
+
+def payout_frequency(df):
+    """Companies per payout-frequency bucket, with their tickers; empty buckets are left out."""
+    columns = ['frequency', 'count', 'stocks']
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    # Count events, not unique dates: two ex-dates rolled onto the same trading day are still two payouts
+    events = df.drop_duplicates(subset=['symbol', 'date', 'adjDividend'])
+    freq_df = events.groupby('symbol').size().reset_index(name='payments')
+    freq_df['frequency'] = freq_df['payments'].map(payout_frequency_label)
+
+    order = [label for label, _, _ in PAYOUT_FREQUENCIES]
+    summary = (
+        freq_df.groupby('frequency')
+        .agg(count=('symbol', 'size'), stocks=('symbol', lambda s: ', '.join(sorted(s))))
+        .reindex(order)
+        .dropna(subset=['count'])
+        .reset_index()
+    )
+    summary['count'] = summary['count'].astype(int)
+    return summary[columns]
+
+
+def parse_query_params(qp, available_years, default_year, current_month):
+    """Widget defaults from the URL: (view index, year index, month index), falling back on bad values.
+
+    Supported params:
+      ?view=yearly|monthly   (default: yearly)
+      ?year=2025             (source year; defaults to latest completed year)
+      ?month=3               (1-12, only relevant when view=monthly)
+    Example: ?view=monthly&year=2025&month=6
+    """
+    view_idx = 1 if str(qp.get('view', 'yearly')).lower() == 'monthly' else 0
+
+    try:
+        year = int(qp.get('year', default_year))
+    except ValueError:
+        year = default_year
+    year_idx = available_years.index(year if year in available_years else default_year)
+
+    try:
+        month = int(qp.get('month', current_month))
+    except ValueError:
+        month = current_month
+    month_idx = (month if 1 <= month <= 12 else current_month) - 1
+
+    return view_idx, year_idx, month_idx
+
+
+def yield_summary(stats_df, by):
+    """Events and average yield per month ('month') or per day of month ('day')."""
+    key = stats_df['date'].dt.month if by == 'month' else stats_df['date'].dt.day
+    summary = (
+        stats_df
+        .assign(**{by: key})
+        .groupby(by)['yield']
+        .agg(['mean', 'count'])
+        .reset_index()
+        .rename(columns={'mean': 'avg_yield', 'count': 'events'})
+    )
+    if by == 'month':
+        summary['month_name'] = summary['month'].map(lambda m: calendar.month_abbr[m])
+    return summary
+
+
+def yield_combo_chart(summary, x_field, x_title, sort=None):
+    """Dividend count bars with the average yield line on a second axis."""
+    x = alt.X(x_field, sort=sort, title=x_title)
+    x_tooltip = alt.Tooltip(x_field, title=x_title)
+    base = alt.Chart(summary)
+    events_bar = base.mark_bar(color=cs.CHART_PRIMARY).encode(
+        x=x,
+        y=alt.Y('events:Q', title='Dividend count'),
+        tooltip=[x_tooltip, alt.Tooltip('events:Q', title='Count')]
+    )
+    yield_line = base.mark_line(color=cs.CHART_AMBER, point=True).encode(
+        x=x,
+        y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor=cs.CHART_AMBER), scale=alt.Scale(zero=False)),
+        tooltip=[x_tooltip, alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
+    )
+    return (events_bar + yield_line).resolve_scale(y='independent').properties(height=260)
+
+
+# Ticker after stock=, without the .JK suffix; allows class shares like BRK.B or BF-B
+TICKER_DISPLAY_PATTERN = r"[?&]stock=([A-Z0-9.\-]+?)(?:\.JK)?$"
 
 column_config = {
     'url_link': st.column_config.LinkColumn(
@@ -113,7 +268,7 @@ column_config = {
         help='The code of the stock',
         max_chars=10,
 
-        display_text=r"https://panendividen\.com/stock_picker\?stock=([A-Z]+)(?=\.JK|$)"
+        display_text=TICKER_DISPLAY_PATTERN
     ),
     'rank': st.column_config.NumberColumn(
         'Rank',
@@ -128,10 +283,11 @@ column_config = {
         'Yield',
         help='Dividend yield',
     ),
+    # No fixed format: Streamlit's default shows up to 4 decimals with trailing zeros trimmed,
+    # so US cents (0.24, 0.2635) and split-adjusted IDR amounts (0.009) keep their precision
     'dividend': st.column_config.NumberColumn(
         'Dividend',
-        help='Dividend amount',
-        format='%.01f',
+        help='Dividend amount per share',
     ),
     'price': st.column_config.NumberColumn(
         'Price',
@@ -141,39 +297,17 @@ column_config = {
 }
 
 
-years_df = get_data_from_redis(div_years_key)
+years_df = load_data(div_years_key)
 available_years = sorted(years_df['year'].astype(int).unique().tolist())
 if len(available_years) == 0:
     available_years = [current_year]
 completed_years = [year for year in available_years if year < current_year]
 default_year = max(completed_years) if completed_years else max(available_years)
 
-# ── URL query-param defaults ──────────────────────────────────────────────────
-# Supported params:
-#   ?view=yearly|monthly   (default: yearly)
-#   ?year=2025             (source year; defaults to latest completed year)
-#   ?month=3               (1-12, only relevant when view=monthly)
-# Example: ?view=monthly&year=2025&month=6
-qp = st.query_params
-
-_qp_view = qp.get('view', 'yearly').lower()
-_default_view_idx = 1 if _qp_view == 'monthly' else 0
-
-_qp_year = qp.get('year', str(default_year))
-try:
-    _qp_year_int = int(_qp_year)
-    _default_year_idx = available_years.index(_qp_year_int) if _qp_year_int in available_years else available_years.index(default_year)
-except (ValueError, IndexError):
-    _default_year_idx = available_years.index(default_year)
-
+_default_view_idx, _default_year_idx, _default_month_idx = parse_query_params(
+    st.query_params, available_years, default_year, current_month
+)
 months = list(calendar.month_name)  # ['', 'January', ..., 'December']
-_qp_month = qp.get('month', str(current_month))
-try:
-    _qp_month_int = int(_qp_month)
-    _default_month_idx = (_qp_month_int - 1) if 1 <= _qp_month_int <= 12 else (current_month - 1)
-except ValueError:
-    _default_month_idx = current_month - 1
-# ─────────────────────────────────────────────────────────────────────────────
 
 view_control = st.sidebar.radio(
     'Calendar View', ['Full Year', 'Single Month'],
@@ -189,41 +323,40 @@ if view_control == 'Single Month':
     month_index = months.index(select_month)
 
 # Keep URL params in sync with the current widget state
-_new_view = 'monthly' if view_control == 'Single Month' else 'yearly'
-if _new_view == 'monthly' and month_index is not None:
-    st.query_params.update({'view': _new_view, 'year': str(selected_year), 'month': str(month_index)})
+if month_index is not None:
+    st.query_params.update({'view': 'monthly', 'year': str(selected_year), 'month': str(month_index)})
 else:
-    st.query_params.update({'view': _new_view, 'year': str(selected_year)})
-    qp_keys = list(st.query_params.keys())
-    if 'month' in qp_keys:
-        del st.query_params['month']
+    st.query_params.update({'view': 'yearly', 'year': str(selected_year)})
+    st.query_params.pop('month', None)
 
 div_cal_key = f'div_cal_{exch}_{selected_year}'
-df = get_data_from_redis(div_cal_key)
-df['date'] = pd.to_datetime(df['date'])
-df['yield'] = df['adjDividend'] / df['price'] * 100
+df = load_data(div_cal_key)
+# The page projects next year's calendar from this year's ex-dates
+df['date'] = project_to_next_year(df['date'], market=market)
+# Exchange holidays in the projected year, marked red on the calendar like weekends with the name on hover
+closed_dates = market_holidays(market, [selected_year + 1])
+df = add_yield(df)
 
 st.title(f'Dividend Calendar {selected_year+1}')
 st.write(f'*based on {selected_year} data*')
 
-div_score_df = get_data_from_redis(div_score_key)
-
-_sector_map = {}
-if 'sector' in div_score_df.columns and 'symbol' in div_score_df.columns:
-    _sector_map = dict(zip(div_score_df['symbol'], div_score_df['sector'].fillna('Unknown')))
+div_score_df = load_data(div_score_key)
 
 if sl == 'JKSE':
-    show_next_year = True
-    div_score_df = div_score_df[['symbol', 'is_syariah']]
-    is_syariah = st.sidebar.toggle('Syariah Only?')
-    if is_syariah:
-        df = df.merge(div_score_df, on='symbol', how='left')
-        df = df[df['is_syariah'] == True]
-else:
-    show_next_year = False
+    _syariah = syariah_symbols(div_score_df)
+    if _syariah is None:
+        logger.warning(f'{div_score_key} has no symbol/is_syariah columns; Syariah filter hidden')
+    elif st.sidebar.toggle('Syariah Only?'):
+        # Filter by membership rather than merging, so duplicate score rows cannot duplicate dividend events
+        df = df[df['symbol'].isin(_syariah)]
+
+if df.empty:
+    # The calendar charts cannot be drawn without at least one dividend date
+    st.info('No dividend data available for this selection.')
+    st.stop()
 
 if view_control == 'Full Year':
-    cal = hp.plot_dividend_calendar(df, show_next_year=False, sl=sl)
+    cal = hp.plot_dividend_calendar(df, sl=sl, closed_dates=closed_dates)
     st.altair_chart(cal, theme=None)
 
     idx = 1
@@ -235,7 +368,7 @@ if view_control == 'Full Year':
         for j in range(4):
             row_cols[j].write(f'{calendar.month_name[idx]}')
 
-            month_df = prep_div_month(df, month_idx=idx)
+            month_df = prep_div_month(df, month_idx=idx, market=market)
             row_cols[j].dataframe(
                 hide_index=True,
                 column_config=column_config,
@@ -246,20 +379,10 @@ else:
     st.write(select_month)
     cols = st.columns(2)
 
-    labels = df.apply(lambda x: f"{x['date'].strftime('%d %b')}: {x['symbol']} ({x['yield']:2.2f}%)", axis=1)
-    month_cal = hp.style_calendar_chart(
-        lesley.month_plot(
-            df['date'],
-            df['yield'],
-            labels=labels,
-            month=month_index,
-            show_date=True,
-            width=500,
-        )
-    )
+    month_cal = hp.plot_dividend_month(df, month_index, sl=sl, closed_dates=closed_dates)
     cols[0].altair_chart(month_cal, theme=None)
 
-    month_df = prep_div_month(df, month_idx=month_index)
+    month_df = prep_div_month(df, month_idx=month_index, market=market)
     cols[1].dataframe(
         hide_index=True,
         column_config=column_config,
@@ -268,7 +391,9 @@ else:
 
 stats_df = df if view_control == 'Full Year' else df[df['date'].dt.month == month_index]
 if stats_df.empty:
-    st.info('No dividend statistics available for this selection.')
+    # Only a single month can be empty here; the page stops earlier when there is no data at all
+    st.divider()
+    st.info(f'No ex-dividend dates in {select_month}, so there are no statistics for this month.')
 else:
     st.divider()
     st.subheader('Dividend Statistics')
@@ -284,52 +409,10 @@ else:
     charts = st.columns(2)
 
     if view_control == 'Full Year':
-        monthly_summary = (
-            stats_df
-            .assign(month=stats_df['date'].dt.month)
-            .groupby('month')['yield']
-            .agg(['mean', 'count'])
-            .reset_index()
-            .rename(columns={'mean': 'avg_yield', 'count': 'events'})
-        )
-        month_order = list(calendar.month_abbr[1:])
-        monthly_summary['month_name'] = monthly_summary['month'].apply(lambda m: calendar.month_abbr[m])
-        monthly_summary['month_name'] = pd.Categorical(monthly_summary['month_name'], categories=month_order, ordered=True)
-        monthly_summary = monthly_summary.sort_values('month_name')
-
-        combo_base = alt.Chart(monthly_summary)
-        events_bar = combo_base.mark_bar(color=cs.CHART_PRIMARY).encode(
-            x=alt.X('month_name:N', sort=month_order, title='Month'),
-            y=alt.Y('events:Q', title='Dividend count'),
-            tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('events:Q', title='Count')]
-        )
-        yield_line = combo_base.mark_line(color=cs.CHART_AMBER, point=True).encode(
-            x=alt.X('month_name:N', sort=month_order),
-            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor=cs.CHART_AMBER), scale=alt.Scale(zero=False)),
-            tooltip=[alt.Tooltip('month_name:N', title='Month'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
-        )
-        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch', theme=None)
+        combo = yield_combo_chart(yield_summary(stats_df, 'month'), 'month_name:N', 'Month', sort=list(calendar.month_abbr[1:]))
     else:
-        day_summary = (
-            stats_df
-            .assign(day=stats_df['date'].dt.day)
-            .groupby('day')['yield']
-            .agg(['mean', 'count'])
-            .reset_index()
-            .rename(columns={'mean': 'avg_yield', 'count': 'events'})
-        )
-        combo_base = alt.Chart(day_summary)
-        events_bar = combo_base.mark_bar(color=cs.CHART_PRIMARY).encode(
-            x=alt.X('day:O', title='Ex-Date day'),
-            y=alt.Y('events:Q', title='Dividend count'),
-            tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('events:Q', title='Count')]
-        )
-        yield_line = combo_base.mark_line(color=cs.CHART_AMBER, point=True).encode(
-            x='day:O',
-            y=alt.Y('avg_yield:Q', title='Avg yield (%)', axis=alt.Axis(titleColor=cs.CHART_AMBER), scale=alt.Scale(zero=False)),
-            tooltip=[alt.Tooltip('day:O', title='Day'), alt.Tooltip('avg_yield:Q', format='.2f', title='Avg yield %')]
-        )
-        charts[0].altair_chart((events_bar + yield_line).resolve_scale(y='independent').properties(height=260), width='stretch', theme=None)
+        combo = yield_combo_chart(yield_summary(stats_df, 'day'), 'day:O', 'Ex-Date day')
+    charts[0].altair_chart(combo, width='stretch', theme=None)
 
     kde = alt.Chart(stats_df[['yield']]).transform_density(
         'yield',
@@ -354,37 +437,17 @@ else:
     )
     charts[1].altair_chart((kde + mean_rule).properties(height=260), width='stretch', theme=None)
 
-    freq_df = (
-        df.groupby('symbol')['date']
-        .nunique()
-        .reset_index(name='payments')
-    )
-    freq_df['payments'] = freq_df['payments'].clip(upper=4)
-    category_order = ['Once per year', 'Twice per year', 'Thrice per year', '4 times per year']
-    freq_labels = {1: category_order[0], 2: category_order[1], 3: category_order[2], 4: category_order[3]}
-    freq_df['category'] = freq_df['payments'].map(freq_labels)
+# Frequency covers the whole year, so it shows even when the selected month has no dividends
+freq_summary = payout_frequency(df)
 
-    freq_summary = (
-        freq_df.groupby('category')
-        .agg(
-            count=('symbol', 'size'),
-            stocks=('symbol', lambda s: ', '.join(sorted(s)))
-        )
-        .reindex(category_order)
-        .reset_index()
-        .rename(columns={'category': 'frequency'})
-    )
-    freq_summary['count'] = freq_summary['count'].fillna(0).astype(int)
-    freq_summary['stocks'] = freq_summary['stocks'].fillna('')
-
-    st.subheader('Payout Frequency (per year)')
-    st.dataframe(
-        freq_summary,
-        hide_index=True,
-        width='stretch',
-        column_config={
-            'frequency': st.column_config.TextColumn('Frequency'),
-            'count': st.column_config.NumberColumn('Companies', format='%d'),
-            'stocks': st.column_config.TextColumn('Stocks')
-        }
-    )
+st.subheader('Payout Frequency (per year)')
+st.dataframe(
+    freq_summary,
+    hide_index=True,
+    width='stretch',
+    column_config={
+        'frequency': st.column_config.TextColumn('Frequency'),
+        'count': st.column_config.NumberColumn('Companies', format='%d'),
+        'stocks': st.column_config.TextColumn('Stocks')
+    }
+)
