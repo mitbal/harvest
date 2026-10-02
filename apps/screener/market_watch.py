@@ -3,9 +3,11 @@ import io
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import redis
+import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -16,12 +18,31 @@ import harvest.plot as hp
 import harvest.data as hd
 from harvest import chart_style as cs
 from harvest.utils import setup_logging
+from harvest.viewport import remaining_viewport_height
 
 
-st.set_page_config(page_title='Market Heatmap - Panen Dividen')
+st.set_page_config(page_title='Market Heatmap - Panen Dividen', layout='wide')
 hp.enable_chart_theme()
-st.title('Market Heatmap')
-st.caption('Explore daily market performance by company. Tile size and color follow the selected measures.')
+
+# The heatmap should fill the first screen, so this page trims Streamlit's
+# default top padding and uses a compact title. Scoped to this page's elements.
+st.html("""
+<style>
+    [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
+    .st-key-mw_header h1 { font-size: 1.75rem; padding: 0; }
+</style>
+""")
+with st.container(key='mw_header'):
+    st.title(
+        'Market Heatmap',
+        help=(
+            'Tile size and colour follow the selected measures. '
+            'Click a stock tile to open its full analysis in the Ranking Screener; '
+            'click a sector to zoom in.'
+        ),
+    )
+toolbar = st.container(horizontal=True, vertical_alignment='bottom', key='mw_toolbar')
+stats_slot = st.container()
 
 api_key = os.environ['FMP_API_KEY']
 redis_url = os.environ['REDIS_URL']
@@ -234,17 +255,15 @@ _INDEX_SYMBOLS = {
     '^BSESN': 'Sensex',
 }
 
+# IHSG is the anchor line, drawn thick in ink; the rest keep one hue each so a
+# line never changes colour when the selection changes.
 _INDEX_COLORS = {
-    'IHSG':       '#f97316',   # orange  – anchor
-    'S&P 500':    '#3b82f6',   # blue    – US benchmark
-    'Nikkei 225': '#ef4444',   # red     – Japan
-    'KOSPI':      '#ec4899',   # pink    – Korea
-    'ASX 200':    '#0ea5e9',   # sky     – Australia
-    'TWSE':       '#fb7185',   # rose    – Taiwan
-    'Hang Seng':  '#f59e0b',   # amber   – Hong Kong
-    'STI':        '#10b981',   # emerald – Singapore
-    'KLCI':       '#a78bfa',   # purple  – Malaysia
-    'Sensex':     '#d97706',   # saffron – India
+    'IHSG': cs.CHART_TEXT,
+    **dict(zip(
+        ['S&P 500', 'Nikkei 225', 'KOSPI', 'ASX 200', 'TWSE',
+         'Hang Seng', 'STI', 'KLCI', 'Sensex'],
+        cs.CHART_COMPARISON_RANGE,
+    )),
 }
 
 _INDEX_FLAGS = {
@@ -308,16 +327,16 @@ def get_index_prices(
 
 # FMP forex pair symbols: {pair_symbol: (label, flag, color)}
 _FX_SYMBOLS = {
-    'USDIDR': ('USD/IDR', '🇺🇸', '#3b82f6'),
-    'EURIDR': ('EUR/IDR', '🇪🇺', '#8b5cf6'),
-    'JPYIDR': ('JPY/IDR', '🇯🇵', '#ef4444'),
-    'GBPIDR': ('GBP/IDR', '🇬🇧', '#ec4899'),
-    'AUDIDR': ('AUD/IDR', '🇦🇺', '#0ea5e9'),
-    'SGDIDR': ('SGD/IDR', '🇸🇬', '#10b981'),
-    'CNYIDR': ('CNY/IDR', '🇨🇳', '#f97316'),
-    'HKDIDR': ('HKD/IDR', '🇭🇰', '#f59e0b'),
-    'MYRIDR': ('MYR/IDR', '🇲🇾', '#a78bfa'),
-    'KRWIDR': ('KRW/IDR', '🇰🇷', '#fb7185'),
+    'USDIDR': ('USD/IDR', '🇺🇸', cs.CHART_COMPARISON_RANGE[0]),
+    'EURIDR': ('EUR/IDR', '🇪🇺', cs.CHART_COMPARISON_RANGE[1]),
+    'SGDIDR': ('SGD/IDR', '🇸🇬', cs.CHART_COMPARISON_RANGE[2]),
+    'JPYIDR': ('JPY/IDR', '🇯🇵', cs.CHART_COMPARISON_RANGE[3]),
+    'GBPIDR': ('GBP/IDR', '🇬🇧', cs.CHART_COMPARISON_RANGE[4]),
+    'AUDIDR': ('AUD/IDR', '🇦🇺', cs.CHART_COMPARISON_RANGE[5]),
+    'CNYIDR': ('CNY/IDR', '🇨🇳', cs.CHART_COMPARISON_RANGE[6]),
+    'HKDIDR': ('HKD/IDR', '🇭🇰', cs.CHART_COMPARISON_RANGE[7]),
+    'MYRIDR': ('MYR/IDR', '🇲🇾', cs.CHART_COMPARISON_RANGE[8]),
+    'KRWIDR': ('KRW/IDR', '🇰🇷', cs.CHART_COMPARISON_RANGE[9]),
 }
 
 _FX_LABELS  = {sym: v[0] for sym, v in _FX_SYMBOLS.items()}
@@ -418,6 +437,43 @@ def select_top_movers(df: pd.DataFrame, limit: int = 20) -> tuple[pd.DataFrame, 
     return gainers, losers
 
 
+# Local exchange timezone and regular-session open for each market.
+_MARKET_SESSIONS = {
+    'JKSE':  ('Asia/Jakarta', time(9, 0)),
+    'SP500': ('America/New_York', time(9, 30)),
+}
+
+
+def latest_session_date(now: datetime, open_time: time) -> date:
+    """Most recent weekday whose session has opened, in the market's local time."""
+    session = now.date()
+    if now.time() < open_time:
+        session -= timedelta(days=1)
+    while session.weekday() >= 5:
+        session -= timedelta(days=1)
+    return session
+
+
+def is_session_complete(
+    prices_df: pd.DataFrame,
+    target_date: pd.Timestamp,
+    min_ratio: float = 0.8,
+) -> bool:
+    """
+    True when ``target_date`` has at least ``min_ratio`` of the symbols priced on
+    the previous session, so a half-ingested day is not shown as a full market.
+    """
+    if prices_df.empty:
+        return False
+    counts = prices_df.groupby('date')['symbol'].nunique()
+    if target_date not in counts.index:
+        return False
+    previous = counts[counts.index < target_date]
+    if previous.empty:
+        return True
+    return counts[target_date] >= min_ratio * previous.iloc[-1]
+
+
 _RETURN_THRESHOLDS = {
     '1D':  [-10, -5, -2, -0.5, 0.5, 2, 5, 10],
     '7D':  [-15, -10, -5, -2, 2, 5, 10, 15],
@@ -467,6 +523,65 @@ def normalize_on_shared_date(
     baselines = aligned[aligned['date'] == shared_start].set_index(group_col)['close']
     aligned['normalized'] = aligned['close'] / aligned[group_col].map(baselines) * 100
     return aligned.sort_values([group_col, 'date']), shared_start
+
+
+def color_legend_html(title: str, colors: list[str], breaks: list[float], unit: str) -> str:
+    """Swatch legend for a binned treemap: one swatch per bin, left to right."""
+    def fmt(value):
+        return f'{value:g}{unit}'
+
+    labels = (
+        [f'< {fmt(breaks[0])}']
+        + [f'{fmt(lo)} to {fmt(hi)}' for lo, hi in zip(breaks, breaks[1:])]
+        + [f'> {fmt(breaks[-1])}']
+    )
+    items = ''.join(
+        '<span style="display:inline-flex;align-items:center;gap:4px;'
+        'margin-right:12px;white-space:nowrap">'
+        f'<span style="width:12px;height:12px;border-radius:2px;background:{color};'
+        'display:inline-block"></span>'
+        f'{label}</span>'
+        for color, label in zip(colors, labels)
+    )
+    return (
+        '<div style="font-size:0.8rem;line-height:1.9;opacity:0.85">'
+        f'<strong>{title}</strong>&nbsp;&nbsp;{items}</div>'
+    )
+
+
+def line_end_labels(norm_df: pd.DataFrame, group_col: str, color_scale: alt.Scale) -> alt.LayerChart:
+    """Dot + name at each line's last point, so series are not told apart by colour alone."""
+    last = norm_df.sort_values('date').groupby(group_col).tail(1)
+    last = last.assign(label_y=dodge_label_positions(last['normalized'], norm_df['normalized']))
+    dots = alt.Chart(last).mark_point(
+        filled=True, size=60, opacity=1, stroke=cs.CHART_SURFACE, strokeWidth=2
+    ).encode(
+        x='date:T',
+        y='normalized:Q',
+        color=alt.Color(f'{group_col}:N', scale=color_scale, legend=None),
+    )
+    names = alt.Chart(last).mark_text(
+        align='left', dx=8, fontSize=11, fontWeight=600, color=cs.CHART_TEXT
+    ).encode(x='date:T', y='label_y:Q', text=f'{group_col}:N')
+    return dots + names
+
+
+def dodge_label_positions(
+    end_values: pd.Series, all_values: pd.Series, min_gap_ratio: float = 0.07
+) -> pd.Series:
+    """
+    Push line-end labels apart vertically so close finishes stay readable.
+    The gap is a share of the plotted range, since pixel positions are unknown here.
+    """
+    span = float(all_values.max() - all_values.min()) or 1.0
+    gap = span * min_gap_ratio
+    ordered = end_values.sort_values()
+    positions = []
+    for value in ordered:
+        positions.append(max(value, positions[-1] + gap) if positions else value)
+    # Re-centre so the stack sits around the true end values, not only above them
+    shift = (sum(positions) - float(ordered.sum())) / len(positions)
+    return pd.Series([p - shift for p in positions], index=ordered.index).reindex(end_values.index)
 
 
 def build_tree_input(
@@ -565,23 +680,33 @@ _qp = st.query_params
 # ── Primary controls ──────────────────────────────────────────────────────── #
 
 _MARKET_OPTIONS = ['Indonesian Stock (JKSE)', 'S&P 500 (US)']
+_MARKET_SHORT_LABELS = {
+    'Indonesian Stock (JKSE)': 'IDX',
+    'S&P 500 (US)': 'S&P 500',
+}
 _market_qp      = _qp.get('market', '')
 _market_default = (
     'S&P 500 (US)' if _market_qp.upper() == 'SP500'
     else 'Indonesian Stock (JKSE)'
 )
 
-today = date.today()
-default_date = today if today.weekday() < 5 else today - timedelta(days=today.weekday() - 4)
+def _market_code(market_label: str) -> str:
+    return 'SP500' if market_label == 'S&P 500 (US)' else 'JKSE'
+
+
+def _latest_trading_date(market_label: str) -> date:
+    tz_name, open_time = _MARKET_SESSIONS[_market_code(market_label)]
+    return latest_session_date(datetime.now(ZoneInfo(tz_name)), open_time)
 
 
 def _show_latest_date():
-    st.session_state['mw_date'] = default_date
+    market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    st.session_state['mw_date'] = _latest_trading_date(market)
 
 
 def _reset_heatmap_filters():
     market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
-    st.session_state['mw_date'] = default_date
+    st.session_state['mw_date'] = _latest_trading_date(market)
     st.session_state['mw_size'] = 'Market Cap'
     st.session_state['mw_color'] = '1D Return %'
     st.session_state['mw_sector'] = 'ALL'
@@ -591,39 +716,59 @@ def _reset_heatmap_filters():
 
 def _market_changed():
     market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    # The URL still names the market being left. If the user was on that
+    # market's latest session, follow to the new market's latest session
+    # (Jakarta and New York sessions fall on different calendar dates).
+    previous = 'S&P 500 (US)' if st.query_params.get('market') == 'SP500' else 'Indonesian Stock (JKSE)'
+    if st.session_state.get('mw_date') == _latest_trading_date(previous):
+        st.session_state['mw_date'] = _latest_trading_date(market)
     st.session_state['mw_color'] = '1D Return %'
     st.session_state['mw_sector'] = 'ALL'
     st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
 
 
-primary_cols = st.columns(4)
-stock_select = primary_cols[0].selectbox(
+stock_select = toolbar.segmented_control(
     'Market',
     _MARKET_OPTIONS,
-    index=_MARKET_OPTIONS.index(_market_default),
+    default=_market_default,
+    required=True,
+    format_func=_MARKET_SHORT_LABELS.get,
     key='mw_sl',
     on_change=_market_changed,
+    label_visibility='collapsed',
 )
 
-sl = 'JKSE' if stock_select == 'Indonesian Stock (JKSE)' else 'SP500'
+sl = _market_code(stock_select)
 redis_key = 'div_score_jkse' if sl == 'JKSE' else 'div_score_sp500'
 
+market_tz = ZoneInfo(_MARKET_SESSIONS[sl][0])
+market_today = datetime.now(market_tz).date()
+latest_trading_date = _latest_trading_date(stock_select)
 
-# Parse date from URL param if present
+# Parse date from URL param if present. This only seeds the widget; the
+# Latest / Reset buttons always use ``latest_trading_date``.
+initial_date = latest_trading_date
 _date_qp = _qp.get('date', '')
 try:
     _date_from_url = date.fromisoformat(_date_qp)
-    if date(2015, 1, 1) <= _date_from_url <= today:
-        default_date = _date_from_url
+    if date(2015, 1, 1) <= _date_from_url <= market_today:
+        initial_date = _date_from_url
 except (ValueError, TypeError):
     pass
 
-selected_date = primary_cols[1].date_input(
+selected_date = toolbar.date_input(
     'Trading date',
-    value=default_date,
-    max_value=today,
+    value=initial_date,
+    max_value=market_today,
     min_value=date(2015, 1, 1),
     key='mw_date',
+    label_visibility='collapsed',
+    width=130,
+)
+toolbar.button(
+    ':material/today:',
+    help='Jump to the latest trading session',
+    on_click=_show_latest_date,
 )
 
 # ── Load universe ─────────────────────────────────────────────────────────── #
@@ -660,12 +805,14 @@ _size_default_idx = (
     if _size_qp in _SIZE_OPTIONS else 0
 )
 
-heatmap_cols = primary_cols[2:]
-size_var = heatmap_cols[0].selectbox(
+size_var = toolbar.selectbox(
     'Tile size',
     options=_SIZE_OPTIONS,
     index=_size_default_idx,
+    format_func=lambda value: f'Size: {value}',
     key='mw_size',
+    label_visibility='collapsed',
+    width=170,
 )
 
 # Build color-by options based on available columns.
@@ -715,11 +862,14 @@ _color_default_idx = (
     if _color_qp in _available_color_opts else 0
 )
 
-color_var_label = heatmap_cols[1].selectbox(
+color_var_label = toolbar.selectbox(
     'Tile color',
     options=_available_color_opts,
     index=_color_default_idx,
+    format_func=lambda value: f'Color: {value}',
     key='mw_color',
+    label_visibility='collapsed',
+    width=205,
 )
 
 _sector_options = ['ALL'] + sorted(universe_df['sector'].dropna().unique().tolist())
@@ -737,34 +887,41 @@ try:
 except (ValueError, TypeError):
     pass
 
-with st.expander('More heatmap filters', expanded=False):
-    filter_cols = st.columns(3)
-    sector_filter = filter_cols[0].selectbox(
+# Count filters that differ from their defaults so the closed popover still
+# tells people the map is narrowed.
+_active_filters = sum([
+    st.session_state.get('mw_sector', _sector_default) != 'ALL',
+    not st.session_state.get('mw_group', _group_default),
+    st.session_state.get('mw_mcap', _mcap_default) != (1 if sl == 'SP500' else 10),
+])
+with toolbar.popover(
+    f':material/tune: {_active_filters}' if _active_filters else ':material/tune:',
+    help='Filters: sector, minimum market cap, grouping',
+):
+    sector_filter = st.selectbox(
         'Sector',
         options=_sector_options,
         index=_sector_options.index(_sector_default),
         format_func=lambda value: 'All sectors' if value == 'ALL' else value,
         key='mw_sector',
     )
-    group_secs = filter_cols[1].toggle(
-        'Group companies by sector', value=_group_default, key='mw_group'
-    )
     market_cap_currency = 'IDR' if sl == 'JKSE' else 'USD'
-    min_mcap_b = filter_cols[2].number_input(
-        'Minimum market cap (billions)',
+    min_mcap_b = st.number_input(
+        f'Minimum market cap ({market_cap_currency} billions)',
         min_value=0,
         max_value=1_000,
         value=_mcap_default,
         step=1,
         key='mw_mcap',
-        help=f'Exclude companies below this market cap in {market_cap_currency} billions.',
     )
-    action_cols = st.columns([1, 1, 3])
-    action_cols[0].button(
-        'Latest data', on_click=_show_latest_date, use_container_width=True
+    group_secs = st.toggle(
+        'Group companies by sector', value=_group_default, key='mw_group'
     )
-    action_cols[1].button(
-        'Reset filters', on_click=_reset_heatmap_filters, use_container_width=True
+    st.button(
+        'Reset filters',
+        icon=':material/restart_alt:',
+        on_click=_reset_heatmap_filters,
+        width='stretch',
     )
 
 # ── Sync widget state → URL query params ──────────────────────────────────── #
@@ -803,57 +960,80 @@ returns_df = calc_daily_return_for_date(prices_df, target_ts)
 # ── Fallback logic: FMP live profile → then previous Supabase date ─────────── #
 # Priority order:
 #   1. Supabase data for the selected date  (already computed above as returns_df)
-#   2. FMP company profile live data        (when selected date is today / very recent)
+#   2. FMP company profile live data        (when selected date is the latest opened session)
 #   3. Most recent available Supabase date  (e.g. yesterday, for weekends / holidays)
 
 _effective_date = selected_date
 _data_source = 'Supabase historical prices'
 _as_of_label = selected_date_str
 _price_notice = None
-_price_notice_icon = None
 
 
 def _has_reported_returns(frame):
     return not frame.empty and frame['return_1d_pct'].notna().any()
 
-if not _has_reported_returns(returns_df):
-    # Live profiles represent the latest quote and must never stand in for a
-    # historical date such as yesterday or a recent market holiday.
-    if selected_date == date.today():
+
+def _is_usable_session(frame, ts, require_complete=True):
+    return _has_reported_returns(frame) and (
+        not require_complete or is_session_complete(prices_df, ts)
+    )
+
+
+if not _is_usable_session(returns_df, target_ts):
+    _live_used = False
+    # Live profiles carry the latest quote, i.e. the most recent session that
+    # has opened in the market's own timezone. They must never stand in for an
+    # older date, nor for "today" before the exchange has opened.
+    if selected_date == latest_trading_date:
         with st.spinner('Fetching live price data from FMP…'):
             live_returns = get_live_returns_from_profile(symbols_tuple)
         if _has_reported_returns(live_returns):
             returns_df = live_returns
+            _live_used = True
             _data_source = 'FMP live/latest company profiles'
-            _as_of_label = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')
+            _as_of_label = datetime.now(market_tz).strftime('%Y-%m-%d %H:%M %Z')
             _price_notice = (
-                f'Historical prices are not available for **{selected_date_str}** yet. '
+                f'Historical prices for **{selected_date_str}** are not complete yet. '
                 f'Showing **live/latest** profile changes as of **{_as_of_label}**.'
             )
-            _price_notice_icon = '📡'
 
-    # Try available historical dates newest-first until one has a usable
-    # predecessor. The latest row alone may be incomplete during ingestion.
-    if not _has_reported_returns(returns_df) and not prices_df.empty:
+    # Try available historical dates newest-first, preferring fully ingested
+    # sessions and only then accepting a partial one.
+    if not _live_used and not prices_df.empty:
         available_dates = sorted(prices_df['date'].dropna().unique(), reverse=True)
-        for available_date in available_dates:
-            candidate_date = pd.Timestamp(available_date).date()
-            if candidate_date > selected_date:
-                continue
-            candidate_returns = calc_daily_return_for_date(
-                prices_df, pd.Timestamp(candidate_date)
-            )
-            if _has_reported_returns(candidate_returns):
+        _found = False
+        for require_complete in (True, False):
+            for available_date in available_dates:
+                candidate_date = pd.Timestamp(available_date).date()
+                if candidate_date > selected_date:
+                    continue
+                candidate_ts = pd.Timestamp(candidate_date)
+                candidate_returns = calc_daily_return_for_date(prices_df, candidate_ts)
+                if not _is_usable_session(candidate_returns, candidate_ts, require_complete):
+                    continue
                 returns_df = candidate_returns
                 _effective_date = candidate_date
-                target_ts = pd.Timestamp(candidate_date)
+                target_ts = candidate_ts
                 date_to_str = candidate_date.strftime('%Y-%m-%d')
                 _as_of_label = date_to_str
-                _price_notice = (
-                    f'No complete session was available for **{selected_date_str}**. '
-                    f'Showing the most recent usable trading date: **{date_to_str}**.'
-                )
-                _price_notice_icon = 'ℹ️'
+                if candidate_date == selected_date:
+                    _price_notice = (
+                        f'Prices for **{selected_date_str}** are still being loaded; '
+                        'only part of the market is shown.'
+                    )
+                elif require_complete:
+                    _price_notice = (
+                        f'No complete session was available for **{selected_date_str}**. '
+                        f'Showing the most recent complete trading date: **{date_to_str}**.'
+                    )
+                else:
+                    _price_notice = (
+                        f'No complete session was available for **{selected_date_str}**. '
+                        f'Showing the most recent partial trading date: **{date_to_str}**.'
+                    )
+                _found = True
+                break
+            if _found:
                 break
 
 # ── KPI row ───────────────────────────────────────────────────────────────── #
@@ -861,7 +1041,7 @@ if not _has_reported_returns(returns_df):
 if not _has_reported_returns(returns_df):
     st.warning(
         f'No usable price changes were found for **{selected_date_str}**. '
-        'Try Latest data, another trading date, or a broader filter.',
+        'Try the latest session, another trading date, or a broader filter.',
         icon='⚠️'
     )
 else:
@@ -876,14 +1056,24 @@ else:
     med_return = float(valid_returns.median())
     breadth_pct = n_gainers / n_reporting * 100 if n_reporting else 0
 
+    # Details that used to be separate notices go into one tooltip
+    _status_details = [
+        f'Effective trading date: {date_to_str}',
+        f'Source: {_data_source}',
+        f'As of: {_as_of_label}',
+        f'{n_flat} unchanged · {n_unavailable} without a price change',
+    ]
+    if _price_notice:
+        _status_details.insert(0, _price_notice)
+
     # ── Merge returns into universe ───────────────────────────────────────── #
 
     df_tree = filtered_uni.copy()
     _ret_cols = [c for c in ['return_1d_pct'] if c in returns_df.columns]
     df_tree = df_tree.join(returns_df[_ret_cols], how='left')
 
-    if selected_date != date.today() and color_var_label != '1D Return %':
-        st.caption(
+    if _effective_date != latest_trading_date and color_var_label != '1D Return %':
+        _status_details.append(
             f'{color_var_label} uses the latest universe snapshot; only 1D Return % '
             f'is calculated for the effective trading date {date_to_str}.'
         )
@@ -892,13 +1082,17 @@ else:
     _fx_factor = None
     if color_var_label in _USD_RETURN_MAP:
         _idr_col, _n_days = _USD_RETURN_MAP[color_var_label]
+        # The stored IDR returns come from the latest universe snapshot, so the
+        # FX window must end on the latest session too, not the selected date.
         with st.spinner(f'Fetching USDIDR rate for {color_var_label}…'):
-            _fx_factor = get_usdidr_period_fx_factor(api_key, date_to_str, _n_days)
+            _fx_factor = get_usdidr_period_fx_factor(
+                api_key, latest_trading_date.isoformat(), _n_days
+            )
         if _fx_factor is None:
-            st.warning(
-                f'Could not fetch USDIDR exchange rate for the {color_var_label} window '
-                '— falling back to IDR return.',
-                icon='⚠️'
+            st.toast(
+                f'Could not fetch the USDIDR rate for {color_var_label}; '
+                'showing the IDR return instead.',
+                icon=':material/warning:',
             )
             # Fall back to the corresponding IDR variant
             color_var_label = color_var_label.replace(' USD', '')
@@ -968,81 +1162,96 @@ else:
         color_map = 'green_shade'
         color_threshold = None
 
-    # ── Build treemap ─────────────────────────────────────────────────────── #
+    # ── Status line ───────────────────────────────────────────────────────── #
 
-    tree_data = hd.prep_treemap(
-        tree_input,
-        size_var=size_var,
-        color_var=color_var_label,
-        color_threshold=color_threshold,
-        add_label='color_var',
-        group_secs=group_secs,
-    )
-
-    option = hp.plot_treemap(
-        tree_data,
-        size_var=size_var,
-        color_var=color_var_label,
-        show_gradient=True,
-        colormap=color_map,
-        group_secs=group_secs,
-    )
-
-    treemap_caption = 'Click a stock tile to open its full analysis in Dividend Ranking.'
-    if _price_notice:
-        treemap_caption = f'{_price_notice_icon} {_price_notice}  \n{treemap_caption}'
-
-    target_market = 'JKSE' if sl == 'JKSE' else 'S&P500'
-    click_event_js = (
-        "function(params){"
-        "if(params.data.children){return null;}"
-        "var symbol=String(params.name).split('\\n')[0];"
-        "var origin=document.referrer?new URL(document.referrer).origin:window.location.origin;"
-        f"var url=origin+'/stock_picker?market={target_market}&stock='+encodeURIComponent(symbol);"
-        "window.open(url,'_blank','noopener,noreferrer');"
-        "return null;"
-        "}"
-    )
-
-    st_echarts(
-        option,
-        events={'click': click_event_js},
-        height='860px',
-        width='100%',
-        key='mw_treemap',
-    )
-    st.caption(treemap_caption)
-
-    if color_threshold:
+    if _data_source.startswith('FMP'):
+        _status_badge = ':blue-badge[:material/sensors: Live]'
+    elif _price_notice:
+        _status_badge = f':orange-badge[:material/info: Showing {date_to_str}]'
+    else:
+        _status_badge = f':gray-badge[{date_to_str}]'
+    with stats_slot:
         st.caption(
-            f'Color scale for {color_var_label}: lower values use red tones, '
-            f'higher values use green tones. Breakpoints: '
-            f'{", ".join(f"{value:g}" for value in color_threshold)}.'
+            f'{_status_badge}&ensp;**{breadth_pct:.0f}%** of stocks up '
+            f'(:green[▲ {n_gainers}] :red[▼ {n_losers}])'
+            f'&ensp;·&ensp;Median **{med_return:+.2f}%**'
+            f'&ensp;·&ensp;Equal-weight **{avg_return:+.2f}%**'
+            f'&ensp;·&ensp;{n_reporting} of {len(symbols_tuple)} stocks priced',
+            help='  \n'.join(_status_details),
         )
 
-    snapshot_cols = st.columns(4)
-    snapshot_cols[0].metric(
-        'Market breadth',
-        f'{breadth_pct:.0f}% gainers',
-        delta=f'{n_gainers} up / {n_losers} down / {n_flat} unchanged',
-    )
-    snapshot_cols[1].metric('Median return', f'{med_return:+.2f}%')
-    snapshot_cols[2].metric('Equal-weight return', f'{avg_return:+.2f}%')
-    snapshot_cols[3].metric(
-        'Data coverage',
-        f'{coverage_pct:.0f}%',
-        delta=f'{n_reporting} reporting · {n_unavailable} unavailable',
-        delta_color='off',
-    )
-    st.caption(
-        f'Effective trading date: {date_to_str} · Source: {_data_source} · As of: {_as_of_label}'
-    )
+    # ── Build treemap ─────────────────────────────────────────────────────── #
+
+    if tree_input.empty:
+        st.info(
+            'No companies have both a tile size and a tile color for this selection. '
+            'Try another measure or a broader filter.',
+            icon=':material/filter_alt_off:',
+        )
+    else:
+        tree_data = hd.prep_treemap(
+            tree_input,
+            size_var=size_var,
+            color_var=color_var_label,
+            color_threshold=color_threshold,
+            add_label='color_var',
+            group_secs=group_secs,
+        )
+
+        option = hp.plot_treemap(
+            tree_data,
+            size_var=size_var,
+            color_var=color_var_label,
+            show_gradient=True,
+            colormap=color_map,
+            group_secs=group_secs,
+        )
+
+        # Edge-to-edge map: the toolbar already names the measures, and the
+        # root "ALL" header row adds nothing
+        option['title'] = {'show': False}
+        _series = option['series'][0]
+        _series.pop('width', None)
+        _series.pop('height', None)
+        _series.update({'top': 0, 'left': 0, 'right': 0, 'bottom': 28})
+        _series['levels'][0]['upperLabel'] = {'show': False}
+
+        target_market = 'JKSE' if sl == 'JKSE' else 'S&P500'
+        click_event_js = (
+            "function(params){"
+            "if(params.data.children){return null;}"
+            "var symbol=String(params.name).split('\\n')[0];"
+            "var origin=document.referrer?new URL(document.referrer).origin:window.location.origin;"
+            f"var url=origin+'/stock_picker?market={target_market}&stock='+encodeURIComponent(symbol);"
+            "window.open(url,'_blank','noopener,noreferrer');"
+            "return null;"
+            "}"
+        )
+
+        # Fill the rest of the first screen, leaving room for the legend below
+        treemap_height = remaining_viewport_height('mw_viewport', reserve=64)
+        st_echarts(
+            option,
+            events={'click': click_event_js},
+            height=f'{treemap_height}px',
+            width='100%',
+            key='mw_treemap',
+        )
+
+        # Same breakpoints prep_treemap bins by: fixed thresholds or quartiles
+        legend_breaks = color_threshold or [
+            float(v) for v in np.percentile(tree_input[color_var_label], [25, 50, 75])
+        ]
+        st.html(color_legend_html(
+            color_var_label,
+            hp.treemap_bin_colors(color_map, len(legend_breaks) + 1),
+            legend_breaks,
+            unit='' if 'Ratio' in color_var_label else '%',
+        ))
 
     # ── Distribution chart ────────────────────────────────────────────────── #
 
     with st.expander('Return distribution', expanded=False):
-        import altair as alt
-
         dist_df = returns_df.reset_index(names='stock')[['return_1d_pct']].dropna()
         dist_df = dist_df.rename(columns={'return_1d_pct': 'return'})
 
@@ -1060,8 +1269,6 @@ else:
 
             clipped = dist_df[(dist_df['return'] >= p2) & (dist_df['return'] <= p98)]['return']
             excluded_count = len(dist_df) - len(clipped)
-
-            import numpy as np
 
             counts, bin_edges = np.histogram(clipped, bins=50)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -1159,7 +1366,7 @@ else:
     # ── Global Index Comparison ───────────────────────────────────────────── #
 
     st.divider()
-    st.subheader('🌐 Global Index Comparison')
+    st.subheader('Global index comparison')
     st.caption('Normalized performance (rebased to 100) vs IHSG — select a time window to compare.')
 
     _PERIOD_OPTIONS = {
@@ -1217,8 +1424,6 @@ else:
             if idx_prices_df.empty:
                 st.info('Select at least one index to display.')
             else:
-                import altair as alt
-
                 norm_df, idx_shared_start = normalize_on_shared_date(
                     idx_prices_df, group_col='index'
                 )
@@ -1230,8 +1435,8 @@ else:
                     )
 
                 # Colour scale
-                domain_idx    = list(_INDEX_COLORS.keys())
-                range_idx     = list(_INDEX_COLORS.values())
+                domain_idx    = [lbl for lbl in _INDEX_COLORS if lbl in visible_indices]
+                range_idx     = [_INDEX_COLORS[lbl] for lbl in domain_idx]
 
                 # Highlight IHSG with a thicker, full-opacity line
                 norm_others = norm_df[norm_df['index'] != 'IHSG']
@@ -1250,7 +1455,7 @@ else:
                     color=alt.Color(
                         'index:N',
                         scale=alt.Scale(domain=domain_idx, range=range_idx),
-                        legend=alt.Legend(title='Index', orient='right'),
+                        legend=alt.Legend(title='Index', orient='bottom'),
                     ),
                     opacity=alt.condition(sel, alt.value(0.85), alt.value(0.15)),
                     tooltip=[
@@ -1286,7 +1491,13 @@ else:
                 ).encode(y='y:Q')
 
                 perf_chart = (
-                    alt.layer(baseline_rule, base_line, ihsg_line)
+                    alt.layer(
+                        baseline_rule, base_line, ihsg_line,
+                        line_end_labels(
+                            norm_df, 'index',
+                            alt.Scale(domain=domain_idx, range=range_idx),
+                        ),
+                    )
                     .properties(height=360)
                     .resolve_scale(color='shared')
                 )
@@ -1348,7 +1559,7 @@ else:
             )
 
             st.markdown(
-                f'**📊 Index Returns — 1D vs {period_label} period**'
+                f'**Index returns over {period_label}, with 1D change**'
             )
             # Render cards in rows of 5
             cards_per_row = 5
@@ -1358,23 +1569,21 @@ else:
                 for col, lbl in zip(cols, row_labels):
                     d_ret  = daily_rets.get(lbl)
                     p_ret  = period_rets.get(lbl)
-                    d_str  = f'{d_ret:+.2f}%'  if d_ret  is not None else 'N/A'
                     p_str  = f'{p_ret:+.2f}%'  if p_ret  is not None else 'N/A'
-                    # delta colour follows sign of 1D return
-                    d_color = 'normal' if (d_ret or 0) >= 0 else 'inverse'
+                    # Signed delta string so Streamlit picks arrow and colour from it
+                    d_str  = f'{d_ret:+.2f}% 1D' if d_ret is not None else None
                     flag    = _INDEX_FLAGS.get(lbl, '')
                     col.metric(
                         label=f'{flag} {lbl}',
                         value=p_str,
-                        delta=f'1D {d_str}',
-                        delta_color=d_color,
+                        delta=d_str,
                         help=f'Period return over **{period_label}** | 1-day return on {date_to_str}',
                     )
 
     # ── Currency Watch (Forex vs IDR) ─────────────────────────────────────── #
 
     st.divider()
-    st.subheader('💱 Currency Watch — vs Indonesian Rupiah (IDR)')
+    st.subheader('Currency watch vs Indonesian rupiah')
     st.caption('Exchange rates of major currencies against IDR — normalized to 100 at the start of the selected period.')
 
     fx_col1, fx_col2 = st.columns([3, 1])
@@ -1419,8 +1628,6 @@ else:
             if fx_filtered.empty:
                 st.info('Select at least one currency pair to display.')
             else:
-                import altair as alt
-
                 fx_norm_df, fx_shared_start = normalize_on_shared_date(
                     fx_filtered, group_col='pair'
                 )
@@ -1431,8 +1638,8 @@ else:
                     )
 
                 # Build color scale from label → color
-                fx_domain = [v[0] for v in _FX_SYMBOLS.values()]
-                fx_range  = [v[2] for v in _FX_SYMBOLS.values()]
+                fx_domain = [v[0] for v in _FX_SYMBOLS.values() if v[0] in visible_pairs]
+                fx_range  = [v[2] for v in _FX_SYMBOLS.values() if v[0] in visible_pairs]
 
                 fx_sel = alt.selection_point(fields=['pair'], bind='legend')
 
@@ -1446,7 +1653,7 @@ else:
                     color=alt.Color(
                         'pair:N',
                         scale=alt.Scale(domain=fx_domain, range=fx_range),
-                        legend=alt.Legend(title='Currency Pair', orient='right'),
+                        legend=alt.Legend(title='Currency pair', orient='bottom'),
                     ),
                     opacity=alt.condition(fx_sel, alt.value(0.9), alt.value(0.15)),
                     tooltip=[
@@ -1462,7 +1669,13 @@ else:
                 ).encode(y='y:Q')
 
                 fx_chart = (
-                    alt.layer(fx_baseline, fx_line)
+                    alt.layer(
+                        fx_baseline, fx_line,
+                        line_end_labels(
+                            fx_norm_df, 'pair',
+                            alt.Scale(domain=fx_domain, range=fx_range),
+                        ),
+                    )
                     .properties(height=360)
                     .resolve_scale(color='shared')
                 )
@@ -1520,7 +1733,7 @@ else:
                 key=lambda lbl: -(fx_period_rets.get(lbl, float('-inf'))),
             )
 
-            st.markdown(f'**💱 Currency Returns — 1D vs {fx_period_label} period**')
+            st.markdown(f'**Currency returns over {fx_period_label}, with 1D change**')
             fx_cards_per_row = 5
             for row_start in range(0, len(sorted_pairs), fx_cards_per_row):
                 row_pairs = sorted_pairs[row_start: row_start + fx_cards_per_row]
@@ -1530,13 +1743,11 @@ else:
                     flag   = _FX_FLAGS.get(sym, '')
                     d_ret  = fx_daily_rets.get(lbl)
                     p_ret  = fx_period_rets.get(lbl)
-                    d_str  = f'{d_ret:+.2f}%' if d_ret is not None else 'N/A'
                     p_str  = f'{p_ret:+.2f}%' if p_ret is not None else 'N/A'
-                    d_color = 'normal' if (d_ret or 0) >= 0 else 'inverse'
+                    d_str  = f'{d_ret:+.2f}% 1D' if d_ret is not None else None
                     col.metric(
                         label=f'{flag} {lbl}',
                         value=p_str,
-                        delta=f'1D {d_str}',
-                        delta_color=d_color,
+                        delta=d_str,
                         help=f'IDR per 1 unit of foreign currency — period return over **{fx_period_label}** | 1-day return on {date_to_str}',
                     )

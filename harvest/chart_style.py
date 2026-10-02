@@ -26,6 +26,22 @@ CHART_CATEGORY_RANGE = (
     '#C026D3',
 )
 
+# Fixed per-entity hues for comparison line charts (indices, currencies).
+# Slots 1-3 stay distinguishable for colour-blind readers when shown together;
+# no red or green, which this app reserves for losses and gains.
+CHART_COMPARISON_RANGE = (
+    '#2A78D6',  # blue
+    '#EB6834',  # orange
+    '#1BAF7A',  # aqua
+    '#EDA100',  # yellow
+    '#E87BA4',  # magenta
+    '#4A3AA7',  # violet
+    '#64748B',  # slate
+    '#8B5E3C',  # brown
+    '#0891B2',  # cyan
+    CHART_PRIMARY,
+)
+
 MARKET_HEATMAP_RANGE = (
     '#7F1D1D',
     '#B91C1C',

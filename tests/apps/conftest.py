@@ -153,6 +153,8 @@ def _build_st_stub():
         m.__enter__ = MagicMock(return_value=MagicMock())
         m.__exit__ = MagicMock(return_value=False)
         m.container = _ctx_mgr
+        m.popover = _ctx_mgr
+        m.date_input = _date_input
         m.segmented_control = _segmented_control
         m.selectbox = _selectbox
         m.multiselect = _multiselect
@@ -163,6 +165,7 @@ def _build_st_stub():
         return m
 
     st.container    = _ctx_mgr
+    st.popover      = _ctx_mgr
     st.expander     = _ctx_mgr
     st.form         = _ctx_mgr
     def _tabs(tabs_list, **kwargs):

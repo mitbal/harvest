@@ -348,3 +348,76 @@ class TestUsdIdrPeriodFactor:
         mock_get.return_value = response
         factor = mw.get_usdidr_period_fx_factor("key", "2023-01-10", 7)
         assert factor == pytest.approx(15_000 / 15_500)
+
+
+class TestLatestSessionDate:
+
+    def test_before_open_uses_previous_session(self):
+        from datetime import datetime, time, date
+        # Friday 2 Oct 2026, 02:01 in Jakarta: IDX has not opened yet
+        now = datetime(2026, 10, 2, 2, 1)
+        assert mw.latest_session_date(now, time(9, 0)) == date(2026, 10, 1)
+
+    def test_after_open_uses_today(self):
+        from datetime import datetime, time, date
+        now = datetime(2026, 10, 2, 9, 30)
+        assert mw.latest_session_date(now, time(9, 0)) == date(2026, 10, 2)
+
+    def test_weekend_and_monday_pre_open_roll_back_to_friday(self):
+        from datetime import datetime, time, date
+        assert mw.latest_session_date(datetime(2026, 10, 4, 12, 0), time(9, 0)) == date(2026, 10, 2)
+        assert mw.latest_session_date(datetime(2026, 10, 5, 8, 0), time(9, 0)) == date(2026, 10, 2)
+
+
+class TestIsSessionComplete:
+
+    def _prices(self, n_prev, n_today):
+        rows = [("S%d" % i, "2023-06-01") for i in range(n_prev)]
+        rows += [("S%d" % i, "2023-06-02") for i in range(n_today)]
+        df = pd.DataFrame(rows, columns=["symbol", "date"])
+        df["date"] = pd.to_datetime(df["date"])
+        df["close"] = 1.0
+        return df
+
+    def test_full_day_is_complete(self):
+        assert mw.is_session_complete(self._prices(10, 10), pd.Timestamp("2023-06-02"))
+
+    def test_partially_ingested_day_is_incomplete(self):
+        assert not mw.is_session_complete(self._prices(10, 3), pd.Timestamp("2023-06-02"))
+
+    def test_missing_date_is_incomplete(self):
+        assert not mw.is_session_complete(self._prices(10, 10), pd.Timestamp("2023-06-05"))
+
+    def test_first_date_without_history_is_complete(self):
+        assert mw.is_session_complete(self._prices(10, 10), pd.Timestamp("2023-06-01"))
+
+
+class TestColorLegend:
+
+    def test_one_swatch_per_bin_with_open_ended_labels(self):
+        html = mw.color_legend_html('1D Return %', ['#111111', '#222222', '#333333'], [-1, 1], '%')
+        assert html.count('background:') == 3
+        assert '&lt; -1%' in html or '< -1%' in html
+        assert '-1% to 1%' in html
+        assert '> 1%' in html
+
+    def test_ratio_has_no_unit(self):
+        html = mw.color_legend_html('PE Ratio', ['#111111', '#222222'], [15], '')
+        assert '< 15<' in html and '> 15<' in html
+
+
+
+class TestDodgeLabelPositions:
+
+    def test_close_finishes_are_spread_apart(self):
+        ends = pd.Series([101.0, 101.2, 95.0], index=["IHSG", "S&P 500", "Nikkei"])
+        all_values = pd.Series([90.0, 110.0])
+        pos = mw.dodge_label_positions(ends, all_values)
+        assert abs(pos["S&P 500"] - pos["IHSG"]) >= 0.07 * 20 - 1e-9
+        assert list(pos.index) == list(ends.index)
+
+    def test_well_separated_labels_stay_put(self):
+        ends = pd.Series([90.0, 110.0], index=["A", "B"])
+        pos = mw.dodge_label_positions(ends, pd.Series([90.0, 110.0]))
+        assert pos["A"] == pytest.approx(90.0)
+        assert pos["B"] == pytest.approx(110.0)

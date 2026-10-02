@@ -1161,23 +1161,46 @@ def plot_dividend_calendar(div_df, sl='JKSE', closed_dates=None, width=250, heig
     )
 
 
+TREEMAP_COLORMAPS = {
+    'red_green': list(MARKET_HEATMAP_RANGE),
+    'green_shade': ['#86B59E', CHART_PRIMARY_DARK],
+    'dividend_green': [
+        '#3F7D55',
+        '#34764C',
+        '#286F44',
+        '#1D673D',
+        '#125D36',
+        '#064E3B',
+    ],
+    'red_shade': ['#475569', '#B36B73', '#991B1B'],
+}
+
+
+def treemap_bin_colors(colormap, n_bins):
+    """
+    Colors ECharts paints for each ``prep_treemap`` bin: bins sit at evenly
+    spaced positions on 0-100 and the colormap is interpolated linearly in RGB.
+    """
+    ramp = TREEMAP_COLORMAPS[colormap]
+    colors = []
+    for i in range(n_bins):
+        position = (i / (n_bins - 1) if n_bins > 1 else 0) * (len(ramp) - 1)
+        start = int(position)
+        end = min(start + 1, len(ramp) - 1)
+        fraction = position - start
+        a = ramp[start].lstrip('#')
+        b = ramp[end].lstrip('#')
+        rgb = [
+            round(int(a[k:k + 2], 16) + (int(b[k:k + 2], 16) - int(a[k:k + 2], 16)) * fraction)
+            for k in (0, 2, 4)
+        ]
+        colors.append('#{:02X}{:02X}{:02X}'.format(*rgb))
+    return colors
+
+
 def plot_treemap(tree_data, size_var='Market Cap', color_var='Dividend Yield', show_gradient=False, colormap='green_shade', group_secs=True):
 
-    cmap_options = {
-        'red_green': list(MARKET_HEATMAP_RANGE),
-        'green_shade': ['#86B59E', CHART_PRIMARY_DARK],
-        'dividend_green': [
-            '#3F7D55',
-            '#34764C',
-            '#286F44',
-            '#1D673D',
-            '#125D36',
-            '#064E3B',
-        ],
-        'red_shade': ['#475569', '#B36B73', '#991B1B'],
-    }
-
-    color = cmap_options[colormap]
+    color = TREEMAP_COLORMAPS[colormap]
     
     levels = [
             # Level 0 → Root ALL
