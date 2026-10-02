@@ -32,10 +32,10 @@ test('home page renders the primary experience', async ({ page }) => {
   await expectHealthyStreamlitPage(
     page,
     '/',
-    'Data jernih. Keputusan lebih tenang.',
+    'Clear data. Calmer decisions.',
   );
   await expect(page).toHaveTitle(/Panen Dividen/);
-  await expect(page.getByRole('link', { name: /Mulai dari Ranking Screener/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Start with the Ranking Screener/ })).toBeVisible();
 });
 
 test('stock picker opens a research section for a selected stock', async ({ page }) => {

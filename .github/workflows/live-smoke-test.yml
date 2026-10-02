@@ -1,0 +1,72 @@
+name: Test live Panen Dividen
+
+on:
+  workflow_run:
+    workflows: [Create and publish a Docker image]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-panendividen-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BASE_URL: https://panendividen.com
+      DEPLOY_SETTLE_SECONDS: ${{ vars.DEPLOY_SETTLE_SECONDS || '120' }}
+
+    steps:
+      - name: Check out the published revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for the production deployment
+        shell: bash
+        run: |
+          sleep "$DEPLOY_SETTLE_SECONDS"
+          for attempt in {1..20}; do
+            if [[ "$(curl --fail --silent --show-error --max-time 15 "$BASE_URL/_stcore/health")" == "ok" ]]; then
+              exit 0
+            fi
+            echo "Production is not ready (attempt $attempt/20); retrying in 15 seconds"
+            sleep 15
+          done
+          echo "Production did not become healthy in time"
+          exit 1
+
+      - name: Run live browser smoke tests
+        run: npm run test:live
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: panendividen-live-test-results
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14

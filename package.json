@@ -1,0 +1,10 @@
+{
+  "name": "panendividen-live-tests",
+  "private": true,
+  "scripts": {
+    "test:live": "playwright test --config=playwright.live.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}
