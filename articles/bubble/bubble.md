@@ -37,7 +37,7 @@ Tapi sayangnya itu ternyata hanya jebakan bandar belaka, yang ingin ritel cut lo
 
 Harganya turun terus sejak sampai di puncaknya di bulan Juli sebesar 1000 pound, dan di tahun 1721, harga SSC sudah kembali di bawah 100 pound, sehingga Newton resmi jadi nyangkuter bersama ritel2 lainnya, dengan unrealized loss kira-kira 24,000 pound, lebih tinggi dari realied profit awalnya. Newton meninggal di tahun 1727, dan tidak mempunyai anak, sehingga saham nyangkutnya tidak diwariskan ke keturunannya.
 
-![ssc price](app/static/ssc_stock_price.jpg)
+<!-- embed: ssc_animation.html -->
 
 Kalau ingin tahu lebih detail bagaimana kronologi, disertai testimoni dari orang2 yang berperan di masa itu, bisa dibaca lebih lanjut di paper berikut: https://royalsocietypublishing.org/doi/10.1098/rsnr.2018.0018
 

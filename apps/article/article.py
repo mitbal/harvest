@@ -1,4 +1,7 @@
 import logging
+import re
+from pathlib import Path
+
 import streamlit as st
 from harvest.utils import setup_logging
 
@@ -8,6 +11,20 @@ def get_logger(name, level=logging.INFO):
     return logger
 
 logger = get_logger('article')
+
+# Markdown marker for embedding an interactive HTML file that lives next to the article
+EMBED_PATTERN = re.compile(r'<!--\s*embed:\s*([\w.-]+\.html)\s*-->')
+
+
+def render_article(article_dir, text):
+    parts = EMBED_PATTERN.split(text)
+    # re.split alternates [markdown, filename, markdown, filename, ...]
+    for idx, part in enumerate(parts):
+        if idx % 2 == 0:
+            if part.strip():
+                st.markdown(part)
+        else:
+            st.iframe(Path(article_dir) / part)
 
 # Article Metadata
 ARTICLES = [
@@ -35,7 +52,7 @@ if st.session_state.selected_article:
 
     try:
         with open(f'articles/{article_name}/{article_name}.md', 'r') as f:
-            st.markdown(f.read())
+            render_article(f'articles/{article_name}', f.read())
             logger.info(f'opening article {article_name}')
     except FileNotFoundError:
         st.error(f"Article '{article_name}' not found.")

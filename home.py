@@ -1,16 +1,10 @@
-import base64
-from pathlib import Path
-
 import streamlit as st
 
 
-ASSET_DIR = Path(__file__).parent / 'asset'
-
-
-def image_data_uri(filename):
-    image_data = (ASSET_DIR / filename).read_bytes()
-    encoded = base64.b64encode(image_data).decode('ascii')
-    return f'data:image/png;base64,{encoded}'
+# Served by Streamlit static serving (static/home/), so the browser can cache
+# and lazy-load them instead of receiving inline base64 on every rerun.
+# Regenerate from asset/home/*.png as WebP at 1600px wide when screenshots change.
+STATIC_HOME = 'app/static/home'
 
 
 if 'porto_file' not in st.session_state:
@@ -19,14 +13,14 @@ if 'history_file' not in st.session_state:
     st.session_state['history_file'] = 'EMPTY'
 
 
-logo = image_data_uri('favicon.png')
-portfolio_preview = image_data_uri('home/portfolio_table.png')
-ranking_preview = image_data_uri('home/screener_table.png')
-calendar_preview = image_data_uri('home/dividend_monthly_calendar.png')
-compounding_preview = image_data_uri('home/compounding_simulator.png')
-market_preview = image_data_uri('home/heatmap_1d_price_return.png')
-comparison_preview = image_data_uri('home/stock_comparison_scatterplot.png')
-timing_preview = image_data_uri('home/best_timing_best_time_to_buy.png')
+logo = f'{STATIC_HOME}/favicon.webp'
+portfolio_preview = f'{STATIC_HOME}/portfolio_table.webp'
+ranking_preview = f'{STATIC_HOME}/screener_table.webp'
+calendar_preview = f'{STATIC_HOME}/dividend_monthly_calendar.webp'
+compounding_preview = f'{STATIC_HOME}/compounding_simulator.webp'
+market_preview = f'{STATIC_HOME}/heatmap_1d_price_return.webp'
+comparison_preview = f'{STATIC_HOME}/stock_comparison_scatterplot.webp'
+timing_preview = f'{STATIC_HOME}/best_timing_best_time_to_buy.webp'
 
 
 st.html(
@@ -1481,10 +1475,45 @@ st.html(
             <nav class="pd-footer-links" aria-label="Community and support links">
                 <a href="https://www.reddit.com/r/panendividen" target="_blank" rel="noreferrer">Community</a>
                 <a href="https://github.com/mitbal/harvest/issues" target="_blank" rel="noreferrer">Feedback</a>
-                <a href="https://blog.panendividen.com?utm_source=pd_web" target="_blank" rel="noreferrer">Blog</a>
+                <a href="https://blog.panendividen.com?utm_source=pd_web&amp;utm_medium=home_footer" target="_blank" rel="noreferrer">Blog</a>
                 <a href="https://trakteer.id/mitbal" target="_blank" rel="noreferrer">Support</a>
             </nav>
         </footer>
     </main>
     '''
+)
+
+# Plain <a href="./page"> links force a full reload, which starts a new Streamlit
+# session (losing session_state and minting a new visitor_id). Route in-app links
+# through the matching sidebar nav link so Streamlit navigates client-side.
+# Falls back to the normal reload when no matching nav link is in the DOM.
+st.html(
+    '''
+    <script>
+    if (!window.__pdHomeNavBound) {
+        window.__pdHomeNavBound = true;
+        const slugOf = (href) => new URL(href, window.location.href).pathname.split('/').filter(Boolean).pop() || '';
+        document.addEventListener('click', (event) => {
+            if (event.defaultPrevented || event.button !== 0 ||
+                event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                return;
+            }
+            // st.html's sanitizer drops target attributes, so match relative hrefs.
+            const link = event.target.closest('.pd-home a[href^="./"]');
+            if (!link) {
+                return;
+            }
+            const slug = slugOf(link.getAttribute('href'));
+            const navLink = Array.from(document.querySelectorAll('[data-testid="stSidebarNavLink"]'))
+                .find((a) => slugOf(a.getAttribute('href')) === slug);
+            if (!navLink) {
+                return;
+            }
+            event.preventDefault();
+            navLink.click();
+        });
+    }
+    </script>
+    ''',
+    unsafe_allow_javascript=True,
 )
