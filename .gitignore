@@ -18,3 +18,14 @@ __pycache__/
 node_modules/
 playwright-report/
 test-results/
+.commandcode
+.impeccable.md
+.impeccable
+backlog.md
+
+# Local scratch and tool config
+analysis/
+fil-result/
+porto_raw
+.claude/
+.agents/
