@@ -47,7 +47,7 @@ class MetricSpec(NamedTuple):
 METRIC_OPTIONS = {
     'Dividend Yield (%)': MetricSpec('yield', 'Dividend', '{:.2f}%', '%', 'Latest finalized fiscal-year ordinary dividend yield.', 'higher_better', 'nonnegative'),
     'Last Dividend': MetricSpec('lastDiv', 'Dividend', '{:,.2f}', 'currency/share', 'Ordinary dividends per share for the latest finalized fiscal year. Compare dividend yield instead when share prices differ.', 'neutral', 'nonnegative'),
-    'Div Growth (Annual)': MetricSpec('avgFlatAnnualDivIncrease', 'Dividend', '{:,.2f}', 'currency/year', 'Average annual dividend increase.', 'higher_better'),
+    'Div Growth (Annual)': MetricSpec('avgFlatAnnualDivIncrease', 'Dividend', '{:,.2f}', 'currency/year', 'Average annual dividend increase per share in currency terms. Higher-priced shares naturally show larger increases.', 'neutral'),
     'Years Paying Dividend': MetricSpec('numDividendYear', 'Dividend', '{:.0f}', 'years', 'Number of years with a dividend payment.', 'higher_better', 'nonnegative'),
     'Years Raised Dividend': MetricSpec('positiveYear', 'Dividend', '{:.0f}', 'years', 'Number of years the dividend increased.', 'higher_better', 'nonnegative'),
     'Dividend Payout Ratio (%)': MetricSpec('dividendPayoutRatio', 'Dividend', '{:.1f}%', '%', 'Dividend as a share of trailing earnings. Sustainability depends on sector and cash flow.', 'neutral', 'positive'),
@@ -58,8 +58,8 @@ METRIC_OPTIONS = {
     'Net Income Growth (5Y)': MetricSpec('netIncomeGrowth', 'Growth', '{:+.1f}%', '%', 'Net income growth over the five-year measurement period.', 'higher_better'),
     'Revenue Growth (TTM)': MetricSpec('revenueGrowthTTM', 'Growth', '{:+.1f}%', '%', 'Trailing-twelve-month revenue growth.', 'higher_better'),
     'Net Income Growth (TTM)': MetricSpec('netIncomeGrowthTTM', 'Growth', '{:+.1f}%', '%', 'Trailing-twelve-month net income growth.', 'higher_better'),
-    'Revenue (TTM)': MetricSpec('revenueTTM', 'Growth', '{:,.2f}', 'currency', 'Revenue reported over the trailing twelve months.', 'higher_better'),
-    'Net Income (TTM)': MetricSpec('earningTTM', 'Profitability', '{:,.2f}', 'currency', 'Net income reported over the trailing twelve months.', 'higher_better'),
+    'Revenue (TTM)': MetricSpec('revenueTTM', 'Growth', '{:,.2f}', 'currency', 'Revenue reported over the trailing twelve months. Reflects company size, not quality.', 'neutral'),
+    'Net Income (TTM)': MetricSpec('earningTTM', 'Profitability', '{:,.2f}', 'currency', 'Net income reported over the trailing twelve months. Reflects company size, not quality.', 'neutral'),
     'Profit Margin (Median)': MetricSpec('medianProfitMargin', 'Profitability', '{:.1f}%', '%', 'Median historical profit margin.', 'higher_better'),
     'Profit Margin (TTM)': MetricSpec('marginTTM', 'Profitability', '{:.1f}%', '%', 'Trailing-twelve-month net profit margin.', 'higher_better'),
     '1M Return': MetricSpec('return_1m', 'Returns', '{:+.1f}%', '%', 'Price return over one month.', 'higher_better'),
@@ -89,7 +89,9 @@ METRIC_PRESETS = {
 TABLE_DEFAULT_METRICS = METRIC_PRESETS['Balanced']
 CHART_METRIC_OPTIONS = {
     label: spec.source for label, spec in METRIC_OPTIONS.items()
-    if spec.direction != 'neutral' or label in ('Dividend Payout Ratio (%)', 'Beta', 'Market Cap')
+    if spec.direction != 'neutral' or label in (
+        'Dividend Payout Ratio (%)', 'Beta', 'Market Cap', 'Div Growth (Annual)', 'Revenue (TTM)', 'Net Income (TTM)',
+    )
 }
 
 
@@ -126,7 +128,8 @@ def get_div_score_table(key='jkse_div_score'):
 
     final_df.rename(columns={'symbol': 'stock'}, inplace=True)
     cp_df = hd.get_company_profile(final_df['stock'].to_list())
-    final_df.drop(columns=['price'], inplace=True, errors='ignore')
+    if 'price' in final_df.columns:
+        final_df.rename(columns={'price': 'snapshotPrice'}, inplace=True)
     final_df = final_df.merge(
         cp_df[['price', 'changes', 'beta']], left_on='stock', right_on='symbol', how='left'
     )
@@ -134,7 +137,7 @@ def get_div_score_table(key='jkse_div_score'):
 
 
 _KEEP_COLS = [
-    'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate', 'yield', 'lastDiv',
+    'price', 'snapshotPrice', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate', 'yield', 'lastDiv',
     'avgFlatAnnualDivIncrease', 'numDividendYear', 'positiveYear', 'numOfYear',
     'maximumCutPct', 'max10CutPct', 'peRatio', 'psRatio', 'revenueGrowth',
     'revenueCAGR5Y', 'netIncomeGrowth', 'medianProfitMargin', 'earningTTM', 'revenueTTM',
@@ -151,7 +154,11 @@ def get_processed_df(df):
     df['marginTTM'] = np.where(revenue != 0, earnings / revenue * 100, np.nan)
 
     market_cap = pd.to_numeric(df['mktCap'], errors='coerce')
+    # Shares outstanding must come from the price the market cap was computed with,
+    # not the live price, or the payout ratio drifts with every price move.
     price = pd.to_numeric(df['price'], errors='coerce')
+    if 'snapshotPrice' in df.columns:
+        price = pd.to_numeric(df['snapshotPrice'], errors='coerce').fillna(price)
     eps_ttm = np.where((market_cap > 0) & (price > 0), earnings / (market_cap / price), np.nan)
     df['dividendPayoutRatio'] = np.where(
         eps_ttm > 0,
@@ -208,9 +215,18 @@ def format_metric_value(label, value, divisor=1, currency_suffix=''):
     return spec.format.format(numeric)
 
 
-def direction_aware_percentile(peers, value, direction):
+def _ordinal(number):
+    if 10 <= number % 100 <= 20:
+        return f'{number}th'
+    suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(number % 10, 'th')
+    return f'{number}{suffix}'
+
+
+def direction_aware_percentile(peers, value, direction, exclude=None):
     valid = pd.to_numeric(pd.Series(peers), errors='coerce').replace([np.inf, -np.inf], np.nan).dropna()
-    if not np.isfinite(value) or valid.empty:
+    if exclude is not None:
+        valid = valid.drop(exclude, errors='ignore')
+    if value is None or not np.isfinite(value) or valid.empty:
         return {'percent': None, 'peer_count': 0, 'tie_count': 0, 'text': 'No valid peer comparison'}
     tie_count = int(np.isclose(valid.to_numpy(dtype=float), float(value)).sum())
     if direction == 'higher_better':
@@ -221,9 +237,9 @@ def direction_aware_percentile(peers, value, direction):
         text = f'Better than {percent:.0f}% of {len(valid)} valid peers'
     else:
         percent = float((valid <= value).mean() * 100)
-        text = f'At or below the {percent:.0f}th percentile among {len(valid)} valid peers'
-    if tie_count > 1:
-        text += f'; tied with {tie_count - 1}'
+        text = f'{_ordinal(round(percent))} percentile of {len(valid)} valid peers'
+    if tie_count:
+        text += f'; tied with {tie_count}'
     return {'percent': percent, 'peer_count': len(valid), 'tie_count': tie_count, 'text': text}
 
 
@@ -272,6 +288,15 @@ def parse_stock_query(raw, valid_stocks, limit=MAX_STOCKS):
         if stock and stock in valid_set and stock not in stocks:
             stocks.append(stock)
     return stocks[:limit], len(stocks) > limit
+
+
+def split_valid_size(df, spec):
+    """Return (rows with a valid size value, tickers dropped for an invalid one)."""
+    values = pd.to_numeric(df[spec.source], errors='coerce') if spec.source in df.columns else pd.Series(np.nan, index=df.index)
+    mask = values.apply(lambda value: is_valid_metric_value(value, spec))
+    kept = df[mask].copy()
+    kept[spec.source] = values[mask]
+    return kept, df.loc[~mask, 'stock'].tolist()
 
 
 def _sync_query(key, value, remove_empty=False):
@@ -550,7 +575,7 @@ elif active_view == 'dist':
         summary = []
         for stock in selected_stocks:
             value = comparison_vals.get(stock)
-            rank = direction_aware_percentile(valid_peers, value, spec.direction) if value is not None else None
+            rank = direction_aware_percentile(valid_peers, value, spec.direction, exclude=stock) if value is not None else None
             summary.append({
                 'Stock': stock,
                 'Value': format_metric_value(selected_label, value, divisor, currency_suffix) if value is not None else 'N/A',
@@ -593,6 +618,15 @@ else:
         excluded = [stock for stock in selected_stocks if stock not in selected_plot['stock'].tolist()]
         if excluded:
             st.warning(f'Excluded because an axis value is missing or invalid: {", ".join(excluded)}.')
+        if size_label not in (size_none, size_logo) and not selected_plot.empty:
+            sized_plot, size_dropped = split_valid_size(selected_plot, METRIC_OPTIONS[size_label])
+            if sized_plot.empty:
+                st.warning(f'No selected stock has a valid {size_label} value; using uniform point size.')
+                size_label = size_none
+            else:
+                if size_dropped:
+                    st.warning(f'Excluded because the {size_label} value used for point size is missing or invalid: {", ".join(size_dropped)}.')
+                selected_plot = sized_plot
         if selected_plot.empty:
             st.warning('No selected stocks have valid values for both axes.')
         else:
@@ -631,8 +665,8 @@ else:
             size_encoding = alt.value(500)
             if size_label not in (size_none, size_logo):
                 size_spec = METRIC_OPTIONS[size_label]
-                selected_plot[size_spec.source] = pd.to_numeric(selected_plot[size_spec.source], errors='coerce').clip(lower=0)
-                size_encoding = alt.Size(f'{size_spec.source}:Q', title=size_label, scale=alt.Scale(range=[180, 1400]))
+                # zero=False maps the smallest value (even a negative one) to the smallest point
+                size_encoding = alt.Size(f'{size_spec.source}:Q', title=size_label, scale=alt.Scale(range=[180, 1400], zero=False))
                 tooltip.append(alt.Tooltip(f'{size_spec.source}:Q', title=size_label, format='.2f'))
 
             if size_label == size_logo:

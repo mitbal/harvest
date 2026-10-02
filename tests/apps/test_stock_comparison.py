@@ -103,6 +103,20 @@ class TestGetProcessedDf:
         assert np.isnan(result.loc["BBCA.JK", "revenueGrowth"])
         assert np.isnan(result.loc["TLKM.JK", "beta"])
 
+    def test_payout_ratio_uses_snapshot_price_for_share_count(self):
+        raw = _make_raw_df(n=1)
+        # Market cap 5e14 at a snapshot price of 5000 -> 1e11 shares -> EPS 100.
+        raw["snapshotPrice"] = 5000
+        raw["price"] = 10000  # live price doubled since the snapshot
+        result = sc.get_processed_df(raw)
+        assert result.loc["BBCA.JK", "dividendPayoutRatio"] == pytest.approx(250.0)
+
+    def test_payout_ratio_falls_back_to_live_price(self):
+        raw = _make_raw_df(n=1)
+        raw["snapshotPrice"] = np.nan
+        result = sc.get_processed_df(raw)
+        assert result.loc["BBCA.JK", "dividendPayoutRatio"] == pytest.approx(250.0)
+
     def test_zero_revenue_produces_missing_margin(self):
         raw = _make_raw_df(n=1)
         raw.loc["BBCA.JK", "revenueTTM"] = 0
@@ -144,6 +158,13 @@ class TestMetricOptions:
         assert spec.direction == "neutral"
         assert sc.comparison_states({"A": 100, "B": 200}, spec) == {"A": "", "B": ""}
 
+    @pytest.mark.parametrize("label", ["Div Growth (Annual)", "Revenue (TTM)", "Net Income (TTM)"])
+    def test_size_driven_metrics_are_not_ranked(self, label):
+        spec = sc.METRIC_OPTIONS[label]
+        assert spec.direction == "neutral"
+        assert sc.comparison_states({"A": 1e12, "B": 5e12}, spec) == {"A": "", "B": ""}
+        assert label in sc.CHART_METRIC_OPTIONS
+
     def test_non_positive_valuation_is_invalid(self):
         pe = sc.METRIC_OPTIONS["PE Ratio"]
         ps = sc.METRIC_OPTIONS["PS Ratio"]
@@ -179,10 +200,31 @@ class TestComparisonHelpers:
         assert 'stocks' not in sc.st.query_params
 
     def test_higher_better_percentile_and_tie(self):
-        result = sc.direction_aware_percentile([1, 2, 2, 4], 2, "higher_better")
-        assert result["percent"] == pytest.approx(25)
-        assert result["tie_count"] == 2
+        result = sc.direction_aware_percentile([1, 2, 4], 2, "higher_better")
+        assert result["percent"] == pytest.approx(100 / 3)
+        assert result["tie_count"] == 1
         assert "tied with 1" in result["text"]
+        untied = sc.direction_aware_percentile([1, 3, 4], 2, "higher_better")
+        assert "tied" not in untied["text"]
+
+    def test_percentile_excludes_the_stock_itself(self):
+        peers = pd.Series({"A": 1.0, "B": 2.0, "C": 3.0, "TOP": 9.0})
+        result = sc.direction_aware_percentile(peers, 9.0, "higher_better", exclude="TOP")
+        assert result["percent"] == pytest.approx(100)
+        assert result["peer_count"] == 3
+        assert result["tie_count"] == 0
+        assert result["text"] == "Better than 100% of 3 valid peers"
+
+    def test_percentile_exclude_missing_label_is_harmless(self):
+        peers = pd.Series({"A": 1.0, "B": 2.0})
+        result = sc.direction_aware_percentile(peers, 3.0, "higher_better", exclude="OUTSIDE")
+        assert result["peer_count"] == 2
+
+    def test_percentile_with_only_self_has_no_peers(self):
+        peers = pd.Series({"ONLY": 1.0})
+        result = sc.direction_aware_percentile(peers, 1.0, "higher_better", exclude="ONLY")
+        assert result["percent"] is None
+        assert result["text"] == "No valid peer comparison"
 
     def test_lower_better_percentile(self):
         result = sc.direction_aware_percentile([5, 10, 15, 20], 10, "lower_better")
@@ -190,9 +232,28 @@ class TestComparisonHelpers:
         assert "Better than 50%" in result["text"]
 
     def test_neutral_percentile_avoids_directional_claim(self):
-        result = sc.direction_aware_percentile([0.8, 1.0, 1.2], 1.0, "neutral")
+        result = sc.direction_aware_percentile([0.8, 1.2], 1.0, "neutral")
         assert "Better" not in result["text"]
-        assert "percentile" in result["text"]
+        assert result["text"] == "50th percentile of 2 valid peers"
+
+    @pytest.mark.parametrize(
+        ("number", "expected"),
+        [(0, "0th"), (1, "1st"), (2, "2nd"), (3, "3rd"), (11, "11th"), (12, "12th"), (13, "13th"), (21, "21st"), (100, "100th")],
+    )
+    def test_ordinal(self, number, expected):
+        assert sc._ordinal(number) == expected
+
+    def test_split_valid_size_drops_missing_and_invalid(self):
+        df = pd.DataFrame({"stock": ["A", "B", "C", "D"], "mktCap": [1e12, np.nan, -5.0, np.inf]})
+        kept, dropped = sc.split_valid_size(df, sc.METRIC_OPTIONS["Market Cap"])
+        assert kept["stock"].tolist() == ["A"]
+        assert dropped == ["B", "C", "D"]
+
+    def test_split_valid_size_keeps_negative_values_unclipped(self):
+        df = pd.DataFrame({"stock": ["A", "B"], "revenueGrowthTTM": [-12.5, 8.0]})
+        kept, dropped = sc.split_valid_size(df, sc.METRIC_OPTIONS["Revenue Growth (TTM)"])
+        assert dropped == []
+        assert kept["revenueGrowthTTM"].tolist() == [-12.5, 8.0]
 
     def test_comparison_states_exclude_invalid_ratios(self):
         spec = sc.METRIC_OPTIONS["PE Ratio"]
