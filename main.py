@@ -37,6 +37,7 @@ page_article = st.Page('apps/article/article.py', title='Analysis Article', icon
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
 page_backtester = st.Page('apps/trading/backtester.py', title='Long Term Position Trading', icon='📈')
 page_day_trading = st.Page('apps/trading/day_trading.py', title='Short Term Swing Trading', icon='⚡')
+page_dividend_play = st.Page('apps/trading/dividend_play.py', title='Dividend Play', icon='🎣')
 # page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Swing Trading Lab', icon='🏄')
 
 
@@ -60,6 +61,7 @@ pages = st.navigation(
         'Trading': [
                 page_backtester,
                 page_day_trading,
+                page_dividend_play,
                 # page_swing_trading,
         ]
     }
