@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #EFF1EF;
+    --panel: #FFFFFF;
+    --ink: #1F2A24;
+    --muted: #6B7A72;
+    --grid: #D7E0DD;
+    --line: #064E3B;
+    --sell: #15803D;
+    --buy: #B91C1C;
+    --hall: #B45309;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
+  .card { background: var(--panel); border: 1px solid var(--grid); border-radius: 12px;
+    padding: 16px 16px 12px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  h3 { margin: 0; font-size: 1.05rem; }
+  .sub { color: var(--muted); font-size: .85rem; margin-top: 2px; }
+  .stats { display: flex; gap: 20px; }
+  .stat .k { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+  .stat .v { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  svg { display: block; width: 100%; height: auto; margin-top: 8px; overflow: visible; }
+  .axis text { fill: var(--muted); font-size: 12px; }
+  .grid line { stroke: var(--grid); }
+  .event { opacity: 0; transition: opacity .4s ease; }
+  .event.on { opacity: 1; }
+  .event text { font-size: 11.5px; font-weight: 600; }
+  .caption { min-height: 2.6em; margin-top: 6px; font-size: .92rem; line-height: 1.3; }
+  .caption b { color: var(--line); }
+  .controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  button { font: inherit; font-size: .85rem; border: 1px solid var(--line); color: var(--line);
+    background: transparent; border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+  button:hover { background: var(--line); color: #fff; }
+  input[type=range] { flex: 1; accent-color: var(--line); }
+  .src { color: var(--muted); font-size: .72rem; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <div>
+      <h3>Harga saham South Sea Company, 1720</h3>
+      <div class="sub">dan kapan Newton jualan / serok lagi</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">Tanggal</div><div class="v" id="date">Mar 1720</div></div>
+      <div class="stat"><div class="k">Harga</div><div class="v" id="price">£178</div></div>
+    </div>
+  </div>
+
+  <svg id="chart" viewBox="0 0 720 380" role="img"
+       aria-label="Animasi harga saham South Sea Company dari Maret sampai September 1720, naik dari sekitar 180 pound ke puncak hampir 1000 pound di Juli, lalu jatuh ke sekitar 200 pound di akhir September.">
+    <g class="grid" id="grid"></g>
+    <g class="axis" id="axis"></g>
+    <g id="bands"></g>
+    <path id="area" fill="var(--line)" fill-opacity=".08"></path>
+    <path id="line" fill="none" stroke="var(--line)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"></path>
+    <g id="events"></g>
+    <circle id="dot" r="5" fill="var(--line)" stroke="#fff" stroke-width="2"></circle>
+  </svg>
+
+  <div class="caption" id="caption">&nbsp;</div>
+  <div class="controls">
+    <button id="play" type="button">Putar ulang</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Geser waktu">
+  </div>
+  <div class="src">Data didigitasi dari Odlyzko (2019), Notes and Records of the Royal Society.</div>
+</div>
+
+<script>
+// Digitized from the paper's figure: [x pixel, price]. Month = 3 + (px - 155) / 115.
+const RAW = [[155,178],[162,172],[168,180],[180,184],[195,180],[210,184],[220,200],[235,275],[239,350],[243,310],
+  [250,320],[262,320],[266,300],[272,315],[280,320],[296,310],[302,285],[318,288],[322,315],[330,330],[345,340],
+  [356,352],[362,352],[372,335],[378,343],[400,338],[410,345],[420,352],[435,352],[450,355],[457,400],[460,450],
+  [468,488],[474,475],[480,472],[492,530],[498,600],[502,720],[507,720],[510,770],[514,750],[520,770],[528,735],
+  [536,745],[548,700],[550,700],[556,750],[562,760],[570,755],[580,765],[608,950],[615,950],[620,962],[630,962],
+  [640,970],[648,990],[655,990],[660,970],[665,970],[672,985],[680,975],[686,957],[705,957],[710,945],[718,945],
+  [722,935],[730,920],[735,892],[740,900],[750,890],[762,885],[768,900],[775,895],[783,880],[790,860],[797,835],
+  [805,825],[812,815],[818,900],[822,885],[830,880],[838,825],[845,890],[850,860],[855,825],[860,820],[865,770],
+  [870,770],[875,700],[880,690],[886,655],[892,640],[896,625],[900,620],[903,590],[906,485],[912,445],[918,450],
+  [922,440],[928,445],[934,410],[940,330],[946,330],[949,198],[954,220],[957,340]];
+const DATA = RAW.map(([px, p]) => ({ m: 3 + (px - 155) / 115, p }));
+
+// Events from the figure, narrated in the article's voice.
+const EVENTS = [
+  { m: 4.65, m2: 5.75, p: 352, kind: "sell", label: "Newton TP",
+    text: "<b>Mei 1720:</b> Newton TP ~8.000 lembar di sekitar £350. Sudah cuan bagger, realized gain ~£20.000." },
+  { m: 5.73, p: 470, kind: "hall", label: "beli utk Hall",
+    text: "<b>Akhir Mei:</b> Newton belikan saham untuk Hall. Harga mulai terbang." },
+  { m: 6.47, m2: 8.77, p: 700, kind: "buy", label: "Newton serok lagi",
+    text: "<b>Juni–Agustus:</b> dapat \"info A1\", Newton serok lagi ~4.000 lembar di harga £700+. Avg price naik jadi ~£500." },
+  { m: 7.3, p: 990, kind: "peak", label: "Puncak ~£1.000",
+    text: "<b>Juli:</b> puncak bubble, hampir £1.000 per lembar. Semua orang merasa jenius." },
+  { m: 9.5, p: 620, kind: "hall", label: "beli lagi utk Hall",
+    text: "<b>September:</b> harga longsor, tapi Newton masih belikan untuk Hall." },
+  { m: 9.92, p: 198, kind: "crash", label: "Nyangkut",
+    text: "<b>Akhir September:</b> anjlok ke ~£200. Newton resmi jadi nyangkuter, unrealized loss ~£24.000." },
+];
+
+const W = 720, H = 380, M = { l: 44, r: 12, t: 44, b: 30 };
+const X0 = 3, X1 = 10, Y1 = 1000;
+const sx = m => M.l + (m - X0) / (X1 - X0) * (W - M.l - M.r);
+const sy = p => H - M.b - p / Y1 * (H - M.t - M.b);
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent && parent.appendChild(n);
+  return n;
+};
+const $ = id => document.getElementById(id);
+
+// Axes and grid
+const MONTHS = ["Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep"];
+for (let p = 0; p <= Y1; p += 200) {
+  el("line", { x1: M.l, x2: W - M.r, y1: sy(p), y2: sy(p) }, $("grid"));
+  el("text", { x: M.l - 8, y: sy(p) + 4, "text-anchor": "end" }, $("axis")).textContent = "£" + p;
+}
+MONTHS.forEach((name, i) => {
+  el("text", { x: sx(3.5 + i), y: H - 8, "text-anchor": "middle" }, $("axis")).textContent = name;
+});
+
+// Event markers (hidden until the playhead reaches them)
+const COLORS = { sell: "var(--sell)", buy: "var(--buy)", hall: "var(--hall)", peak: "var(--line)", crash: "var(--buy)" };
+const eventNodes = EVENTS.map(e => {
+  const g = el("g", { class: "event" }, $("events"));
+  const c = COLORS[e.kind];
+  if (e.m2) {
+    // Range: shaded band plus a bracket line
+    el("rect", { x: sx(e.m), y: M.t, width: sx(e.m2) - sx(e.m), height: H - M.t - M.b,
+      fill: c, "fill-opacity": ".07" }, $("bands")).classList.add("event");
+    const y = e.kind === "sell" ? sy(e.p) - 26 : sy(e.p) + 46;
+    el("line", { x1: sx(e.m), x2: sx(e.m2), y1: y, y2: y, stroke: c, "stroke-width": 2 }, g);
+    el("text", { x: (sx(e.m) + sx(e.m2)) / 2, y: y - 6, "text-anchor": "middle", fill: c }, g).textContent = e.label;
+  } else if (e.kind === "crash") {
+    // The line plunges through the space above the dot, so label to its left
+    el("circle", { cx: sx(e.m), cy: sy(e.p), r: 4, fill: "none", stroke: c, "stroke-width": 2 }, g);
+    el("text", { x: sx(e.m) - 10, y: sy(e.p) + 4, "text-anchor": "end", fill: c }, g).textContent = e.label;
+  } else {
+    el("line", { x1: sx(e.m), x2: sx(e.m), y1: sy(e.p) - 8, y2: sy(e.p) - 34, stroke: c, "stroke-width": 1.5 }, g);
+    el("circle", { cx: sx(e.m), cy: sy(e.p), r: 4, fill: "none", stroke: c, "stroke-width": 2 }, g);
+    const anchor = e.m > 9 ? "end" : "middle";
+    el("text", { x: sx(e.m) + (anchor === "end" ? 6 : 0), y: sy(e.p) - 40, "text-anchor": anchor, fill: c }, g).textContent = e.label;
+  }
+  return g;
+});
+const bandNodes = [...$("bands").children];
+
+// Price at month m, linearly interpolated (the June/July gap in the source is bridged)
+function priceAt(m) {
+  if (m <= DATA[0].m) return DATA[0].p;
+  for (let i = 1; i < DATA.length; i++) {
+    if (DATA[i].m >= m) {
+      const a = DATA[i - 1], b = DATA[i];
+      return a.p + (b.p - a.p) * (m - a.m) / (b.m - a.m);
+    }
+  }
+  return DATA[DATA.length - 1].p;
+}
+
+const END = DATA[DATA.length - 1].m;
+const DAYS = [31, 30, 31, 30, 31, 31, 30];
+function fmtDate(m) {
+  const i = Math.min(6, Math.floor(m - 3));
+  const day = Math.max(1, Math.min(DAYS[i], Math.round((m - 3 - i) * DAYS[i]) + 1));
+  return `${day} ${MONTHS[i]} 1720`;
+}
+
+function render(t) { // t in [0, 1]
+  const m = X0 + t * (END - X0);
+  const pts = DATA.filter(d => d.m <= m).map(d => [sx(d.m), sy(d.p)]);
+  const p = priceAt(m);
+  pts.push([sx(m), sy(p)]);
+  const d = "M" + pts.map(q => q.join(",")).join("L");
+  $("line").setAttribute("d", d);
+  $("area").setAttribute("d", d + `L${sx(m)},${sy(0)}L${sx(X0)},${sy(0)}Z`);
+  $("dot").setAttribute("cx", sx(m));
+  $("dot").setAttribute("cy", sy(p));
+  $("date").textContent = fmtDate(m);
+  $("price").textContent = "£" + Math.round(p);
+
+  let caption = "Maret 1720: SSC masih di kisaran £180. Newton pegang ~10.000 lembar, avg di bawah £100.";
+  let bi = 0;
+  EVENTS.forEach((e, i) => {
+    const on = m >= e.m;
+    eventNodes[i].classList.toggle("on", on);
+    if (e.m2) bandNodes[bi++].classList.toggle("on", on);
+    if (on) caption = e.text;
+  });
+  $("caption").innerHTML = caption;
+  $("scrub").value = Math.round(t * 1000);
+}
+
+// Playback
+const DURATION = 12000;
+let start = null, raf = null;
+function tick(ts) {
+  if (start === null) start = ts;
+  const t = Math.min(1, (ts - start) / DURATION);
+  render(t);
+  if (t < 1) raf = requestAnimationFrame(tick);
+  else raf = null;
+}
+function play(from = 0) {
+  cancelAnimationFrame(raf);
+  start = performance.now() - from * DURATION;
+  raf = requestAnimationFrame(tick);
+}
+$("play").addEventListener("click", () => play(0));
+let io = null;
+$("scrub").addEventListener("input", e => {
+  // Manual scrubbing takes over: stop playback and cancel the pending autoplay
+  if (io) { io.disconnect(); io = null; }
+  cancelAnimationFrame(raf); raf = null;
+  render(e.target.value / 1000);
+});
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+render(0);
+if (reduceMotion) {
+  render(1);
+} else if ("IntersectionObserver" in window) {
+  // Start once the chart scrolls into view, so readers don't miss the run-up
+  io = new IntersectionObserver(entries => {
+    if (entries.some(en => en.isIntersecting)) { io.disconnect(); io = null; play(0); }
+  }, { threshold: 0.4 });
+  io.observe(document.querySelector(".card"));
+} else {
+  play(0);
+}
+</script>
+</body>
+</html>
