@@ -25,7 +25,7 @@ st.set_page_config(page_title='Best Timing - Panen Dividen')
 hp.enable_chart_theme()
 
 st.title('Best Timing')
-sl = st.radio('Stock List', ['JKSE', 'S&P500'], index=0, horizontal=True)
+sl = st.segmented_control('Stock List', ['JKSE', 'S&P500'], default='JKSE', required=True)
 
 if sl is None:
     st.stop()
@@ -62,27 +62,43 @@ def connect_redis(redis_url):
 r = connect_redis(url)
 
 
-@st.cache_data(max_entries=8, ttl=60, show_spinner='Downloading dividend data')
+@st.cache_data(max_entries=16, ttl=60, show_spinner='Downloading dividend data')
+def _load_redis_frame(key):
+    # Exceptions are not cached, so a transient Redis failure is retried on the next run.
+    value = r.get(key)
+    if value is None:
+        logger.warning(f'Missing redis key: {key}')
+        return None
+
+    if isinstance(value, bytes) and value.startswith(b'PAR1'):
+        return pd.read_parquet(io.BytesIO(value))
+
+    decoded = json.loads(value)
+    if isinstance(decoded, dict) and 'date' in decoded and 'content' in decoded:
+        decoded = json.loads(decoded['content'])
+    if not isinstance(decoded, (dict, list)):
+        raise ValueError(f'Expected an object or array, received {type(decoded).__name__}')
+    return pd.DataFrame(decoded)
+
+
 def get_data_from_redis(key):
     try:
-        value = r.get(key)
-        if value is None:
-            logger.warning(f'Missing redis key: {key}')
-            return None
-
-        if isinstance(value, bytes) and value.startswith(b'PAR1'):
-            return pd.read_parquet(io.BytesIO(value))
-
-        decoded = json.loads(value)
-        if isinstance(decoded, dict) and 'date' in decoded and 'content' in decoded:
-            decoded = json.loads(decoded['content'])
-        if not isinstance(decoded, (dict, list)):
-            raise ValueError(f'Expected an object or array, received {type(decoded).__name__}')
-        return pd.DataFrame(decoded)
+        return _load_redis_frame(key)
     except Exception as exc:
         logger.error(f'Failed to load Redis key {key}: {exc}')
         st.error(f'Dividend data for "{key}" is temporarily unavailable.')
         return None
+
+
+def load_calendar(year):
+    cal_df = get_data_from_redis(f'div_cal_{exch}_{year}')
+    if cal_df is None or not {'symbol', 'date'}.issubset(cal_df.columns):
+        return pd.DataFrame(columns=['symbol', 'date'])
+    cal_df = cal_df[['symbol', 'date']].copy()
+    cal_df['symbol'] = cal_df['symbol'].astype('string').str.strip()
+    cal_df['date'] = pd.to_datetime(cal_df['date'], errors='coerce')
+    cal_df = cal_df.dropna(subset=['symbol', 'date'])
+    return cal_df[cal_df['symbol'] != '']
 
 
 # ── Year selection ───────────────────────────────────────────────────────────
@@ -99,16 +115,7 @@ if len(available_years) == 0:
 selected_year = max(available_years)
 
 # ── Load calendar & sector data ──────────────────────────────────────────────
-div_cal_key = f'div_cal_{exch}_{selected_year}'
-df = get_data_from_redis(div_cal_key)
-if df is None or not {'symbol', 'date'}.issubset(df.columns):
-    df = pd.DataFrame(columns=['symbol', 'date'])
-else:
-    df = df[['symbol', 'date']].copy()
-    df['symbol'] = df['symbol'].astype('string').str.strip()
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df = df.dropna(subset=['symbol', 'date'])
-    df = df[df['symbol'] != '']
+df = load_calendar(selected_year)
 
 _div_score_df = get_data_from_redis(div_score_key)
 
@@ -263,13 +270,29 @@ def _calc_low_entry_recovery_days(price_df, best_events, max_lookforward=365):
     return recovery_days
 
 
+def _recovery_status(recovered, follow_up_complete):
+    """Recovered, Dividend Trap (unrecovered after full follow-up) or Pending."""
+    recovered = pd.Series(recovered).astype('boolean').fillna(False).astype(bool)
+    complete = pd.Series(follow_up_complete, index=recovered.index).astype('boolean').fillna(True).astype(bool)
+    return pd.Series(
+        np.select([recovered, complete], ['Recovered', 'Dividend Trap'], default='Pending'),
+        index=recovered.index,
+    )
+
+
 def _recovery_stats(recovery_df):
     if recovery_df is None or recovery_df.empty:
         return {
             'median': None, 'p25': None, 'p75': None, 'p90': None,
-            'recovered': 0, 'censored': 0,
+            'recovered': 0, 'censored': 0, 'traps': 0, 'pending': 0, 'trap_rate': None,
         }
-    recovered = int(recovery_df['recovered'].sum())
+    status = _recovery_status(
+        recovery_df['recovered'],
+        recovery_df['follow_up_complete'] if 'follow_up_complete' in recovery_df.columns else True,
+    )
+    recovered = int((status == 'Recovered').sum())
+    traps = int((status == 'Dividend Trap').sum())
+    resolved = recovered + traps
     return {
         'median': _kaplan_meier_quantile(recovery_df, 0.50),
         'p25': _kaplan_meier_quantile(recovery_df, 0.25),
@@ -277,6 +300,11 @@ def _recovery_stats(recovery_df):
         'p90': _kaplan_meier_quantile(recovery_df, 0.90),
         'recovered': recovered,
         'censored': len(recovery_df) - recovered,
+        'traps': traps,
+        'pending': len(recovery_df) - resolved,
+        # Pending events have not had a full follow-up window yet, so they are
+        # excluded from the trap rate rather than counted as failures.
+        'trap_rate': traps / resolved * 100 if resolved else None,
     }
 
 
@@ -290,7 +318,12 @@ def _source_data_version(div_cal_df, sector_map, symbols):
     return digest.hexdigest()
 
 
-@st.cache_data(max_entries=128, ttl=60 * 60 * 6, show_spinner=False)
+FOLLOW_UP_DAYS = 365
+
+
+# Sized above the largest stock list (JKSE has ~900 tickers) so one run does not
+# evict its own results before it finishes.
+@st.cache_data(max_entries=2048, ttl=60 * 60 * 6, show_spinner=False)
 def _summarize_stock(symbol, event_start, event_end, data_version, sector, _calendar_dates):
     del data_version  # The source-data digest is intentionally part of the cache key.
     event_start_ts = pd.Timestamp(event_start)
@@ -324,6 +357,22 @@ def _summarize_stock(symbol, event_start, event_end, data_version, sector, _cale
         if valid_adjusted.any():
             seasonality_df = raw_pdf.loc[valid_adjusted, ['date']].copy()
             seasonality_df['close'] = adjusted.loc[valid_adjusted]
+    # Prices are fetched with extra look-back/follow-up margins for the event
+    # analysis; seasonality must only use the selected year range.
+    seasonality_df = seasonality_df[
+        (seasonality_df['date'] >= event_start_ts) & (seasonality_df['date'] <= event_end_ts)
+    ]
+
+    # Yahoo's dividend actions are split-adjusted on the same basis as `close`,
+    # so prefer them for yields; the feed amounts are only a fallback.
+    yahoo_dividends = {}
+    if 'dividend' in raw_pdf.columns:
+        yahoo_div = raw_pdf[['date']].copy()
+        yahoo_div['amount'] = pd.to_numeric(raw_pdf['dividend'], errors='coerce')
+        yahoo_div = yahoo_div[yahoo_div['amount'] > 0]
+        yahoo_dividends = {
+            row.date.strftime('%Y-%m-%d'): float(row.amount) for row in yahoo_div.itertuples()
+        }
 
     dividend_source = 'dag' if symbol.endswith('.JK') else 'fmp'
     ddf = hd.get_dividend_history_single_stock(symbol, source=dividend_source)
@@ -334,10 +383,10 @@ def _summarize_stock(symbol, event_start, event_end, data_version, sector, _cale
         ddf = ddf.dropna(subset=['date'])
         ddf = ddf[(ddf['date'] >= event_start_ts) & (ddf['date'] <= event_end_ts)]
         ddf = ddf[ddf['date'] <= price_df['date'].max()]
-        if 'dividend' in ddf.columns:
-            ddf['dividend_amount'] = pd.to_numeric(ddf['dividend'], errors='coerce')
-        elif 'adjDividend' in ddf.columns:
+        if 'adjDividend' in ddf.columns:
             ddf['dividend_amount'] = pd.to_numeric(ddf['adjDividend'], errors='coerce')
+        elif 'dividend' in ddf.columns:
+            ddf['dividend_amount'] = pd.to_numeric(ddf['dividend'], errors='coerce')
         else:
             ddf['dividend_amount'] = np.nan
         div_dates = ddf[['date', 'dividend_amount']].reset_index(drop=True)
@@ -368,11 +417,12 @@ def _summarize_stock(symbol, event_start, event_end, data_version, sector, _cale
     best_detail = hd.calc_pre_ex_best_days(
         price_df, eligible_dates, pre_ex_days=180, detail=True
     )
-    low_detail = _calc_low_entry_recovery_days(price_df, best_detail, max_lookforward=365)
+    low_detail = _calc_low_entry_recovery_days(price_df, best_detail, max_lookforward=FOLLOW_UP_DAYS)
     matched_events = pd.DataFrame({'date': [event['ex_date'] for event in best_detail]})
     cum_detail = hd.calc_post_ex_recovery_days(
-        price_df, matched_events, max_lookforward=365, detail=True
+        price_df, matched_events, max_lookforward=FOLLOW_UP_DAYS, detail=True
     )
+    today = pd.Timestamp.today().normalize()
     low_by_date = {event['ex_date']: event for event in low_detail}
     cum_by_date = {event['ex_date']: event for event in cum_detail}
     dividend_by_date = {}
@@ -381,9 +431,10 @@ def _summarize_stock(symbol, event_start, event_end, data_version, sector, _cale
             pd.Timestamp(row.date).strftime('%Y-%m-%d'): row.dividend_amount
             for row in div_dates.itertuples()
         }
+    dividend_by_date.update(yahoo_dividends)
 
     event_columns = [
-        'record_type', 'symbol', 'sector', 'ex_date', 'dividend_amount',
+        'record_type', 'symbol', 'sector', 'ex_date', 'follow_up_complete', 'dividend_amount',
         'ex_price', 'low_date', 'low_price', 'days_before', 'entry_date',
         'entry_price', 'low_recover_date', 'low_recover_price',
         'low_days_after', 'low_recovered', 'cum_date', 'cum_price',
@@ -400,6 +451,9 @@ def _summarize_stock(symbol, event_start, event_end, data_version, sector, _cale
             'symbol': symbol,
             'sector': sector,
             'ex_date': ex_date,
+            # An unrecovered event is only a trap once the full follow-up window
+            # has elapsed; before that it is still pending.
+            'follow_up_complete': pd.Timestamp(ex_date) + pd.Timedelta(days=FOLLOW_UP_DAYS) <= today,
             'dividend_amount': dividend_by_date.get(ex_date),
             'ex_price': best.get('ex_price'),
             'low_date': best.get('low_date'),
@@ -454,6 +508,15 @@ def _fetch_all_summaries(symbols_tuple, event_start, event_end, data_version, se
     return stock_event_table, failures, missing_dividend_history
 
 
+def _recovery_frame(events, prefix):
+    """Per-event recovery observations for the `low` or `cum` entry benchmark."""
+    if events is None or events.empty:
+        return pd.DataFrame(columns=['days_after', 'recovered', 'follow_up_complete'])
+    return events[[f'{prefix}_days_after', f'{prefix}_recovered', 'follow_up_complete']].rename(
+        columns={f'{prefix}_days_after': 'days_after', f'{prefix}_recovered': 'recovered'}
+    ).dropna(subset=['days_after'])
+
+
 def _seasonality_for_sector(stock_event_table, sector='All'):
     sector = sector or 'All'
     rows = stock_event_table
@@ -474,12 +537,8 @@ def _seasonality_for_sector(stock_event_table, sector='All'):
 
     events = rows[rows['record_type'] == 'event'].copy()
     best_days_df = events[['days_before']].dropna() if not events.empty else pd.DataFrame()
-    low_recovery_df = events[['low_days_after', 'low_recovered']].rename(
-        columns={'low_days_after': 'days_after', 'low_recovered': 'recovered'}
-    ).dropna(subset=['days_after']) if not events.empty else pd.DataFrame()
-    cum_recovery_df = events[['cum_days_after', 'cum_recovered']].rename(
-        columns={'cum_days_after': 'days_after', 'cum_recovered': 'recovered'}
-    ).dropna(subset=['days_after']) if not events.empty else pd.DataFrame()
+    low_recovery_df = _recovery_frame(events, 'low')
+    cum_recovery_df = _recovery_frame(events, 'cum')
     best_raw_df = events
     low_recovery_raw_df = events.rename(columns={
         'low_recover_date': 'recover_date', 'low_recover_price': 'recover_price',
@@ -498,32 +557,33 @@ def _seasonality_for_sector(stock_event_table, sector='All'):
 def _season_sector_table(
     stock_event_table, sectors, all_symbols
 ):
+    columns = [
+        'sector', 'n_stocks', 'best_month', 'avg_rel_price',
+        'median_days', 'p25_days', 'p75_days', 'n_events',
+        'median_recovery', 'p25_recovery', 'p75_recovery', 'p90_recovery',
+        'n_recovery', 'n_traps', 'n_pending',
+        'cum_median_recovery', 'cum_n_recovery', 'cum_n_traps', 'cum_n_pending',
+    ]
+    if stock_event_table is None or stock_event_table.empty:
+        return pd.DataFrame(columns=columns)
+
+    in_scope = stock_event_table[stock_event_table['symbol'].isin(set(all_symbols))]
+    stocks_by_sector = in_scope.groupby('sector')['symbol'].nunique()
+
     rows = []
-    available_symbols = set(stock_event_table['symbol'].dropna()) if not stock_event_table.empty else set()
     for sec in sectors:
-        sec_symbols = {
-            s for s in all_symbols
-            if s in available_symbols
-            and not stock_event_table[
-                (stock_event_table['symbol'] == s) & (stock_event_table['sector'] == sec)
-            ].empty
-        }
-        n_stocks = len(sec_symbols)
+        n_stocks = int(stocks_by_sector.get(sec, 0))
         if n_stocks == 0:
             continue
         agg_df, best_df, low_rec_df, cum_rec_df, _, _, _ = _seasonality_for_sector(
-            stock_event_table, sec
+            in_scope, sec
         )
+        # Event statistics stay available even when no complete year exists for seasonality.
         if agg_df.empty:
-            rows.append({
-                'sector': sec, 'n_stocks': n_stocks, 'best_month': '—',
-                'avg_rel_price': None, 'median_days': None, 'p25_days': None, 'p75_days': None, 'n_events': 0,
-                'median_recovery': None, 'p25_recovery': None, 'p75_recovery': None, 'p90_recovery': None,
-                'n_recovery': 0, 'n_censored': 0,
-                'cum_median_recovery': None, 'cum_n_recovery': 0, 'cum_n_censored': 0,
-            })
-            continue
-        best_row = agg_df.loc[agg_df['median'].idxmin()]
+            best_month, avg_rel_price = '—', None
+        else:
+            best_row = agg_df.loc[agg_df['median'].idxmin()]
+            best_month, avg_rel_price = best_row['month_name'], best_row['median']
         if not best_df.empty:
             median_days = int(best_df['days_before'].median())
             p25_days = int(best_df['days_before'].quantile(0.25))
@@ -537,8 +597,8 @@ def _season_sector_table(
         rows.append({
             'sector': sec,
             'n_stocks': n_stocks,
-            'best_month': best_row['month_name'],
-            'avg_rel_price': best_row['median'],
+            'best_month': best_month,
+            'avg_rel_price': avg_rel_price,
             'median_days': median_days,
             'p25_days': p25_days,
             'p75_days': p75_days,
@@ -548,25 +608,21 @@ def _season_sector_table(
             'p75_recovery': low_stats['p75'],
             'p90_recovery': low_stats['p90'],
             'n_recovery': low_stats['recovered'],
-            'n_censored': low_stats['censored'],
+            'n_traps': low_stats['traps'],
+            'n_pending': low_stats['pending'],
             'cum_median_recovery': cum_stats['median'],
             'cum_n_recovery': cum_stats['recovered'],
-            'cum_n_censored': cum_stats['censored'],
+            'cum_n_traps': cum_stats['traps'],
+            'cum_n_pending': cum_stats['pending'],
         })
-    return pd.DataFrame(rows, columns=[
-        'sector', 'n_stocks', 'best_month', 'avg_rel_price',
-        'median_days', 'p25_days', 'p75_days', 'n_events',
-        'median_recovery', 'p25_recovery', 'p75_recovery', 'p90_recovery', 'n_recovery', 'n_censored',
-        'cum_median_recovery', 'cum_n_recovery', 'cum_n_censored',
-    ])
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _stock_statistics_table(stock_event_table, sector='All'):
     columns = [
         'symbol', 'sector', 'n_events', 'best_month', 'median_days_before',
-        'low_recovered', 'low_traps', 'low_trap_rate', 'low_median_recovery',
-        'cum_recovered', 'cum_traps', 'cum_trap_rate', 'cum_median_recovery',
-        'additional_low_recoveries',
+        'low_recovered', 'low_traps', 'low_pending', 'low_trap_rate', 'low_median_recovery',
+        'cum_recovered', 'cum_traps', 'cum_pending', 'cum_trap_rate', 'cum_median_recovery',
     ]
     if stock_event_table is None or stock_event_table.empty:
         return pd.DataFrame(columns=columns)
@@ -596,16 +652,8 @@ def _stock_statistics_table(stock_event_table, sector='All'):
         sector_values = symbol_events['sector'].dropna()
         sector_name = sector_values.iloc[0] if not sector_values.empty else 'Unknown'
         days_before = pd.to_numeric(symbol_events['days_before'], errors='coerce').dropna()
-        low_recovery = symbol_events[['low_days_after', 'low_recovered']].rename(
-            columns={'low_days_after': 'days_after', 'low_recovered': 'recovered'}
-        ).dropna(subset=['days_after'])
-        cum_recovery = symbol_events[['cum_days_after', 'cum_recovered']].rename(
-            columns={'cum_days_after': 'days_after', 'cum_recovered': 'recovered'}
-        ).dropna(subset=['days_after'])
-        low_stats = _recovery_stats(low_recovery)
-        cum_stats = _recovery_stats(cum_recovery)
-        low_total = len(low_recovery)
-        cum_total = len(cum_recovery)
+        low_stats = _recovery_stats(_recovery_frame(symbol_events, 'low'))
+        cum_stats = _recovery_stats(_recovery_frame(symbol_events, 'cum'))
 
         stock_rows.append({
             'symbol': symbol,
@@ -614,12 +662,14 @@ def _stock_statistics_table(stock_event_table, sector='All'):
             'best_month': best_month_by_symbol.get(symbol),
             'median_days_before': int(days_before.median()) if not days_before.empty else None,
             'low_recovered': low_stats['recovered'],
-            'low_traps': low_stats['censored'],
-            'low_trap_rate': low_stats['censored'] / low_total * 100 if low_total else None,
+            'low_traps': low_stats['traps'],
+            'low_pending': low_stats['pending'],
+            'low_trap_rate': low_stats['trap_rate'],
             'low_median_recovery': low_stats['median'],
             'cum_recovered': cum_stats['recovered'],
-            'cum_traps': cum_stats['censored'],
-            'cum_trap_rate': cum_stats['censored'] / cum_total * 100 if cum_total else None,
+            'cum_traps': cum_stats['traps'],
+            'cum_pending': cum_stats['pending'],
+            'cum_trap_rate': cum_stats['trap_rate'],
             'cum_median_recovery': cum_stats['median'],
         })
 
@@ -644,26 +694,26 @@ else:
         st.info('Sector information unavailable — will analyse all stocks together without sector breakdown.')
 
     _n_sectors = len(_sector_options) - 1 if _sector_map else 0
-    _year_range_start = list(range(2015, current_year + 1))
-    _year_range_end = list(range(2015, current_year + 1))
+    _year_range = list(range(2015, current_year + 1))
     _default_end_year = max(2015, current_year - 1)
+    _default_start_year = max(2015, _default_end_year - 1)
     with st.form('cal_seasonality_inputs'):
         _yr_col1, _yr_col2, _sector_col, _submit_col = st.columns(4)
         _start_year = _yr_col1.selectbox(
-            'Start Year', _year_range_start,
-            index=_year_range_start.index(2024),
-            help='First year of price history to include in the distribution.'
+            'Start Year', _year_range,
+            index=_year_range.index(_default_start_year),
+            help='First dividend-event and seasonality year to include.'
         )
         _end_year = _yr_col2.selectbox(
-            'End Year', _year_range_end,
-            index=_year_range_end.index(_default_end_year),
-            help='Last dividend-event year to include. Completed years are recommended.'
+            'End Year', _year_range,
+            index=_year_range.index(_default_end_year),
+            help='Last dividend-event and seasonality year to include. Completed years are recommended.'
         )
         _input_sector = _sector_col.selectbox(
             'Sector',
             _sector_options,
             key='cal_input_sector',
-            index=6,
+            index=0,
             help='Only stocks in this sector will be downloaded and analysed.',
         )
         _calculate_submitted = _submit_col.form_submit_button(
@@ -691,9 +741,14 @@ else:
     )
     _event_start = f'{_start_year}-01-01'
     _event_end = f'{_end_year}-12-31'
-    _div_cal_df = df[['symbol', 'date']].copy()
-    _div_cal_df['date'] = pd.to_datetime(_div_cal_df['date'], errors='coerce')
-    _div_cal_df = _div_cal_df.dropna(subset=['symbol', 'date'])
+    # Fallback event dates for stocks without a dividend feed: use every stored
+    # calendar year in the requested range, not just the latest one.
+    _calendar_years = [y for y in available_years if _start_year <= y <= _end_year]
+    _div_cal_df = pd.concat(
+        [df if y == selected_year else load_calendar(y) for y in _calendar_years]
+        or [pd.DataFrame(columns=['symbol', 'date'])],
+        ignore_index=True,
+    )
     _div_cal_df = _div_cal_df[
         (_div_cal_df['date'] >= pd.Timestamp(_event_start))
         & (_div_cal_df['date'] <= pd.Timestamp(_event_end))
@@ -702,7 +757,7 @@ else:
     _data_version = _source_data_version(_div_cal_df, _sector_map, _request_symbols)
     _request_key = (
         exch, selected_year, _start_year, _end_year, _input_sector,
-        _data_version, 'compact_summary_v4',
+        _data_version, 'compact_summary_v5',
     )
     if _calculate_submitted:
         st.session_state['cal_seasonality_request'] = _request_key
@@ -767,7 +822,8 @@ else:
         if _missing_dividend_history:
             st.warning(
                 f'{_missing_dividend_history} stocks had no historical dividend feed; '
-                'their event analysis uses only matching dates from the selected Redis calendar.'
+                'their event analysis uses the stored Redis dividend calendars for the selected years '
+                '(dates without a stored calendar are skipped).'
             )
 
         if _stock_event_table.empty:
@@ -817,11 +873,19 @@ else:
                             'n_recovery': st.column_config.NumberColumn(
                                 'Recovered from Low Entry', format='%d'
                             ),
-                            'n_censored': st.column_config.NumberColumn(
+                            'n_traps': st.column_config.NumberColumn(
                                 'Low Entry Traps',
                                 help=(
                                     'Events that did not regain the modeled 180-day pre-ex low '
-                                    'purchase price within their observed follow-up window'
+                                    f'purchase price within {FOLLOW_UP_DAYS} calendar days'
+                                ),
+                                format='%d',
+                            ),
+                            'n_pending': st.column_config.NumberColumn(
+                                'Low Entry Pending',
+                                help=(
+                                    'Unrecovered events whose ex-date is less than '
+                                    f'{FOLLOW_UP_DAYS} days ago, so the outcome is not known yet'
                                 ),
                                 format='%d',
                             ),
@@ -833,9 +897,14 @@ else:
                             'cum_n_recovery': st.column_config.NumberColumn(
                                 'Recovered from Cum Entry', format='%d'
                             ),
-                            'cum_n_censored': st.column_config.NumberColumn(
+                            'cum_n_traps': st.column_config.NumberColumn(
                                 'Cum Entry Traps',
-                                help='Events that did not regain the cum-date price during follow-up',
+                                help=f'Events that did not regain the cum-date price within {FOLLOW_UP_DAYS} days',
+                                format='%d',
+                            ),
+                            'cum_n_pending': st.column_config.NumberColumn(
+                                'Cum Entry Pending',
+                                help='Unrecovered events still inside their follow-up window',
                                 format='%d',
                             ),
                         },
@@ -843,7 +912,8 @@ else:
                     st.caption(
                         'Relative price is detrended within complete stock-years and gives each stock equal weight. '
                         'Low-entry and cum-entry recovery use the same eligible events. Kaplan-Meier '
-                        'estimates keep unrecovered events censored.'
+                        'estimates keep unrecovered events censored. An unrecovered event counts as a '
+                        f'trap only after {FOLLOW_UP_DAYS} days; until then it is pending.'
                     )
 
             # ── Analyse the cohort selected before downloading ── #
@@ -856,8 +926,8 @@ else:
                 _stock_event_table, _selected_sector
             )
 
-            if _agg_df.empty:
-                st.warning(f'No seasonality data for sector "{_selected_sector}".')
+            if _agg_df.empty and _best_raw_df.empty:
+                st.warning(f'No seasonality or dividend event data for sector "{_selected_sector}".')
             else:
                 _scope_label = 'all dividend stocks' if _selected_sector == 'All' else f'the **{_selected_sector}** sector'
                 _chart_cols = st.columns(2)
@@ -865,50 +935,56 @@ else:
                 # ── Chart A — Aggregate monthly bar + IQR band ── #
                 with _chart_cols[0]:
                     st.markdown('#### Aggregate Monthly Relative Price')
-                    st.caption(f'Median ± IQR across {_scope_label}. Green highlight = historically cheapest month.')
+                    if _agg_df.empty:
+                        st.info(
+                            'No complete calendar year in the selected range, so monthly '
+                            'seasonality is unavailable. The event analysis below still applies.'
+                        )
+                    else:
+                        st.caption(f'Median ± IQR across {_scope_label}. Green highlight = historically cheapest month.')
 
-                    _best_row = _agg_df.loc[_agg_df['median'].idxmin()]
-                    _best_month_name = _best_row['month_name']
+                        _best_row = _agg_df.loc[_agg_df['median'].idxmin()]
+                        _best_month_name = _best_row['month_name']
 
-                    _base = alt.Chart(_agg_df)
+                        _base = alt.Chart(_agg_df)
 
-                    _band = _base.mark_area(opacity=0.18, color=cs.CHART_PRIMARY).encode(
-                        x=alt.X('month_name:O', sort=MONTH_ORDER, title='Month'),
-                        y=alt.Y('q25:Q', title='Relative Price (%)'),
-                        y2=alt.Y2('q75:Q'),
-                    )
-                    _line = _base.mark_line(point=True, color=cs.CHART_PRIMARY, strokeWidth=2.5).encode(
-                        x=alt.X('month_name:O', sort=MONTH_ORDER),
-                        y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
-                        tooltip=[
-                            alt.Tooltip('month_name:O', title='Month'),
-                            alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
-                            alt.Tooltip('median:Q', title='Median', format='.2f'),
-                            alt.Tooltip('q25:Q', title='Q25', format='.2f'),
-                            alt.Tooltip('q75:Q', title='Q75', format='.2f'),
-                        ]
-                    )
-                    _ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                        color=cs.CHART_NEUTRAL, strokeDash=[6, 4], strokeWidth=1
-                    ).encode(y='y:Q')
+                        _band = _base.mark_area(opacity=0.18, color=cs.CHART_PRIMARY).encode(
+                            x=alt.X('month_name:O', sort=MONTH_ORDER, title='Month'),
+                            y=alt.Y('q25:Q', title='Relative Price (%)'),
+                            y2=alt.Y2('q75:Q'),
+                        )
+                        _line = _base.mark_line(point=True, color=cs.CHART_PRIMARY, strokeWidth=2.5).encode(
+                            x=alt.X('month_name:O', sort=MONTH_ORDER),
+                            y=alt.Y('median:Q', scale=alt.Scale(zero=False)),
+                            tooltip=[
+                                alt.Tooltip('month_name:O', title='Month'),
+                                alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
+                                alt.Tooltip('median:Q', title='Median', format='.2f'),
+                                alt.Tooltip('q25:Q', title='Q25', format='.2f'),
+                                alt.Tooltip('q75:Q', title='Q75', format='.2f'),
+                            ]
+                        )
+                        _ref = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+                            color=cs.CHART_NEUTRAL, strokeDash=[6, 4], strokeWidth=1
+                        ).encode(y='y:Q')
 
-                    _best_data = _agg_df[_agg_df['month_name'] == _best_month_name]
-                    _best_bar = alt.Chart(_best_data).mark_bar(
-                        color=cs.CHART_PRIMARY_DARK, opacity=0.28, width=40
-                    ).encode(
-                        x=alt.X('month_name:O', sort=MONTH_ORDER),
-                        y=alt.Y('q25:Q'),
-                        y2=alt.Y2('q75:Q'),
-                    )
+                        _best_data = _agg_df[_agg_df['month_name'] == _best_month_name]
+                        _best_bar = alt.Chart(_best_data).mark_bar(
+                            color=cs.CHART_PRIMARY_DARK, opacity=0.28, width=40
+                        ).encode(
+                            x=alt.X('month_name:O', sort=MONTH_ORDER),
+                            y=alt.Y('q25:Q'),
+                            y2=alt.Y2('q75:Q'),
+                        )
 
-                    _agg_chart = (_band + _best_bar + _line + _ref).properties(height=320)
-                    st.altair_chart(_agg_chart, width='stretch', theme=None)
+                        _agg_chart = (_band + _best_bar + _line + _ref).properties(height=320)
+                        st.altair_chart(_agg_chart, width='stretch', theme=None)
 
-                    _best_val = _best_row['median']
-                    st.success(
-                        f'🏆 **{_best_month_name}** is historically the cheapest month for {_scope_label} '
-                        f'(median detrended relative price: **{_best_val:.1f}%**)'
-                    )
+                        _best_val = _best_row['median']
+                        st.success(
+                            f'🏆 **{_best_month_name}** is historically the cheapest month for {_scope_label} '
+                            f'(median detrended relative price: **{_best_val:.1f}%**)'
+                        )
 
                 # ── Chart B — KDE of best days before ex-date ── #
                 with _chart_cols[1]:
@@ -962,6 +1038,12 @@ else:
                             f'🎯 Buy **{_median_days} days** before ex-date (median across {_n_events} events). '
                             f'Middle 50% range: **{_p25}–{_p75} days** before.'
                         )
+                        st.caption(
+                            'Caveat: the low is identified in hindsight, so this is not a tradable signal on its own. '
+                            'For a stock trending up, the 180-day low tends to sit at the far edge of the window '
+                            '(near 180 days); for a stock trending down it sits near the ex-date. Peaks at either '
+                            'end of the chart partly reflect the trend, not timing around the dividend.'
+                        )
                     else:
                         st.info('No pre-ex best-day data available for these stocks.')
 
@@ -979,7 +1061,8 @@ else:
                     )
                     _comparison_metrics[1].metric(
                         'Low Entry Traps',
-                        f"{_low_stats['censored']:,} / {_low_total:,}",
+                        f"{_low_stats['traps']:,} / {_low_total:,}",
+                        help=f"{_low_stats['pending']:,} more unrecovered events are still pending.",
                     )
                     _comparison_metrics[2].metric(
                         'Cum Entry Recovered',
@@ -987,13 +1070,16 @@ else:
                     )
                     _comparison_metrics[3].metric(
                         'Cum Entry Traps',
-                        f"{_cum_stats['censored']:,} / {_cum_total:,}",
+                        f"{_cum_stats['traps']:,} / {_cum_total:,}",
+                        help=f"{_cum_stats['pending']:,} more unrecovered events are still pending.",
                     )
                     _additional_recoveries = _low_stats['recovered'] - _cum_stats['recovered']
                     st.caption(
-                        f'Using the modeled 180-day low entry recovers '
-                        f'**{_additional_recoveries:,} additional events** versus entering on the cum date. '
-                        'Both calculations use the same eligible dividend events and follow-up window.'
+                        f'The modeled 180-day low entry recovers '
+                        f'**{_additional_recoveries:,} more events** than entering on the cum date. '
+                        'Both use the same eligible events and follow-up window, but the low entry is only '
+                        f'known in hindsight. Unrecovered events less than {FOLLOW_UP_DAYS} days old are '
+                        'pending, not traps.'
                     )
 
                 _recovery_entry = st.radio(
@@ -1026,14 +1112,18 @@ else:
                 )
 
                 if not _recovery_df.empty:
-                    _recovered_only = _recovery_df[_recovery_df['recovered']].copy()
+                    _recovered_mask = _recovery_df['recovered'].astype('boolean').fillna(False).astype(bool)
+                    _recovered_only = _recovery_df[_recovered_mask].copy()
                     _n_rec = _recovery_stats_selected['recovered']
                     _n_censored = _recovery_stats_selected['censored']
-                    _trap_rate = _n_censored / len(_recovery_df) * 100
+                    _n_traps = _recovery_stats_selected['traps']
+                    _n_pending = _recovery_stats_selected['pending']
+                    _trap_rate = _recovery_stats_selected['trap_rate']
                     st.caption(
-                        f'For **{_recovery_entry}**, {_n_rec:,} events recovered and {_n_censored:,} '
-                        f'(**{_trap_rate:.1f}%**) are classified as dividend traps. Recent events may '
-                        'have less than 365 calendar days of follow-up.'
+                        f'For **{_recovery_entry}**, {_n_rec:,} events recovered, {_n_traps:,} '
+                        + (f'(**{_trap_rate:.1f}%** of resolved events) ' if _trap_rate is not None else '')
+                        + f'are dividend traps (not recovered after {FOLLOW_UP_DAYS} days), and '
+                        f'{_n_pending:,} are still pending because their follow-up window has not ended.'
                     )
                     _median_rec = _recovery_stats_selected['median']
                     _r_p25 = _recovery_stats_selected['p25']
@@ -1101,7 +1191,8 @@ else:
                     st.markdown('#### Benchmark Yield vs. Recovery or Dividend Trap Follow-Up')
                     st.caption(
                         f'Each point is one historical dividend event across {_scope_label}. Dividend traps '
-                        f'can be shown as red diamonds and remain excluded from the regression. Yield and '
+                        f'(red diamonds) and pending events (grey squares) can be shown, and are excluded '
+                        f'from the regression. Yield and '
                         f'recovery use the selected **{_recovery_entry}** benchmark.'
                     )
                     _scatter_src = _recovery_raw_df.copy()
@@ -1110,8 +1201,8 @@ else:
                     if not _scatter_df.empty and 'dividend_amount' in _scatter_df.columns:
                         _scatter_df = _scatter_df.copy()
                         _scatter_df['recovered'] = _scatter_df['recovered'].fillna(False).astype(bool)
-                        _scatter_df['recovery_status'] = np.where(
-                            _scatter_df['recovered'], 'Recovered', 'Dividend Trap'
+                        _scatter_df['recovery_status'] = _recovery_status(
+                            _scatter_df['recovered'], _scatter_df['follow_up_complete']
                         )
                         for _numeric_col in ['dividend_amount', _benchmark_price_col, 'days_after']:
                             _scatter_df[_numeric_col] = pd.to_numeric(
@@ -1129,11 +1220,11 @@ else:
                         ]
                         _scatter_controls = st.columns(2)
                         _show_scatter_traps = _scatter_controls[0].toggle(
-                            'Show dividend traps',
+                            'Show unrecovered events',
                             value=False,
                             key='cal_scatter_show_traps',
                             help=(
-                                'Adds unrecovered events at their observed follow-up duration. '
+                                'Adds dividend traps and pending events at their observed follow-up duration. '
                                 'These points can substantially expand the chart domain.'
                             ),
                         )
@@ -1184,16 +1275,16 @@ else:
                             'recovery_status:N',
                             title='Status',
                             scale=alt.Scale(
-                                domain=['Recovered', 'Dividend Trap'],
-                                range=[cs.CHART_BLUE, cs.CHART_NEGATIVE],
+                                domain=['Recovered', 'Dividend Trap', 'Pending'],
+                                range=[cs.CHART_BLUE, cs.CHART_NEGATIVE, cs.CHART_NEUTRAL],
                             ),
                         ) if _show_scatter_traps else alt.value(cs.CHART_BLUE)
                         _point_shape = alt.Shape(
                             'recovery_status:N',
                             title='Status',
                             scale=alt.Scale(
-                                domain=['Recovered', 'Dividend Trap'],
-                                range=['circle', 'diamond'],
+                                domain=['Recovered', 'Dividend Trap', 'Pending'],
+                                range=['circle', 'diamond', 'square'],
                             ),
                         ) if _show_scatter_traps else alt.value('circle')
 
@@ -1277,10 +1368,11 @@ else:
                         st.altair_chart(_scatter_layers, width='stretch', theme=None)
                         _sample_note = ' The chart displays a 5,000-point sample.' if len(_scatter_plot_source) > 5000 else ''
                         if _show_scatter_traps:
-                            _scatter_traps = int((~_scatter_plot_source['recovered']).sum())
+                            _status_counts = _scatter_plot_source['recovery_status'].value_counts()
                             _point_summary = (
                                 f'{len(_scatter_plot_source)} matched events, including '
-                                f'{_scatter_traps} dividend traps.'
+                                f"{int(_status_counts.get('Dividend Trap', 0))} dividend traps and "
+                                f"{int(_status_counts.get('Pending', 0))} pending."
                             )
                         else:
                             _point_summary = f'{len(_scatter_plot_source)} recovered events.'
@@ -1303,9 +1395,11 @@ else:
                         'ex-date and compares recovery from the low-date and cum-date entries.'
                     )
 
-                    _best_view = _best_raw_df[['symbol', 'ex_date', 'ex_price', 'low_date', 'days_before', 'low_price']].copy() \
-                        if not _best_raw_df.empty else pd.DataFrame(
-                            columns=['symbol', 'ex_date', 'ex_price', 'low_date', 'days_before', 'low_price'])
+                    _best_view_cols = [
+                        'symbol', 'ex_date', 'follow_up_complete', 'ex_price', 'low_date', 'days_before', 'low_price',
+                    ]
+                    _best_view = _best_raw_df[_best_view_cols].copy() \
+                        if not _best_raw_df.empty else pd.DataFrame(columns=_best_view_cols)
                     _low_rec_view = _low_recovery_raw_df[
                         ['symbol', 'ex_date', 'recover_date', 'recover_price', 'days_after', 'recovered']
                     ].copy() if not _low_recovery_raw_df.empty else pd.DataFrame(
@@ -1345,22 +1439,12 @@ else:
 
                     # Price difference between cum-date and ex-date
                     _merged_raw['cum_ex_diff'] = _merged_raw['ex_price'] - _merged_raw['cum_price']
-                    _merged_raw['low_recovery_status'] = np.select(
-                        [
-                            _merged_raw['low_recovered'].eq(True).fillna(False),
-                            _merged_raw['low_recovered'].eq(False).fillna(False),
-                        ],
-                        ['Recovered', 'Dividend Trap'],
-                        default='No Recovery Record',
-                    )
-                    _merged_raw['cum_recovery_status'] = np.select(
-                        [
-                            _merged_raw['cum_recovered'].eq(True).fillna(False),
-                            _merged_raw['cum_recovered'].eq(False).fillna(False),
-                        ],
-                        ['Recovered', 'Dividend Trap'],
-                        default='No Recovery Record',
-                    )
+                    _merged_raw['low_recovery_status'] = _recovery_status(
+                        _merged_raw['low_recovered'], _merged_raw['follow_up_complete']
+                    ).where(_merged_raw['low_recovered'].notna(), 'No Recovery Record')
+                    _merged_raw['cum_recovery_status'] = _recovery_status(
+                        _merged_raw['cum_recovered'], _merged_raw['follow_up_complete']
+                    ).where(_merged_raw['cum_recovered'].notna(), 'No Recovery Record')
 
                     _col_order = [
                         'symbol', 'ex_date', 'dividend_amount',
@@ -1423,7 +1507,7 @@ else:
                 else:
                     st.caption(
                         'One row per stock, ordered by cum-entry trap count. Trap rates use only '
-                        'events with a recovery observation. Median recovery uses Kaplan-Meier '
+                        'resolved events (recovered or trapped), not pending ones. Median recovery uses Kaplan-Meier '
                         'estimates so unrecovered events remain censored.'
                     )
                     st.dataframe(
@@ -1449,7 +1533,12 @@ else:
                             ),
                             'low_traps': st.column_config.NumberColumn(
                                 'Low Entry Traps',
-                                help='Modeled low-entry events that remained unrecovered during follow-up.',
+                                help=f'Modeled low-entry events still unrecovered after {FOLLOW_UP_DAYS} days.',
+                                format='%d',
+                            ),
+                            'low_pending': st.column_config.NumberColumn(
+                                'Low Entry Pending',
+                                help='Unrecovered events still inside their follow-up window.',
                                 format='%d',
                             ),
                             'low_trap_rate': st.column_config.NumberColumn(
@@ -1465,7 +1554,12 @@ else:
                             ),
                             'cum_traps': st.column_config.NumberColumn(
                                 'Cum Entry Traps',
-                                help='Cum-entry events that remained unrecovered during follow-up.',
+                                help=f'Cum-entry events still unrecovered after {FOLLOW_UP_DAYS} days.',
+                                format='%d',
+                            ),
+                            'cum_pending': st.column_config.NumberColumn(
+                                'Cum Entry Pending',
+                                help='Unrecovered events still inside their follow-up window.',
                                 format='%d',
                             ),
                             'cum_trap_rate': st.column_config.NumberColumn(
@@ -1479,6 +1573,6 @@ else:
                         },
                     )
                     st.caption(
-                        'A trap means the selected entry price was not regained during the observed '
-                        'follow-up window, capped at 365 calendar days. Recent events may have shorter follow-up.'
+                        f'A trap means the entry price was not regained within {FOLLOW_UP_DAYS} calendar days '
+                        'of the ex-date. Unrecovered events more recent than that are counted as pending.'
                     )
