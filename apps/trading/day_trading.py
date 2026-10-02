@@ -2,6 +2,7 @@ import itertools
 import hashlib
 import concurrent.futures
 import os
+import pickle
 import streamlit as st
 import datetime
 import pandas as pd
@@ -11,10 +12,19 @@ from st_supabase_connection import SupabaseConnection
 import harvest.data as hd
 import harvest.plot as hp
 
-STRATEGY_ENGINE_VERSION = 9
+STRATEGY_ENGINE_VERSION = 10
 DEFAULT_PROFIT_TARGET = 5.0
 DEFAULT_STOP_LOSS = 2.0
 DEFAULT_MAX_HOLD = 5
+DEFAULT_SLIPPAGE_TICKS = 0.5
+
+# Absolute holdout gates a strategy must pass before it can be recommended.
+# Percentile scores only rank candidates; these stop a "best of the losers"
+# from reaching the scanner.
+MIN_PROFIT_FACTOR = 1.2
+MIN_T_STAT = 2.0
+# Stock-specific overrides need enough holdout trades to be more than luck.
+MIN_STOCK_VALIDATION_TRADES = 10
 
 STRATEGY_REGIME_RSI = "Regime RSI"
 STRATEGY_BOLLINGER_LOWER = "Bollinger Lower-Band Reversion"
@@ -25,6 +35,7 @@ STRATEGY_TREND_PULLBACK = "Trend Pullback"
 STRATEGY_RELATIVE_STRENGTH = "Relative-Strength Pullback"
 STRATEGY_CROSS_MOMENTUM = "Cross-Sectional Momentum"
 STRATEGY_SUPERTREND_PULLBACK = "Close-Based Supertrend Pullback"
+STRATEGY_BREADTH_RSI2 = "Breadth Capitulation RSI(2)"
 
 STRATEGY_TYPES = [
     STRATEGY_REGIME_RSI,
@@ -36,6 +47,7 @@ STRATEGY_TYPES = [
     # STRATEGY_RELATIVE_STRENGTH,
     # STRATEGY_CROSS_MOMENTUM,
     STRATEGY_SUPERTREND_PULLBACK,
+    STRATEGY_BREADTH_RSI2,
 ]
 
 STRATEGY_PARAMETER_LABELS = {
@@ -48,6 +60,7 @@ STRATEGY_PARAMETER_LABELS = {
     STRATEGY_RELATIVE_STRENGTH: ("RS Lookback", "Min Outperformance %", "RSI Period", "Recovery Level"),
     STRATEGY_CROSS_MOMENTUM: ("Momentum Lookback", "Top Percentile", "RSI Period", "Recovery Level"),
     STRATEGY_SUPERTREND_PULLBACK: ("ATR Period", "ATR Multiplier", "Pullback Drop %", "Support Proximity %"),
+    STRATEGY_BREADTH_RSI2: ("RSI Period", "RSI Buy <", "Breadth Max %", "Trend SMA"),
 }
 
 STRATEGY_PARAMETER_INPUTS = {
@@ -60,6 +73,7 @@ STRATEGY_PARAMETER_INPUTS = {
     STRATEGY_RELATIVE_STRENGTH: ((2.0, 252.0, 5.0), (0.0, 30.0, 1.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
     STRATEGY_CROSS_MOMENTUM: ((2.0, 252.0, 5.0), (50.0, 100.0, 5.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
     STRATEGY_SUPERTREND_PULLBACK: ((2.0, 50.0, 1.0), (0.5, 10.0, 0.25), (0.25, 10.0, 0.25), (0.0, 10.0, 0.25)),
+    STRATEGY_BREADTH_RSI2: ((2.0, 14.0, 1.0), (1.0, 40.0, 1.0), (1.0, 60.0, 1.0), (0.0, 250.0, 10.0)),
 }
 
 
@@ -122,7 +136,8 @@ st.sidebar.markdown(
     **Short-term swing trading** uses completed daily closes to research 1–10
     session mean-reversion, pullback, relative-strength, and breakout setups.
 
-    * **Mean reversion:** regime RSI, Bollinger lower-band, and RSI recovery.
+    * **Mean reversion:** regime RSI, Bollinger lower-band, RSI recovery, and
+      market-wide breadth capitulation with RSI(2).
     * **Trend and momentum:** Donchian, squeeze, EMA pullback, relative strength,
       cross-sectional momentum, and close-based Supertrend pullback.
     * **Execution:** a completed closing setup enters on the next session in the
@@ -147,6 +162,55 @@ def get_db_connection() -> SupabaseConnection:
     return conn
 
 conn = get_db_connection()
+
+
+@st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
+def load_dividend_events() -> dict[str, pd.DataFrame]:
+    """Load ex-dividend dates and amounts per symbol for price adjustment.
+
+    The pipeline publishes this pickle to Supabase storage; the local copy is a
+    fallback for development.
+    """
+    path = 'data/jkse/dividends.pkl'
+    raw = None
+    try:
+        raw = pickle.loads(conn.client.storage.from_('harvest_dividend').download(path))
+    except Exception:
+        try:
+            raw = pd.read_pickle(path)
+        except Exception:
+            return {}
+
+    events = {}
+    for symbol, records in (raw or {}).items():
+        frame = pd.DataFrame(records) if not isinstance(records, pd.DataFrame) else records
+        if frame.empty or 'date' not in frame.columns:
+            continue
+        # adjDividend is split-adjusted, matching the split-adjusted closes.
+        amount_col = 'adjDividend' if 'adjDividend' in frame.columns else 'dividend'
+        if amount_col not in frame.columns:
+            continue
+        frame = pd.DataFrame({
+            'date': pd.to_datetime(frame['date'], errors='coerce'),
+            'dividend': pd.to_numeric(frame[amount_col], errors='coerce'),
+        }).dropna()
+        frame = frame[frame['dividend'] > 0]
+        if not frame.empty:
+            events[symbol] = frame.groupby('date', as_index=False)['dividend'].sum()
+    return events
+
+
+@st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
+def load_local_close_history(symbols: tuple[str, ...]) -> pd.DataFrame:
+    """Local daily closes, used for market breadth when no fetched prices exist."""
+    try:
+        prices = pd.read_pickle('data/jkse/historical_prices.pkl')
+        prices = prices[prices['symbol'].isin(symbols)][['symbol', 'date', 'close']].copy()
+        prices['date'] = pd.to_datetime(prices['date'], errors='coerce')
+        prices['close'] = pd.to_numeric(prices['close'], errors='coerce')
+        return prices.dropna()
+    except Exception:
+        return pd.DataFrame(columns=['symbol', 'date', 'close'])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -273,6 +337,87 @@ def _close_supertrend(
     )
 
 
+def _dividend_adjust(close: pd.Series, dividends: pd.DataFrame | None) -> pd.Series:
+    """Back-adjust closes for cash dividends so ex-dates are not price drops.
+
+    Uses the standard ratio method: every close before an ex-date is scaled by
+    ``1 - dividend / previous close``. Closes after the last ex-date are left
+    unchanged, so live prices can still be appended to the series.
+    """
+    if dividends is None or dividends.empty or close.empty:
+        return close
+    factor = pd.Series(1.0, index=close.index)
+    for ex_date, amount in zip(dividends['date'], dividends['dividend']):
+        before = close.index < ex_date
+        # Skip ex-dates outside the series: no drop is visible in the data.
+        if not before.any() or before.all():
+            continue
+        previous_close = close[before].iloc[-1]
+        if not np.isfinite(previous_close) or previous_close <= 0:
+            continue
+        ratio = 1 - float(amount) / float(previous_close)
+        # Ignore implausible events (bad data or special distributions).
+        if 0.5 < ratio < 1:
+            factor[before] *= ratio
+    return close * factor
+
+
+def _idx_tick_size(prices: pd.Series | np.ndarray) -> np.ndarray:
+    """IDX fraction (tick size) for each price level."""
+    values = np.asarray(prices, dtype=float)
+    return np.select(
+        [values < 200, values < 500, values < 2000, values < 5000],
+        [1.0, 2.0, 5.0, 10.0],
+        default=25.0,
+    )
+
+
+def _slippage_fraction(prices: pd.Series, ticks: float) -> pd.Series:
+    """Cost of crossing ``ticks`` price steps, as a fraction of price."""
+    if ticks <= 0:
+        return pd.Series(0.0, index=prices.index)
+    values = prices.to_numpy(dtype=float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        fraction = np.where(values > 0, ticks * _idx_tick_size(values) / values, 0.0)
+    return pd.Series(fraction, index=prices.index)
+
+
+def _build_trade_fees(
+    price_series: pd.Series,
+    entries: pd.Series,
+    exits: pd.Series,
+    buy_fee: float,
+    sell_fee: float,
+    sell_tax: float,
+    slippage_ticks: float,
+) -> pd.Series:
+    """Per-bar fee fractions: broker fees, tax, and tick-based slippage."""
+    slippage = _slippage_fraction(price_series, slippage_ticks)
+    fees = pd.Series(0.0, index=price_series.index)
+    fees[entries] = buy_fee / 100.0 + slippage[entries]
+    fees[exits] = (sell_fee + sell_tax) / 100.0 + slippage[exits]
+    return fees
+
+
+def _build_market_breadth(
+    grouped_prices: dict[str, pd.Series],
+    window: int = 20,
+    min_stocks: int = 10,
+) -> pd.Series:
+    """Percent of the universe closing above its ``window``-day average."""
+    if not grouped_prices:
+        return pd.Series(dtype=float)
+    close_frame = pd.concat(grouped_prices, axis=1, sort=False).sort_index()
+    # Bridge short suspensions so one missing day doesn't void a 20-day average.
+    close_frame = close_frame.ffill(limit=5)
+    average = close_frame.rolling(window, min_periods=window).mean()
+    valid = average.notna() & close_frame.notna()
+    above = (close_frame > average) & valid
+    counts = valid.sum(axis=1)
+    breadth = above.sum(axis=1) / counts.where(counts > 0) * 100
+    return breadth.where(counts >= min_stocks).dropna()
+
+
 def _align_to_prices(series: pd.Series | None, index: pd.Index) -> pd.Series:
     if series is None or series.empty:
         return pd.Series(np.nan, index=index, dtype=float)
@@ -291,6 +436,7 @@ def _strategy_components(
     param_b: float,
     param_c: float,
     param_d: float,
+    breadth: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """Return closing setup, strategy exit, and a comparable display indicator."""
     if strategy_type == STRATEGY_REGIME_RSI:
@@ -407,6 +553,18 @@ def _strategy_components(
         setup = (established_bullish & price_drop) | fresh_support_touch
         strategy_exit = direction == -1
         indicator = support_distance
+    elif strategy_type == STRATEGY_BREADTH_RSI2:
+        # Buy the strongest names on a very short-term dip, but only when the
+        # whole market is washed out (few stocks above their 20-day average).
+        market_breadth = _align_to_prices(breadth, close.index)
+        rsi = _wilder_rsi(close, int(param_a))
+        setup = (rsi <= float(param_b)) & (market_breadth <= float(param_c))
+        if int(param_d) > 0:
+            trend = close.rolling(int(param_d), min_periods=int(param_d)).mean()
+            setup &= close > trend
+        # Mean reversion is complete once price recovers its 5-day average.
+        strategy_exit = close > close.rolling(5, min_periods=5).mean()
+        indicator = market_breadth
     else:
         raise ValueError(f"Unknown swing strategy: {strategy_type}")
 
@@ -432,6 +590,8 @@ def _strategy_warmup(
         return max(int(param_a), int(param_c), 50) + 10
     if strategy_type == STRATEGY_SUPERTREND_PULLBACK:
         return max(int(param_a) + 5, 20)
+    if strategy_type == STRATEGY_BREADTH_RSI2:
+        return max(int(param_a), int(param_d), 20) + 5
     return max(int(param_a), int(param_b), int(param_c), 50) + 5
 
 
@@ -449,6 +609,7 @@ def _build_regime_signals(
     trade_start: pd.Timestamp | None = None,
     benchmark_close: pd.Series | None = None,
     momentum_percentile: pd.Series | None = None,
+    breadth: pd.Series | None = None,
 ):
     """Build next-session entries and close-based exits from daily closing setups."""
     price_series = pd.to_numeric(price_series, errors='coerce').dropna().sort_index()
@@ -466,7 +627,7 @@ def _build_regime_signals(
 
     setup, strategy_exit, _ = _strategy_components(
         price_series, regime_aligned, benchmark_close, momentum_percentile,
-        strategy_type, param_a, param_b, param_c, param_d,
+        strategy_type, param_a, param_b, param_c, param_d, breadth=breadth,
     )
     entry_candidates = setup.shift(1, fill_value=False)
     strategy_exit = strategy_exit.shift(1, fill_value=False)
@@ -525,12 +686,17 @@ def _run_regime_backtest(
     trade_start: pd.Timestamp | None = None,
     benchmark_close: pd.Series | None = None,
     momentum_percentile: pd.Series | None = None,
+    breadth: pd.Series | None = None,
+    slippage_ticks: float = 0.0,
 ):
-    """Run one short-term swing strategy with close-based risk controls."""
+    """Run one short-term swing strategy with close-based risk controls.
+
+    Returns a dict of performance metrics, or None when no trade happened.
+    """
     signals = _build_regime_signals(
         price_series, regime_series, strategy_type, param_a, param_b, param_c,
         param_d, max_hold, profit_target_pct, stop_loss_pct, trade_start,
-        benchmark_close, momentum_percentile,
+        benchmark_close, momentum_percentile, breadth,
     )
     if signals is None:
         return None
@@ -539,9 +705,9 @@ def _run_regime_backtest(
     if not entries.any():
         return None
 
-    fees = pd.Series(0.0, index=price_series.index)
-    fees[entries] = buy_fee / 100.0
-    fees[exits]   = (sell_fee + sell_tax) / 100.0
+    fees = _build_trade_fees(
+        price_series, entries, exits, buy_fee, sell_fee, sell_tax, slippage_ticks,
+    )
 
     try:
         vbt = _load_vectorbt()
@@ -549,13 +715,20 @@ def _run_regime_backtest(
         num_trades = len(pf.trades)
         if num_trades == 0:
             return None
-        tot_ret   = float(pf.total_return() * 100)
-        win_rate  = float(pf.trades.win_rate() * 100)
-        max_dd    = float(pf.max_drawdown() * 100)
-        avg_trade = float(pf.trades.returns.mean() * 100) if len(pf.trades) > 0 else 0.0
-        bear_entries = int((entries & (regime_aligned == 'bear')).sum())
-        bull_entries = int((entries & (regime_aligned == 'bull')).sum())
-        return tot_ret, win_rate, max_dd, num_trades, avg_trade, bear_entries, bull_entries
+        trade_returns = np.asarray(pf.trades.returns.values, dtype=float) * 100
+        return {
+            'total_return': float(pf.total_return() * 100),
+            'win_rate': float(pf.trades.win_rate() * 100),
+            'max_drawdown': float(pf.max_drawdown() * 100),
+            'trades': num_trades,
+            'avg_trade': float(trade_returns.mean()),
+            # Sums let trade statistics be pooled across stocks later.
+            'gross_win': float(trade_returns[trade_returns > 0].sum()),
+            'gross_loss': float(-trade_returns[trade_returns < 0].sum()),
+            'sum_sq': float((trade_returns ** 2).sum()),
+            'bear_entries': int((entries & (regime_aligned == 'bear')).sum()),
+            'bull_entries': int((entries & (regime_aligned == 'bull')).sum()),
+        }
     except Exception:
         return None
 
@@ -586,6 +759,11 @@ with st.container():
         key="dt_min_volatility",
         help="Exclude stocks whose daily returns are too quiet for short-term trading",
     )
+    min_value_traded_bn = st.number_input(
+        "Min Avg Daily Value Traded (Billion IDR)", min_value=0.0, max_value=500.0,
+        value=5.0, step=1.0, key="dt_min_value_traded",
+        help="Average volume x price. Thin stocks have wide spreads and cannot be exited at the modelled close.",
+    )
     include_blue_chips = st.checkbox("Pin Major Blue-chips", value=True, help="Always show major blue-chip stocks at the top of the list", key="dt_blue")
 
     final_df = pd.DataFrame()
@@ -613,6 +791,10 @@ with st.container():
 
         mask &= (val_df['current_pe'] >= min_pe) & (val_df['current_pe'] <= max_pe)
         mask &= (val_df['avg_pe'] > 0) & (val_df['avg_pe'] < 100)
+
+        if {'volAvg', 'price'}.issubset(val_df.columns):
+            val_df['Avg Value Traded'] = val_df['volAvg'] * val_df['price']
+            mask &= val_df['Avg Value Traded'] >= float(min_value_traded_bn) * 1_000_000_000
 
         eligible_df = val_df[mask].copy()
         volatility_df = load_price_volatility(
@@ -689,8 +871,10 @@ shortlist_tickers = final_df['stock'].tolist() if not final_df.empty else []
 # ═══════════════════════════════════════════════════════════════════════════════
 
 jkse_df = load_jkse_index()
-_regime_fast = 50
-_regime_slow = 200
+# Widgets further down own these values; read them from session state so the
+# regime shown here matches what the optimizer, backtest, and scanner use.
+_regime_fast = int(st.session_state.get('dt_reg_fast', 50))
+_regime_slow = int(st.session_state.get('dt_reg_slow', 200))
 full_regime_series = compute_regime_series(jkse_df, fast_sma=_regime_fast, slow_sma=_regime_slow)
 current_regime = get_current_regime(full_regime_series)
 
@@ -721,6 +905,7 @@ SEARCH_PRESETS = {
             STRATEGY_RELATIVE_STRENGTH: [(20, 2.0, 14, 40)],
             STRATEGY_CROSS_MOMENTUM: [(20, 80, 14, 40)],
             STRATEGY_SUPERTREND_PULLBACK: [(10, 3.0, 2.0, 0.5)],
+            STRATEGY_BREADTH_RSI2: [(2, 10, 20, 200)],
         },
         "hold_days": [5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -736,6 +921,7 @@ SEARCH_PRESETS = {
             STRATEGY_RELATIVE_STRENGTH: [(20, 0.0, 14, 40), (60, 3.0, 14, 45)],
             STRATEGY_CROSS_MOMENTUM: [(20, 75, 14, 40), (60, 80, 14, 45)],
             STRATEGY_SUPERTREND_PULLBACK: [(10, 2.5, 1.5, 0.5), (10, 3.0, 2.0, 1.0)],
+            STRATEGY_BREADTH_RSI2: [(2, 10, 20, 200), (2, 5, 15, 100)],
         },
         "hold_days": [3, 5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -751,6 +937,7 @@ SEARCH_PRESETS = {
             STRATEGY_RELATIVE_STRENGTH: [(20, 0.0, 7, 40), (20, 2.0, 14, 40), (60, 3.0, 14, 45)],
             STRATEGY_CROSS_MOMENTUM: [(10, 70, 7, 40), (20, 75, 14, 40), (60, 80, 14, 45)],
             STRATEGY_SUPERTREND_PULLBACK: [(7, 2.0, 1.5, 0.5), (10, 2.5, 2.0, 0.75), (10, 3.0, 2.5, 1.0)],
+            STRATEGY_BREADTH_RSI2: [(2, 5, 15, 200), (2, 10, 20, 200), (3, 15, 25, 200), (2, 10, 20, 100)],
         },
         "hold_days": [3, 5, 7],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, 1.5), (DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -795,11 +982,15 @@ def _scanner_strategy_plan(
             parameter_source = "Stock-specific optimized"
             score = float(stock_params['score'])
             uplift = float(stock_params['return_uplift'])
+            expected_trade = float(stock_params['validation_avg_trade'])
+            validated = True
         elif active_params and active_params['strategy_type'] == strategy_type:
             source = active_params
             parameter_source = "Global optimized"
             score = float(active_params['score'])
             uplift = np.nan
+            expected_trade = float(active_params.get('validation_avg_trade', np.nan))
+            validated = True
         else:
             defaults = SEARCH_PRESETS['Quick']['strategy_params'][strategy_type][0]
             source = {
@@ -814,15 +1005,19 @@ def _scanner_strategy_plan(
             parameter_source = "Baseline preset"
             score = np.nan
             uplift = np.nan
+            expected_trade = np.nan
+            validated = False
         plan.append({
             'strategy_type': strategy_type,
             'params': tuple(float(source[key]) for key in ('param_a', 'param_b', 'param_c', 'param_d')),
-            'profit_target': DEFAULT_PROFIT_TARGET,
+            'profit_target': float(source['profit_target']),
             'stop_loss': float(source['stop_loss']),
             'max_hold': int(source['max_hold']),
             'parameter_source': parameter_source,
             'score': score,
             'return_uplift': uplift,
+            'expected_trade': expected_trade,
+            'validated': validated,
         })
     return plan
 
@@ -841,6 +1036,24 @@ def _build_momentum_percentiles(
     }
 
 
+def _pooled_trade_stats(frame: pd.DataFrame, prefix: str) -> tuple[float, float]:
+    """Profit factor and t-stat of the mean trade, pooled across stocks."""
+    trades = frame[f'{prefix}Trades'].sum()
+    if trades <= 0:
+        return np.nan, np.nan
+    gross_win = frame[f'{prefix}Gross Win'].sum()
+    gross_loss = frame[f'{prefix}Gross Loss'].sum()
+    profit_factor = gross_win / gross_loss if gross_loss > 0 else (np.inf if gross_win > 0 else np.nan)
+    mean = (gross_win - gross_loss) / trades
+    if trades < 2:
+        return float(profit_factor), np.nan
+    variance = (frame[f'{prefix}Sum Sq'].sum() - trades * mean ** 2) / (trades - 1)
+    if variance <= 0:
+        return float(profit_factor), np.nan
+    t_stat = mean / np.sqrt(variance / trades)
+    return float(profit_factor), float(t_stat)
+
+
 def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate each parameter set across stocks and score holdout robustness."""
     params = [
@@ -851,6 +1064,7 @@ def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
     universe_size = max(1, results_df['Symbol'].nunique())
     for values, group in results_df.groupby(params, dropna=False):
         validated = group[group['Validation Trades'] > 0]
+        profit_factor, t_stat = _pooled_trade_stats(validated, 'Validation ')
         rows.append({
             **dict(zip(params, values)),
             'Stocks Tested': int(group['Symbol'].nunique()),
@@ -861,6 +1075,8 @@ def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
             'Train Avg Trade': _weighted_mean(group, 'Avg Trade', '# Trades'),
             'Validation Avg Trade': _weighted_mean(validated, 'Validation Avg Trade', 'Validation Trades'),
             'Validation Win Rate': _weighted_mean(validated, 'Validation Win Rate', 'Validation Trades'),
+            'Validation Profit Factor': profit_factor,
+            'Validation t-stat': t_stat,
             'Median Validation Return': float(validated['Validation Return'].median()) if not validated.empty else np.nan,
             'Positive Stocks %': float((validated['Validation Return'] > 0).mean() * 100) if not validated.empty else np.nan,
             'Validation Drawdown': _weighted_mean(validated, 'Validation Drawdown', 'Validation Trades'),
@@ -876,12 +1092,14 @@ def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
     summary['Generalization Gap'] = summary['Validation Avg Trade'] - summary['Train Avg Trade']
+    summary['Passes Gates'] = _passes_profitability_gates(summary)
     score_inputs = {
-        'Validation Avg Trade': 0.30,
-        'Validation Win Rate': 0.15,
+        'Validation Avg Trade': 0.25,
+        'Validation Profit Factor': 0.15,
+        'Validation Win Rate': 0.10,
         'Median Validation Return': 0.15,
         'Positive Stocks %': 0.15,
-        'Validation Coverage %': 0.15,
+        'Validation Coverage %': 0.10,
     }
     summary['Strategy Score'] = 0.0
     for column, weight in score_inputs.items():
@@ -889,8 +1107,19 @@ def _summarize_strategies(results_df: pd.DataFrame) -> pd.DataFrame:
     drawdown_control = (-summary['Validation Drawdown'].abs()).rank(pct=True).fillna(0) * 100
     summary['Strategy Score'] += drawdown_control * 0.10
     return summary.sort_values(
-        ['Strategy Score', 'Validation Avg Trade', 'Validation Trades'], ascending=False,
+        ['Passes Gates', 'Strategy Score', 'Validation Avg Trade', 'Validation Trades'],
+        ascending=False,
     ).reset_index(drop=True)
+
+
+def _passes_profitability_gates(summary: pd.DataFrame) -> pd.Series:
+    """Absolute, after-cost holdout requirements for a recommendable strategy."""
+    return (
+        (summary['Validation Avg Trade'] > 0)
+        & (summary['Train Avg Trade'] > 0)
+        & (summary['Validation Profit Factor'] >= MIN_PROFIT_FACTOR)
+        & (summary['Validation t-stat'] >= MIN_T_STAT)
+    ).fillna(False)
 
 
 def _score_stock_strategy_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
@@ -912,6 +1141,19 @@ def _score_stock_strategy_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
     ).rank(pct=True).fillna(0) * 100
     candidates['Stock Strategy Score'] += drawdown_control * 0.10
     return candidates
+
+
+def _eligible_stock_candidates(group: pd.DataFrame) -> pd.DataFrame:
+    """Per-stock configurations with enough holdout trades and an edge in both periods.
+
+    Requiring a positive training average as well as a positive holdout average
+    stops the holdout from simply rewarding the luckiest configuration.
+    """
+    return group[
+        (group['Validation Trades'] >= MIN_STOCK_VALIDATION_TRADES)
+        & (group['Validation Avg Trade'] > 0)
+        & (group['Avg Trade'] > 0)
+    ]
 
 
 def _select_stock_strategies(
@@ -938,10 +1180,8 @@ def _select_stock_strategies(
         if global_row['Validation Trades'] <= 0 or not np.isfinite(global_return):
             continue
 
-        candidates = group[
-            (group['Validation Trades'] > 0)
-            & (group['Validation Return'] > global_return + 1e-9)
-        ].copy()
+        candidates = _eligible_stock_candidates(group)
+        candidates = candidates[candidates['Validation Return'] > global_return + 1e-9].copy()
         if candidates.empty:
             continue
 
@@ -973,7 +1213,7 @@ def _best_stock_strategy_rows(results_df: pd.DataFrame) -> pd.DataFrame:
     """Return each stock's highest-scoring configuration on holdout data."""
     best_rows = []
     for _, group in results_df.groupby('Symbol'):
-        candidates = group[group['Validation Trades'] > 0].copy()
+        candidates = _eligible_stock_candidates(group).copy()
         if candidates.empty:
             continue
 
@@ -1009,6 +1249,8 @@ def _test_stock_strategies(
     sell_tax: float,
     benchmark_close: pd.Series | None,
     momentum_percentiles: dict[int, pd.Series],
+    breadth: pd.Series | None = None,
+    slippage_ticks: float = 0.0,
 ) -> tuple[list[dict], str]:
     """Test every strategy for one stock; safe to execute in a worker thread."""
     if price_series is None or price_series.empty:
@@ -1028,34 +1270,30 @@ def _test_stock_strategies(
     rows = []
 
     for strategy_type, param_a, param_b, param_c, param_d, hold_d, profit_target, stop_loss in param_combos:
-        momentum_percentile = momentum_percentiles.get(int(param_a))
-        result = _run_regime_backtest(
-            train_prices, regime_series,
+        backtest_kwargs = dict(
             strategy_type=strategy_type,
             param_a=param_a, param_b=param_b, param_c=param_c, param_d=param_d,
             max_hold=int(hold_d),
             profit_target_pct=float(profit_target), stop_loss_pct=float(stop_loss),
             buy_fee=buy_fee, sell_fee=sell_fee, sell_tax=sell_tax,
-            benchmark_close=benchmark_close, momentum_percentile=momentum_percentile,
+            benchmark_close=benchmark_close,
+            momentum_percentile=momentum_percentiles.get(int(param_a)),
+            breadth=breadth,
+            slippage_ticks=slippage_ticks,
         )
-        if result is None:
+        train = _run_regime_backtest(train_prices, regime_series, **backtest_kwargs)
+        if train is None:
             continue
 
-        tot_ret, win_rate, max_dd, num_trades, avg_trade, n_bear, n_bull = result
-        validation_result = _run_regime_backtest(
-            validation_prices, regime_series,
-            strategy_type=strategy_type,
-            param_a=param_a, param_b=param_b, param_c=param_c, param_d=param_d,
-            max_hold=int(hold_d),
-            profit_target_pct=float(profit_target), stop_loss_pct=float(stop_loss),
-            buy_fee=buy_fee, sell_fee=sell_fee, sell_tax=sell_tax,
-            trade_start=validation_start,
-            benchmark_close=benchmark_close, momentum_percentile=momentum_percentile,
+        validation = _run_regime_backtest(
+            validation_prices, regime_series, trade_start=validation_start, **backtest_kwargs,
         )
-        if validation_result is None:
-            val_ret, val_win, val_dd, val_trades, val_avg = np.nan, np.nan, np.nan, 0, np.nan
-        else:
-            val_ret, val_win, val_dd, val_trades, val_avg, _, _ = validation_result
+        if validation is None:
+            validation = {
+                'total_return': np.nan, 'win_rate': np.nan, 'max_drawdown': np.nan,
+                'trades': 0, 'avg_trade': np.nan,
+                'gross_win': 0.0, 'gross_loss': 0.0, 'sum_sq': 0.0,
+            }
 
         rows.append({
             'Symbol': ticker,
@@ -1067,18 +1305,21 @@ def _test_stock_strategies(
             'Max Hold': hold_d,
             'Profit Target': profit_target,
             'Stop Loss': stop_loss,
-            'Total Return': tot_ret,
-            'Avg Trade': avg_trade,
-            'Win Rate': win_rate,
-            'Max Drawdown': max_dd,
-            '# Trades': num_trades,
-            'Bear Entries': n_bear,
-            'Bull Entries': n_bull,
-            'Validation Return': val_ret,
-            'Validation Win Rate': val_win,
-            'Validation Drawdown': val_dd,
-            'Validation Trades': val_trades,
-            'Validation Avg Trade': val_avg,
+            'Total Return': train['total_return'],
+            'Avg Trade': train['avg_trade'],
+            'Win Rate': train['win_rate'],
+            'Max Drawdown': train['max_drawdown'],
+            '# Trades': train['trades'],
+            'Bear Entries': train['bear_entries'],
+            'Bull Entries': train['bull_entries'],
+            'Validation Return': validation['total_return'],
+            'Validation Win Rate': validation['win_rate'],
+            'Validation Drawdown': validation['max_drawdown'],
+            'Validation Trades': validation['trades'],
+            'Validation Avg Trade': validation['avg_trade'],
+            'Validation Gross Win': validation['gross_win'],
+            'Validation Gross Loss': validation['gross_loss'],
+            'Validation Sum Sq': validation['sum_sq'],
         })
 
     return rows, 'ok' if rows else 'no_signals'
@@ -1111,7 +1352,7 @@ date_cols = st.columns(2)
 opt_start = date_cols[0].date_input("Start Date", value=datetime.date(2022, 1, 1), key="dt_start")
 opt_end = date_cols[1].date_input("End Date", value=datetime.date.today(), key="dt_end")
 
-with st.expander("Advanced: market regime and trading costs"):
+with st.expander("Advanced: market regime, trading costs, and price data"):
     advanced_cols = st.columns(5)
     regime_fast = advanced_cols[0].number_input(
         "Regime Fast SMA", min_value=10, max_value=100, value=50, step=10, key="dt_reg_fast",
@@ -1128,6 +1369,25 @@ with st.expander("Advanced: market regime and trading costs"):
     opt_sell_tax = advanced_cols[4].number_input(
         "Sell Tax %", min_value=0.0, max_value=5.0, value=0.1, step=0.01, key="dt_sell_tax",
     )
+    data_cols = st.columns(2)
+    opt_slippage_ticks = data_cols[0].number_input(
+        "Slippage (ticks per side)", min_value=0.0, max_value=5.0,
+        value=DEFAULT_SLIPPAGE_TICKS, step=0.5, key="dt_slippage_ticks",
+        help="IDX price steps lost on each fill; 0.5 per side is one full spread per round trip. One tick is ~0.5-1% for stocks under Rp 500.",
+    )
+    adjust_dividends = data_cols[1].checkbox(
+        "Adjust prices for dividends", value=True, key="dt_adjust_dividends",
+        help="Removes ex-dividend drops, which otherwise look like oversold dips.",
+    )
+
+dividend_events = load_dividend_events() if adjust_dividends else {}
+if adjust_dividends and not dividend_events:
+    st.caption("Dividend data unavailable; strategies are using unadjusted closes.")
+
+
+def _prepare_close(symbol: str, close: pd.Series) -> pd.Series:
+    """Apply the page's price-adjustment setting to one close series."""
+    return _dividend_adjust(close, dividend_events.get(symbol))
 
 search_space = SEARCH_PRESETS[search_depth]
 hold_days = search_space['hold_days']
@@ -1160,7 +1420,7 @@ price_cache_key = hashlib.md5(
     f"{sorted(shortlist_tickers)}{opt_start}{opt_end}".encode()
 ).hexdigest()
 results_cache_key = hashlib.md5(
-    f"{STRATEGY_ENGINE_VERSION}{param_combos}{regime_fast}{regime_slow}{opt_start}{opt_end}{shortlist_tickers}{opt_buy_fee}{opt_sell_fee}{opt_sell_tax}{opt_validation_pct}".encode()
+    f"{STRATEGY_ENGINE_VERSION}{param_combos}{regime_fast}{regime_slow}{opt_start}{opt_end}{shortlist_tickers}{opt_buy_fee}{opt_sell_fee}{opt_sell_tax}{opt_validation_pct}{opt_slippage_ticks}{adjust_dividends}".encode()
 ).hexdigest()
 
 if run_optimizer:
@@ -1224,9 +1484,10 @@ if run_optimizer:
         results = []
         progress_bar = st.progress(0, text="Testing strategies...")
         grouped = {
-            sym: grp.set_index('date')['close']
+            sym: _prepare_close(sym, grp.set_index('date')['close'])
             for sym, grp in all_prices_df.groupby('symbol')
         }
+        market_breadth = _build_market_breadth(grouped)
         momentum_lookbacks = {
             int(combo[1]) for combo in param_combos
             if combo[0] == STRATEGY_CROSS_MOMENTUM
@@ -1256,6 +1517,8 @@ if run_optimizer:
                         for lookback, frame in momentum_frames.items()
                         if ticker in frame.columns
                     },
+                    market_breadth,
+                    float(opt_slippage_ticks),
                 ): ticker
                 for ticker in shortlist_tickers
             }
@@ -1316,13 +1579,22 @@ if results_are_current:
     qualified_df = strategy_df[
         (strategy_df['Stocks Validated'] >= min_validated_stocks)
         & (strategy_df['Validation Trades'] >= min_validation_trades)
+        & strategy_df['Passes Gates']
     ].copy()
+    gate_description = (
+        f"positive after-cost average trade in both train and holdout, holdout profit "
+        f"factor ≥ {MIN_PROFIT_FACTOR:.1f}, t-stat ≥ {MIN_T_STAT:.1f}, and at least "
+        f"{min_validation_trades} holdout trades across {min_validated_stocks} stocks"
+    )
 
     if qualified_df.empty:
-        qualified_df = strategy_df[strategy_df['Validation Trades'] > 0].copy()
+        # Never promote a losing strategy just because it lost the least.
+        st.session_state.pop('dt_active_strategy', None)
+        st.session_state.pop('dt_applied_strategy_signature', None)
         st.warning(
-            "No strategy met the preferred validation coverage. Showing the best "
-            "available results; use a longer date range for stronger evidence."
+            "No strategy passed the profitability gates "
+            f"({gate_description}). Nothing was applied to the backtest or scanner. "
+            "Review **All Strategies**, try a longer date range, or widen the search."
         )
 
     col_cfg = {
@@ -1348,6 +1620,9 @@ if results_are_current:
         "Validation Drawdown": st.column_config.NumberColumn("Validation Drawdown", format="%.2f%%"),
         "Validation Trades": st.column_config.NumberColumn("Validation Trades", format="%d"),
         "Validation Avg Trade": st.column_config.NumberColumn("Validation Avg Trade", format="%.2f%%"),
+        "Validation Profit Factor": st.column_config.NumberColumn("Profit Factor", help="Gross holdout gains / gross holdout losses", format="%.2f"),
+        "Validation t-stat": st.column_config.NumberColumn("t-stat", help="Mean holdout trade divided by its standard error", format="%.2f"),
+        "Passes Gates": st.column_config.CheckboxColumn("Passes Gates"),
         "Stocks Tested": st.column_config.NumberColumn("Stocks Tested", format="%d"),
         "Stocks Validated": st.column_config.NumberColumn("Stocks Validated", format="%d"),
         "Train Trades": st.column_config.NumberColumn("Train Trades", format="%d"),
@@ -1378,6 +1653,7 @@ if results_are_current:
             'profit_target': float(recommended['Profit Target']),
             'stop_loss': float(recommended['Stop Loss']),
             'score': float(recommended['Strategy Score']),
+            'validation_avg_trade': float(recommended['Validation Avg Trade']),
         }
         stock_strategy_map = _select_stock_strategies(results_df, recommended_strategy)
         st.session_state['dt_stock_strategies'] = stock_strategy_map
@@ -1407,6 +1683,7 @@ if results_are_current:
                 'bt_buy_fee': float(opt_buy_fee),
                 'bt_sell_fee': float(opt_sell_fee),
                 'bt_sell_tax': float(opt_sell_tax),
+                'bt_slippage': float(opt_slippage_ticks),
             }
             for key, value in downstream_defaults.items():
                 st.session_state[key] = value
@@ -1424,8 +1701,9 @@ if results_are_current:
 
         with tab_strategy:
             st.caption(
-                "The recommendation is selected across stocks using only holdout quality, "
-                "consistency, and drawdown control. It is not the largest in-sample winner."
+                "Only strategies that pass the absolute profitability gates are eligible; "
+                "among those, the recommendation ranks holdout quality, consistency, and "
+                "drawdown control. It is not the largest in-sample winner."
             )
             if strategy_was_applied:
                 st.success("Applied this strategy to the single-stock backtest and live scanner.")
@@ -1441,7 +1719,8 @@ if results_are_current:
                 column_order=[
                     'Strategy Score', 'Strategy', 'Parameters',
                     'Max Hold', 'Profit Target', 'Stop Loss',
-                    'Validation Avg Trade', 'Validation Win Rate',
+                    'Validation Avg Trade', 'Validation Profit Factor',
+                    'Validation t-stat', 'Validation Win Rate',
                     'Median Validation Return', 'Positive Stocks %',
                     'Validation Coverage %', 'Validation Drawdown',
                     'Validation Trades', 'Stocks Validated',
@@ -1464,7 +1743,9 @@ if results_are_current:
                 stock_breakdown_df = _best_stock_strategy_rows(results_df)
                 st.caption(
                     "Each row uses that stock's highest-scoring strategy and parameter "
-                    "set on held-out data. Stocks without holdout trades are omitted."
+                    f"set on held-out data. Only configurations with at least "
+                    f"{MIN_STOCK_VALIDATION_TRADES} holdout trades and a positive average "
+                    "trade in both train and holdout are considered."
                 )
                 stock_breakdown_order = [
                     'Symbol', 'Stock Strategy Score', 'Strategy', 'Parameters',
@@ -1490,17 +1771,19 @@ if results_are_current:
                 hide_index=True, width='stretch',
             )
 
+    else:
+        with tab_strategy:
+            st.info("No strategy passed the profitability gates, so none is recommended.")
+
     with tab_all:
-        st.caption(
-            f"Strategies need at least {min_validation_trades} holdout trades across "
-            f"{min_validated_stocks} stocks to qualify for the recommendation."
-        )
+        st.caption(f"To be recommended, a strategy needs {gate_description}.")
         st.dataframe(
             strategy_df, column_config=col_cfg,
             column_order=[
-                'Strategy Score', 'Strategy', 'Parameters',
+                'Passes Gates', 'Strategy Score', 'Strategy', 'Parameters',
                 'Max Hold', 'Profit Target', 'Stop Loss',
-                'Validation Avg Trade', 'Validation Win Rate',
+                'Validation Avg Trade', 'Validation Profit Factor',
+                'Validation t-stat', 'Validation Win Rate',
                 'Median Validation Return', 'Positive Stocks %',
                 'Validation Coverage %', 'Validation Drawdown',
                 'Validation Trades', 'Stocks Validated',
@@ -1552,6 +1835,7 @@ st.session_state.setdefault('bt_sl', DEFAULT_STOP_LOSS)
 st.session_state.setdefault('bt_buy_fee', 0.15)
 st.session_state.setdefault('bt_sell_fee', 0.15)
 st.session_state.setdefault('bt_sell_tax', 0.1)
+st.session_state.setdefault('bt_slippage', DEFAULT_SLIPPAGE_TICKS)
 if single_strategy:
     single_strategy_signature = (
         stock, st.session_state.get('dt_stock_strategies_cache_key'),
@@ -1619,7 +1903,7 @@ with st.expander("Strategy Parameters & Costs", expanded=False):
     bt_stop_loss = exit_cols[2].number_input(
         "Stop Loss %", min_value=0.0, max_value=20.0, step=0.5, key="bt_sl",
     )
-    cost_cols = st.columns(3)
+    cost_cols = st.columns(4)
     bt_buy_fee = cost_cols[0].number_input(
         "Buy Fee %", min_value=0.0, max_value=5.0, step=0.01, key="bt_buy_fee",
     )
@@ -1629,11 +1913,14 @@ with st.expander("Strategy Parameters & Costs", expanded=False):
     bt_sell_tax = cost_cols[2].number_input(
         "Sell Tax %", min_value=0.0, max_value=5.0, step=0.01, key="bt_sell_tax",
     )
+    bt_slippage = cost_cols[3].number_input(
+        "Slippage (ticks/side)", min_value=0.0, max_value=5.0, step=0.5, key="bt_slippage",
+    )
 
 st.divider()
 
 if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
-    regime_series = compute_regime_series(jkse_df)
+    regime_series = compute_regime_series(jkse_df, fast_sma=int(regime_fast), slow_sma=int(regime_slow))
     with st.spinner("Fetching data from Supabase..."):
         try:
             res = conn.table("historical_prices").select("date,close").eq("symbol", stock).gte("date", start_date.strftime('%Y-%m-%d')).execute()
@@ -1648,9 +1935,10 @@ if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
         price_df['date'] = pd.to_datetime(price_df['date'], errors='coerce')
         price_df['close'] = pd.to_numeric(price_df['close'], errors='coerce')
         close = price_df.dropna().drop_duplicates('date', keep='last').sort_values('date').set_index('date')['close']
-        close = close[close.index <= pd.to_datetime(end_date)]
+        close = _prepare_close(stock, close[close.index <= pd.to_datetime(end_date)])
         cached_prices = st.session_state.get('dt_prices', pd.DataFrame())
         momentum_percentile = None
+        single_breadth = None
         if bt_strategy_type == STRATEGY_CROSS_MOMENTUM and not cached_prices.empty:
             grouped_single = {
                 symbol: group.assign(date=pd.to_datetime(group['date'])).set_index('date')['close']
@@ -1659,24 +1947,40 @@ if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
             frame = _build_momentum_percentiles(grouped_single, {int(bt_param_a)}).get(int(bt_param_a))
             if frame is not None and stock in frame:
                 momentum_percentile = frame[stock]
+        if bt_strategy_type == STRATEGY_BREADTH_RSI2:
+            # Breadth needs the whole universe: prefer the optimizer's fetched
+            # prices, otherwise fall back to the local price history.
+            universe_prices = cached_prices
+            if universe_prices.empty and shortlist_tickers:
+                universe_prices = load_local_close_history(tuple(shortlist_tickers))
+            if not universe_prices.empty:
+                single_breadth = _build_market_breadth({
+                    symbol: group.assign(date=pd.to_datetime(group['date'])).set_index('date')['close']
+                    for symbol, group in universe_prices.groupby('symbol')
+                })
 
         signals = _build_regime_signals(
             close, regime_series, bt_strategy_type, bt_param_a, bt_param_b,
             bt_param_c, bt_param_d, bt_max_hold, bt_profit_target, bt_stop_loss,
             benchmark_close=jkse_df['close'] if not jkse_df.empty else None,
             momentum_percentile=momentum_percentile,
+            breadth=single_breadth,
         )
         if signals is None:
             st.warning("Not enough data to calculate the configured indicators.")
         else:
             close, entries, exits, regime_aligned = signals
             if not entries.any():
-                detail = " Run the optimizer first to populate universe ranks." if bt_strategy_type == STRATEGY_CROSS_MOMENTUM and momentum_percentile is None else ""
+                detail = ""
+                if bt_strategy_type == STRATEGY_CROSS_MOMENTUM and momentum_percentile is None:
+                    detail = " Run the optimizer first to populate universe ranks."
+                elif bt_strategy_type == STRATEGY_BREADTH_RSI2 and (single_breadth is None or single_breadth.empty):
+                    detail = " Market breadth is unavailable; run the optimizer first to load universe prices."
                 st.warning(f"No entry signals generated. Try loosening thresholds.{detail}")
             else:
-                fees = pd.Series(0.0, index=close.index)
-                fees[entries] = bt_buy_fee / 100.0
-                fees[exits] = (bt_sell_fee + bt_sell_tax) / 100.0
+                fees = _build_trade_fees(
+                    close, entries, exits, bt_buy_fee, bt_sell_fee, bt_sell_tax, bt_slippage,
+                )
                 vbt = _load_vectorbt()
                 pf = vbt.Portfolio.from_signals(close, entries, exits, freq='1D', fees=fees)
                 st.subheader('Performance Outline')
@@ -1731,7 +2035,10 @@ elif active_strategy:
     st.caption(f"All {len(STRATEGY_TYPES)} strategies are evaluated using the global recommendation where applicable and baseline presets otherwise.")
 else:
     st.caption(f"All {len(STRATEGY_TYPES)} strategies are evaluated with baseline presets. Run the optimizer to apply validated parameters.")
-st.caption(f"Every scanner candidate uses a +{DEFAULT_PROFIT_TARGET:.1f}% profit target.")
+st.caption(
+    "Setups from optimized parameters that passed the holdout gates are listed separately "
+    "from baseline presets, which have not been validated and are for research only."
+)
 
 scan_button = st.button("Scan Today's Closing Setups", type="primary", disabled=len(shortlist_tickers) == 0)
 
@@ -1745,13 +2052,24 @@ def _clean_price_series(series: pd.Series | None) -> pd.Series:
     return clean[~clean.index.duplicated(keep='last')].sort_index()
 
 
-def _is_near_setup(strategy_type: str, indicator: float, params: tuple[float, ...], proximity: float) -> bool:
+def _is_near_setup(
+    strategy_type: str,
+    indicator: float,
+    params: tuple[float, ...],
+    proximity: float,
+    trend_ok: bool = True,
+) -> bool:
+    """Whether a setup is close to firing; ``trend_ok`` is the strategy's trend filter."""
     if not np.isfinite(indicator):
         return False
-    _, param_b, _, param_d = params
+    _, param_b, param_c, param_d = params
     if strategy_type == STRATEGY_REGIME_RSI:
-        threshold = param_b if curr_regime != 'bull' else param_d
-        return indicator <= threshold + proximity
+        if curr_regime != 'bull':
+            return indicator <= param_b + proximity
+        # Bull-regime entries also require price above the trend SMA.
+        return trend_ok and indicator <= param_d + proximity
+    if strategy_type == STRATEGY_BREADTH_RSI2:
+        return trend_ok and indicator <= param_c + proximity
     if strategy_type == STRATEGY_RSI_RECOVERY:
         return param_b <= indicator <= param_d + proximity
     if strategy_type in (STRATEGY_BOLLINGER_LOWER, STRATEGY_DONCHIAN, STRATEGY_TREND_PULLBACK):
@@ -1827,6 +2145,7 @@ if scan_button:
         if not _series_is_current(series):
             stale_skipped += 1
             continue
+        series = _prepare_close(ticker, series)
         if ticker in cp_df.index:
             live_price = pd.to_numeric(cp_df.loc[ticker, 'price'], errors='coerce')
             if pd.notna(live_price) and live_price > 0 and 0.65 <= live_price / float(series.iloc[-1]) <= 1.35:
@@ -1842,6 +2161,7 @@ if scan_button:
         if item['strategy_type'] == STRATEGY_CROSS_MOMENTUM
     }
     momentum_frames = _build_momentum_percentiles(current_series, momentum_lookbacks)
+    scan_breadth = _build_market_breadth(current_series)
     benchmark_close = jkse_df['close'] if not jkse_df.empty else None
     scan_rows = []
     for index, (ticker, series) in enumerate(current_series.items(), start=1):
@@ -1856,10 +2176,18 @@ if scan_button:
                 momentum_percentile = frame[ticker]
             setup, _, indicator_series = _strategy_components(
                 series, aligned_regime, benchmark_close, momentum_percentile,
-                strategy_type, *params,
+                strategy_type, *params, breadth=scan_breadth,
             )
             indicator = float(indicator_series.iloc[-1]) if pd.notna(indicator_series.iloc[-1]) else np.nan
             fires = bool(setup.iloc[-1])
+            trend_window = {
+                STRATEGY_REGIME_RSI: int(params[2]),
+                STRATEGY_BREADTH_RSI2: int(params[3]),
+            }.get(strategy_type, 0)
+            trend_ok = True
+            if trend_window > 0:
+                trend_value = series.rolling(trend_window, min_periods=trend_window).mean().iloc[-1]
+                trend_ok = bool(pd.notna(trend_value) and series.iloc[-1] > trend_value)
             scan_rows.append({
                 'Symbol': ticker,
                 'Current Price': float(series.iloc[-1]),
@@ -1872,13 +2200,17 @@ if scan_button:
                 ) if strategy_type == STRATEGY_SUPERTREND_PULLBACK and np.isfinite(indicator) else "",
                 'Parameters': _format_strategy_params(strategy_type, *params),
                 'Indicator': indicator,
+                'Validated': item['validated'],
+                'Expected Trade': item['expected_trade'],
                 'Strategy Score': item['score'],
                 'Return Uplift': item['return_uplift'],
                 'Profit Target': item['profit_target'],
                 'Stop Loss': item['stop_loss'],
                 'Max Hold': item['max_hold'],
                 'Setup Fires': fires,
-                'Near Setup': _is_near_setup(strategy_type, indicator, params, float(alert_watch_band)),
+                'Near Setup': _is_near_setup(
+                    strategy_type, indicator, params, float(alert_watch_band), trend_ok,
+                ),
             })
     scan_progress.empty()
 
@@ -1893,30 +2225,44 @@ if scan_button:
             ["Setup Confirmed", "Watch"],
             default="Neutral",
         )
-        alert_df = alert_df.sort_values(['Signal', 'Strategy Score', 'Indicator'], ascending=[True, False, False])
+        # Rank by expected value per trade (holdout average), then strategy quality.
+        alert_df = alert_df.sort_values(
+            ['Validated', 'Expected Trade', 'Strategy Score', 'Indicator'],
+            ascending=[False, False, False, False], na_position='last',
+        )
         confirmed_df = alert_df[alert_df['Signal'] == "Setup Confirmed"]
+        validated_confirmed_df = confirmed_df[confirmed_df['Validated']]
+        research_confirmed_df = confirmed_df[~confirmed_df['Validated']]
         watch_df = alert_df[alert_df['Signal'] == "Watch"]
         neutral_df = alert_df[alert_df['Signal'] == "Neutral"]
-        summary_cols = st.columns(3)
-        summary_cols[0].metric("Setups Confirmed", len(confirmed_df), help="Completed-close setups modeled for next-session entry")
-        summary_cols[1].metric("Watch", len(watch_df))
-        summary_cols[2].metric("Strategy Checks", len(alert_df), help=f"{len(current_series)} stocks x {len(STRATEGY_TYPES)} strategies")
-        if not confirmed_df.empty:
-            st.success(f"{len(confirmed_df)} setup(s) confirmed at the latest close for next-session execution research.")
+        summary_cols = st.columns(4)
+        summary_cols[0].metric("Validated Setups", len(validated_confirmed_df), help="Confirmed setups from optimized parameters that passed the holdout gates")
+        summary_cols[1].metric("Unvalidated Setups", len(research_confirmed_df), help="Confirmed setups from baseline presets")
+        summary_cols[2].metric("Watch", len(watch_df))
+        summary_cols[3].metric("Strategy Checks", len(alert_df), help=f"{len(current_series)} stocks x {len(STRATEGY_TYPES)} strategies")
+        if not scan_breadth.empty:
+            st.caption(f"Market breadth: {scan_breadth.iloc[-1]:.1f}% of the shortlist closed above its 20-day average.")
+        if not validated_confirmed_df.empty:
+            st.success(f"{len(validated_confirmed_df)} validated setup(s) confirmed at the latest close for next-session execution research.")
 
         scanner_cfg = {
             "Current Price": st.column_config.NumberColumn("Price", format="%.0f"),
             "History Through": st.column_config.DateColumn("History Through", format="YYYY-MM-DD"),
             "Indicator": st.column_config.NumberColumn("Current Indicator", format="%.2f"),
+            "Validated": st.column_config.CheckboxColumn("Validated"),
+            "Expected Trade": st.column_config.NumberColumn("Holdout Avg Trade", help="Average after-cost holdout trade for these parameters", format="%.2f%%"),
             "Strategy Score": st.column_config.ProgressColumn("Strategy Score", format="%.1f", min_value=0, max_value=100),
             "Return Uplift": st.column_config.NumberColumn("Return vs Global", format="%+.2f%%"),
             "Profit Target": st.column_config.NumberColumn("Target", format="%.1f%%"),
             "Stop Loss": st.column_config.NumberColumn("Stop", format="%.1f%%"),
             "Max Hold": st.column_config.NumberColumn("Max Hold", format="%d sessions"),
         }
-        if not confirmed_df.empty:
-            st.markdown("#### Setup Confirmed at Latest Close")
-            st.dataframe(confirmed_df, column_config=scanner_cfg, hide_index=True, width='stretch')
+        if not validated_confirmed_df.empty:
+            st.markdown("#### Validated Setups Confirmed at Latest Close")
+            st.dataframe(validated_confirmed_df, column_config=scanner_cfg, hide_index=True, width='stretch')
+        if not research_confirmed_df.empty:
+            with st.expander(f"Unvalidated baseline setups ({len(research_confirmed_df)}) — research only"):
+                st.dataframe(research_confirmed_df, column_config=scanner_cfg, hide_index=True, width='stretch')
         if not watch_df.empty:
             st.markdown("#### Approaching Setup")
             st.dataframe(watch_df, column_config=scanner_cfg, hide_index=True, width='stretch')
