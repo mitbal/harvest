@@ -167,3 +167,80 @@ class TestHistoricalPortfolio:
                 2020,
                 2021,
             )
+
+    def test_allocation_below_one_lot_is_rejected(self):
+        with pytest.raises(hs.SimulatorValidationError, match='one lot'):
+            hs.simulate_historical_portfolio(
+                {'AAAA.JK': 5_000},
+                {'AAAA.JK': _price_history()},
+                {'AAAA.JK': None},
+                2020,
+                2021,
+            )
+
+    def test_reinvestment_buys_at_payment_date_price(self):
+        prices = pd.DataFrame({
+            'date': ['2020-01-02', '2020-06-01', '2020-07-01', '2020-12-31'],
+            'close': [100, 100, 50, 50],
+        })
+        dividends = pd.DataFrame({
+            'date': ['2020-06-01'],
+            'payment_date': ['2020-07-01'],
+            'adjDividend': [50],
+        })
+        _, detail, transactions = hs.simulate_historical_portfolio(
+            {'AAAA.JK': 20_000},
+            {'AAAA.JK': prices},
+            {'AAAA.JK': dividends},
+            2020,
+            2020,
+        )
+
+        drip_lots = detail[
+            (detail['Strategy'] == hs.STRATEGY_DRIP)
+            & (detail['stock'] == 'AAAA.JK')
+        ]['lot'].iloc[0]
+        # 10,000 of dividends at the 50 payment-date price buys 2 lots.
+        assert drip_lots == 4
+        reinvest = transactions[transactions['Activity'].str.startswith('Reinvest')]
+        assert reinvest['Date'].tolist() == ['2020-07-01']
+
+    def test_payment_in_next_year_is_reinvested_next_year(self):
+        prices = pd.DataFrame({
+            'date': ['2020-01-02', '2020-12-01', '2020-12-31', '2021-01-15', '2021-12-31'],
+            'close': [100, 100, 100, 100, 100],
+        })
+        dividends = pd.DataFrame({
+            'date': ['2020-12-01'],
+            'payment_date': ['2021-01-15'],
+            'adjDividend': [100],
+        })
+        aggregate, detail, _ = hs.simulate_historical_portfolio(
+            {'AAAA.JK': 20_000},
+            {'AAAA.JK': prices},
+            {'AAAA.JK': dividends},
+            2020,
+            2021,
+        )
+
+        drip_lots = detail[
+            (detail['Strategy'] == hs.STRATEGY_DRIP)
+            & (detail['stock'] == 'AAAA.JK')
+        ].set_index('year')['lot']
+        assert drip_lots['Year 2020'] == 2
+        assert drip_lots['Year 2021'] == 4
+        drip = aggregate[aggregate['strategy'] == hs.STRATEGY_DRIP].set_index('year')
+        assert drip.loc['Year 2020', 'cash'] == pytest.approx(20_000)
+
+
+class TestTickerNormalization:
+    def test_bare_ticker_gets_jk_suffix(self):
+        assert hs.normalize_idx_ticker(' bbca ') == 'BBCA.JK'
+
+    def test_non_idx_ticker_is_rejected(self):
+        with pytest.raises(hs.SimulatorValidationError, match='IDX'):
+            hs.normalize_idx_ticker('AAPL.US')
+
+    def test_bare_and_suffixed_duplicates_are_rejected(self):
+        with pytest.raises(hs.SimulatorValidationError, match='unique'):
+            hs.build_allocations([('BBCA', 10), ('BBCA.JK', 20)])

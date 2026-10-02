@@ -16,37 +16,19 @@ st.set_page_config(page_title='Panen Dividen | Compounding Simulator')
 hp.enable_chart_theme()
 st.title('Compounding Simulator')
 
-# Custom CSS for modern look
 st.markdown("""
 <style>
-    .stMetric {
-        background-color: rgba(28, 131, 225, 0.1);
+    div[data-testid="stMetric"] {
+        background-color: rgba(15, 118, 110, 0.08);
         padding: 10px;
-        border-radius: 10px;
-    }
-    div[data-testid="stExpander"] {
-        border: 1px solid rgba(250, 250, 250, 0.2);
         border-radius: 10px;
     }
     div[data-testid="stMetricValue"] {
         font-size: 24px;
         font-weight: bold;
     }
-    .main-title {
-        font-size: 48px;
-        font-weight: 800;
-        margin-bottom: 0px;
-    }
-    .sub-title {
-        font-size: 18px;
-        color: #808495;
-        margin-bottom: 30px;
-    }
 </style>
 """, unsafe_allow_html=True)
-
-# st.markdown('<p class="main-title">📈 Investor Simulator</p>', unsafe_allow_html=True)
-# st.markdown('<p class="sub-title">Compound interest and historical dividend reinvestment modeling</p>', unsafe_allow_html=True)
 
 ### Start of Function definition
 
@@ -103,11 +85,17 @@ def simulate_real_multistock_compounding(allocations_tuple, start_year, end_year
         allocations, prices, dividends, start_year, end_year
     )
 
-### End of Function definition
-
 @st.cache_data(max_entries=16, ttl=6 * 60 * 60)
 def df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
+
+
+EXPORT_COLUMNS = [
+    'year', 'strategy', 'holdings_value', 'cash', 'portfolio_value',
+    'dividend_income',
+]
+
+### End of Function definition
 
 ################################################################################
 
@@ -134,8 +122,11 @@ with st.container(border=True):
     
     cols[0].metric('Final Asset Value', f'IDR {final_investment:,.0f}')
     cols[1].metric('Total Passive Income', f'IDR {total_returns:,.0f}')
-    beginning_balance = final_investment - final_returns
-    cols[2].metric('Final Annual Yield', f'{(final_returns/beginning_balance*100):.2f}%')
+    cols[2].metric(
+        'Yield on Cost (Final)',
+        f'{(final_returns/initial_value*100):.2f}%',
+        help='Final year income divided by the initial investment.',
+    )
 
     st.divider()
 
@@ -192,244 +183,277 @@ with st.container(border=True):
     )
 
 
-#############################################################################################
+################################################################################
 
-with st.container(border=True):
+this_year = datetime.now().year
+YEAR_MIN = 2010
+YEAR_MAX = this_year - 1
+
+sim2_box = st.container(border=True)
+with sim2_box:
     st.write('## #2 Single stock dividend reinvestment historical compounding simulation')
     st.caption(
-        'Replay one stock using its historical prices and dividends. The '
-        'simulator buys whole 100-share lots near the start of the selected '
-        'period, then compares reinvesting dividends in the same stock with '
-        'keeping them as cash. Portfolio value includes shares and residual '
-        'cash; past results do not predict future returns.'
+        'Replay one Indonesian (IDX) stock using its historical prices and '
+        'dividends. The simulator buys whole 100-share lots near the start of '
+        'the selected period, then compares reinvesting dividends in the same '
+        'stock (bought on the payment date) with keeping them as cash. '
+        'Portfolio value includes shares and residual cash; past results do '
+        'not predict future returns.'
     )
 
-    this_year = datetime.now().year
+    cols = st.columns([2, 2, 1, 1])
+    raw_stock_name = cols[0].text_input(
+        label='Stock Name', value='BBCA.JK', key='sim2_stock',
+        help='IDX tickers only, e.g. BBCA or BBCA.JK',
+    )
+    sim2_value = cols[1].number_input(
+        'Initial investment (in million rupiah)', value=120, min_value=1,
+        max_value=10000, key='sim2_value',
+    ) * 1_000_000
+    sim2_start = cols[2].number_input(
+        label='Start Year', value=2014, min_value=YEAR_MIN, max_value=YEAR_MAX,
+        key='sim2_start',
+    )
+    sim2_end = cols[3].number_input(
+        label='End Year', value=YEAR_MAX, min_value=YEAR_MIN, max_value=YEAR_MAX,
+        key='sim2_end',
+    )
+    sim2_drip = st.toggle(
+        'Enable DRIP', value=True, key='sim2_drip',
+        help='Show results for reinvesting dividends into more shares',
+    )
 
-    cols = st.columns([2, 1, 1, 1])
-    stock_name = cols[0].text_input(label='Stock Name', value='BBCA.JK', help='Add .JK for Indonesian stocks').upper()
-    start_year = cols[1].number_input(label='Start Year', value=2014, min_value=2010, max_value=this_year-2)
-    end_year = cols[2].number_input(label='End Year', value=this_year-1, min_value=start_year+1, max_value=this_year-1)
-    drip_enabled = cols[3].toggle('Enable DRIP', value=True, help='Automatically reinvest dividends to buy more shares')
-
+    sim2_result = None
+    stock_name = raw_stock_name
     try:
-        return_df, without_drip, transactions = simulate_single_stock_compounding(
-            initial_value, stock_name, start_year, end_year
+        stock_name = hs.normalize_idx_ticker(raw_stock_name)
+        if not stock_name:
+            raise hs.SimulatorValidationError('Please enter a stock ticker.')
+        sim2_result = simulate_single_stock_compounding(
+            sim2_value, stock_name, sim2_start, sim2_end
         )
     except hs.SimulatorValidationError as e:
         st.error(str(e))
-        st.stop()
     except Exception:
         logger.exception(f'Unexpected error running sim2 for {stock_name}')
         st.error('The market data service could not complete this simulation.')
-        st.stop()
 
-    with st.expander('Activity Log'):
-        st.dataframe(transactions, hide_index=True, width='stretch')
+with sim2_box:
+    if sim2_result is not None:
+        with_drip, without_drip, transactions = sim2_result
 
-    without_drip['type'] = 'No DRIP'
-    return_df['type'] = 'With DRIP'
-    display_df = return_df if drip_enabled else without_drip
-    
-    # Summary Metrics for Sim #3
-    metric_cols = st.columns(4)
-    final_val = display_df['investment'].iloc[-1]
-    final_div = display_df['returns'].iloc[-1]
-    total_div = display_df['returns'].sum()
-    
-    metric_cols[0].metric('Final Portfolio Value', f'IDR {final_val:,.0f}')
-    metric_cols[1].metric('Total Dividend Income', f'IDR {total_div:,.0f}')
-    metric_cols[2].metric('Yield on Cost (Final)', f'{(final_div/initial_value*100):.2f}%')
-    metric_cols[3].metric('Residual Cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}')
+        with st.expander('Activity Log'):
+            st.dataframe(transactions, hide_index=True, width='stretch')
 
-    st.divider()
+        without_drip['type'] = hs.STRATEGY_NO_DRIP
+        with_drip['type'] = hs.STRATEGY_DRIP
+        display_df = with_drip if sim2_drip else without_drip
 
-    cols = st.columns([0.33, 0.67])
-    cols[0].dataframe(
-        display_df[['year', 'investment', 'returns']], 
-        column_config={
-            'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Asset Value', format='IDR %,d'),
-            'returns': st.column_config.NumberColumn('Div. Received', format='IDR %,d'),
-        }, 
-        hide_index=True,
-        width='stretch',
-        height=430)
+        # Summary metrics for simulation #2
+        metric_cols = st.columns(4)
+        final_val = display_df['investment'].iloc[-1]
+        final_div = display_df['returns'].iloc[-1]
+        total_div = display_df['returns'].sum()
 
-    # Combine for visual comparison in the main chart
-    plot_df = pd.concat([without_drip, return_df])
+        metric_cols[0].metric('Final Portfolio Value', f'IDR {final_val:,.0f}')
+        metric_cols[1].metric('Total Dividend Income', f'IDR {total_div:,.0f}')
+        metric_cols[2].metric('Yield on Cost (Final)', f'{(final_div/sim2_value*100):.2f}%')
+        metric_cols[3].metric('Residual Cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}')
 
-    bar_color_scale = alt.Scale(
-        domain=['No DRIP', 'With DRIP'],
-        range=[cs.CHART_NEUTRAL, cs.CHART_PRIMARY],
-    )
-    
-    investment_chart = alt.Chart(plot_df).mark_bar(opacity=0.86, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-        x=alt.X('year:O', title='Year'),
-        y=alt.Y('investment:Q', title='Investment Value'),
-        xOffset=alt.XOffset('type:N', sort=['No DRIP', 'With DRIP']),
-        color=alt.Color('type:N', scale=bar_color_scale, title='Strategy'),
-        tooltip=[alt.Tooltip('year:O'), alt.Tooltip('type:N'), alt.Tooltip('investment:Q', format=',.0f')]
-    )
+        st.divider()
 
-    return_chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=2.25).encode(
-        x=alt.X('year:O', title='Year'),
-        y=alt.Y('returns:Q', title='Dividends'),
-        color=alt.Color(
-            'type:N',
-            scale=bar_color_scale,
-            title='Strategy',
-        ),
-        tooltip=[
-            alt.Tooltip('year:O', title='Year'),
-            alt.Tooltip('type:N', title='Strategy'),
-            alt.Tooltip('returns:Q', title='Dividends', format=',.0f'),
-        ],
-    ).properties(
-        title=f'{stock_name} Historical Performance: DRIP Comparison',
-        height=430
-    )
+        cols = st.columns([0.33, 0.67])
+        cols[0].dataframe(
+            display_df[['year', 'investment', 'returns']],
+            column_config={
+                'year': st.column_config.TextColumn('Year'),
+                'investment': st.column_config.NumberColumn('Asset Value', format='IDR %,d'),
+                'returns': st.column_config.NumberColumn('Div. Received', format='IDR %,d'),
+            },
+            hide_index=True,
+            width='stretch',
+            height=430)
 
-    cols[1].altair_chart((investment_chart + return_chart)\
-                    .resolve_scale(y='independent'),
-                    width="stretch", theme=None)
-    
-    st.download_button(
-        label=f"Download {stock_name} Historical Data (CSV)",
-        data=df_to_csv(display_df),
-        file_name=f'{stock_name}_historical_sim.csv',
-        mime='text/csv',
-    )
+        # Combine for visual comparison in the main chart
+        plot_df = pd.concat([without_drip, with_drip])
+
+        bar_color_scale = alt.Scale(
+            domain=[hs.STRATEGY_NO_DRIP, hs.STRATEGY_DRIP],
+            range=[cs.CHART_NEUTRAL, cs.CHART_PRIMARY],
+        )
+
+        investment_chart = alt.Chart(plot_df).mark_bar(opacity=0.86, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+            x=alt.X('year:O', title='Year'),
+            y=alt.Y('investment:Q', title='Investment Value'),
+            xOffset=alt.XOffset('type:N', sort=[hs.STRATEGY_NO_DRIP, hs.STRATEGY_DRIP]),
+            color=alt.Color('type:N', scale=bar_color_scale, title='Strategy'),
+            tooltip=[alt.Tooltip('year:O'), alt.Tooltip('type:N'), alt.Tooltip('investment:Q', format=',.0f')]
+        )
+
+        return_chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=2.25).encode(
+            x=alt.X('year:O', title='Year'),
+            y=alt.Y('returns:Q', title='Dividends'),
+            color=alt.Color(
+                'type:N',
+                scale=bar_color_scale,
+                title='Strategy',
+            ),
+            tooltip=[
+                alt.Tooltip('year:O', title='Year'),
+                alt.Tooltip('type:N', title='Strategy'),
+                alt.Tooltip('returns:Q', title='Dividends', format=',.0f'),
+            ],
+        ).properties(
+            title=f'{stock_name} Historical Performance: DRIP Comparison',
+            height=430
+        )
+
+        cols[1].altair_chart((investment_chart + return_chart)\
+                        .resolve_scale(y='independent'),
+                        width="stretch", theme=None)
+
+        st.download_button(
+            label=f"Download {stock_name} Historical Data (CSV)",
+            data=df_to_csv(plot_df[EXPORT_COLUMNS]),
+            file_name=f'{stock_name}_historical_sim.csv',
+            mime='text/csv',
+        )
 
 
 ################################################################################
 
-with st.container(border=True):
+sim3_box = st.container(border=True)
+with sim3_box:
     st.write('## #3 Multi stock dividend reinvestment simulation')
     st.caption(
-        'Replay a portfolio using the allocations below and the date range '
-        'selected in Simulation #2. Each position starts with whole 100-share '
-        'lots; dividends are either reinvested in the stock that paid them or '
-        'kept as cash. The comparison includes historical price changes and '
-        'uninvested cash.'
+        'Replay a portfolio of Indonesian (IDX) stocks using the allocations '
+        'below. Each position starts with whole 100-share lots; dividends are '
+        'either reinvested in the stock that paid them (bought on the payment '
+        'date) or kept as cash. The comparison includes historical price '
+        'changes and uninvested cash.'
     )
 
-    # process input form
-    cols = st.columns([1, 2])
-    
-    # Default stocks for simulation #3
-    default_sim4_stocks = pd.DataFrame({
-        'Ticker': ['BJTM.JK', 'SMSM.JK'],
-        'Investment (Mio IDR)': [initial_value/1_000_000 / 2 for _ in range(2)]
-    })
-
-    edited_sim4 = cols[1].data_editor(
-        default_sim4_stocks,
+    cols = st.columns([2, 1, 1])
+    sim3_allocations = cols[0].data_editor(
+        pd.DataFrame({
+            'Ticker': ['BJTM.JK', 'SMSM.JK'],
+            'Investment (Mio IDR)': [60.0, 60.0],
+        }),
         num_rows='dynamic',
         column_config={
             'Ticker': st.column_config.TextColumn('Stock Ticker (e.g. BBCA.JK)'),
-            'Investment (Mio IDR)': st.column_config.NumberColumn('Initial Investment', format='%,d', min_value=0)
+            'Investment (Mio IDR)': st.column_config.NumberColumn(
+                'Initial Investment (Mio IDR)', format='%,.1f', min_value=0,
+                step=0.1,
+            ),
         },
         width='stretch',
         hide_index=True,
-        key='sim4_stock_editor'
+        key='sim3_stock_editor'
+    )
+    sim3_start = cols[1].number_input(
+        label='Start Year', value=2014, min_value=YEAR_MIN, max_value=YEAR_MAX,
+        key='sim3_start',
+    )
+    sim3_end = cols[1].number_input(
+        label='End Year', value=YEAR_MAX, min_value=YEAR_MIN, max_value=YEAR_MAX,
+        key='sim3_end',
+    )
+    sim3_drip = cols[2].toggle(
+        'Enable DRIP', value=True, key='sim3_drip',
+        help='Show results for reinvesting dividends into more shares',
     )
 
     allocation_rows = [
         (row['Ticker'], row['Investment (Mio IDR)'] * 1_000_000)
-        for _, row in edited_sim4.iterrows()
-    ]
-    stock_list = [
-        str(stock).strip().upper()
-        for stock, _ in allocation_rows
-        if pd.notna(stock) and str(stock).strip()
+        for _, row in sim3_allocations.iterrows()
     ]
 
-    # run the simulation
+    sim3_result = None
+    allocations = {}
     try:
         allocations = hs.build_allocations(allocation_rows)
-        aggregate_df, combined_plot_df, transactions = \
-            simulate_real_multistock_compounding(
-                tuple(sorted(allocations.items())), start_year, end_year
-            )
+        sim3_result = simulate_real_multistock_compounding(
+            tuple(sorted(allocations.items())), sim3_start, sim3_end
+        )
     except hs.SimulatorValidationError as e:
         st.error(str(e))
-        st.stop()
     except Exception:
+        logger.exception(f'Unexpected error on sim3 for stocks {list(allocations)}')
         st.error('The market data service could not complete this simulation.')
-        logger.exception(f'Unexpected error on sim4 for stocks {stock_list}')
-        st.stop()
 
-    # show log, display result table, and plot the graph
-    with st.expander('Historical Transaction Log'):
-        st.dataframe(transactions, hide_index=True, width='stretch')
+with sim3_box:
+    if sim3_result is not None:
+        aggregate_df, combined_plot_df, transactions = sim3_result
 
-    return_df = aggregate_df[
-        aggregate_df['strategy'] == hs.STRATEGY_DRIP
-    ].copy()
-    starting_capital = sum(allocations.values())
+        with st.expander('Historical Transaction Log'):
+            st.dataframe(transactions, hide_index=True, width='stretch')
 
-    # Summary metrics for simulation #3
-    metric_cols = st.columns(4)
-    final_val = return_df['investment'].iloc[-1]
-    final_div = return_df['returns'].iloc[-1]
-    total_div = return_df['returns'].sum()
-    
-    metric_cols[0].metric('Final Aggregate Value', f'IDR {final_val:,.0f}')
-    metric_cols[1].metric('Total Dividend Collected', f'IDR {total_div:,.0f}')
-    metric_cols[2].metric('Portfolio Yield (Final)', f'{(final_div/starting_capital*100):.2f}%')
-    metric_cols[3].metric('Residual Cash', f'IDR {return_df["cash"].iloc[-1]:,.0f}')
+        sim3_strategy = hs.STRATEGY_DRIP if sim3_drip else hs.STRATEGY_NO_DRIP
+        display_df = aggregate_df[aggregate_df['strategy'] == sim3_strategy]
+        starting_capital = sum(allocations.values())
 
-    st.divider()
+        # Summary metrics for simulation #3
+        metric_cols = st.columns(4)
+        final_val = display_df['investment'].iloc[-1]
+        final_div = display_df['returns'].iloc[-1]
+        total_div = display_df['returns'].sum()
 
-    cols = st.columns([0.33, 0.67])
-    cols[0].dataframe(
-        return_df[['year', 'investment', 'returns']], 
-        column_config={
-            'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Total Value', format='IDR %,d'),
-            'returns': st.column_config.NumberColumn('Total Div.', format='IDR %,d'),
-        }, 
-        hide_index=True,
-        width='stretch',
-        height=430
-    )
+        metric_cols[0].metric('Final Aggregate Value', f'IDR {final_val:,.0f}')
+        metric_cols[1].metric('Total Dividend Collected', f'IDR {total_div:,.0f}')
+        metric_cols[2].metric('Yield on Cost (Final)', f'{(final_div/starting_capital*100):.2f}%')
+        metric_cols[3].metric('Residual Cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}')
 
-    combined_plot_df = combined_plot_df.rename(columns={'value': 'Value'})
-    
-    investment_chart = alt.Chart(combined_plot_df).mark_bar(opacity=0.86).encode(
-        x=alt.X('year:O', title='Year'),
-        y=alt.Y('Value:Q', title='Portfolio Value'),
-        color=alt.Color('stock:N', title='Stock'),
-        xOffset='Strategy:N',
-        tooltip=[alt.Tooltip('year:O'), alt.Tooltip('stock:N'), alt.Tooltip('Strategy:N'), alt.Tooltip('Value:Q', format=',.0f')]
-    )
+        st.divider()
 
-    return_chart = alt.Chart(aggregate_df).mark_line(point=True, size=3).encode(
-        x=alt.X('year:O', title='Year'),
-        y=alt.Y('returns:Q', title='Total Dividends'),
-        color=alt.Color('strategy:N', title='Dividend strategy'),
-        tooltip=[
-            alt.Tooltip('year:O', title='Year'),
-            alt.Tooltip('strategy:N', title='Strategy'),
-            alt.Tooltip('returns:Q', title='Total Dividends', format=',.0f'),
-        ],
-    ).properties(
-        title='Multi-Stock Historical DRIP Comparison',
-        height=430
-    )
+        cols = st.columns([0.33, 0.67])
+        cols[0].dataframe(
+            display_df[['year', 'investment', 'returns']],
+            column_config={
+                'year': st.column_config.TextColumn('Year'),
+                'investment': st.column_config.NumberColumn('Total Value', format='IDR %,d'),
+                'returns': st.column_config.NumberColumn('Total Div.', format='IDR %,d'),
+            },
+            hide_index=True,
+            width='stretch',
+            height=430
+        )
 
-    cols[1].altair_chart(
-        (investment_chart + return_chart).resolve_scale(
-            y='independent', color='independent'
-        ),
-        width="stretch",
-        theme=None,
-    )
-    
-    st.download_button(
-        label="Download Multi-Stock Sim Data (CSV)",
-        data=df_to_csv(return_df),
-        file_name='multi_stock_historical_sim.csv',
-        mime='text/csv',
-    )
+        combined_plot_df = combined_plot_df.rename(columns={'value': 'Value'})
+
+        investment_chart = alt.Chart(combined_plot_df).mark_bar(opacity=0.86).encode(
+            x=alt.X('year:O', title='Year'),
+            y=alt.Y('Value:Q', title='Portfolio Value'),
+            color=alt.Color('stock:N', title='Stock'),
+            xOffset='Strategy:N',
+            tooltip=[alt.Tooltip('year:O'), alt.Tooltip('stock:N'), alt.Tooltip('Strategy:N'), alt.Tooltip('Value:Q', format=',.0f')]
+        )
+
+        return_chart = alt.Chart(aggregate_df).mark_line(point=True, size=3).encode(
+            x=alt.X('year:O', title='Year'),
+            y=alt.Y('returns:Q', title='Total Dividends'),
+            color=alt.Color('strategy:N', title='Dividend strategy'),
+            tooltip=[
+                alt.Tooltip('year:O', title='Year'),
+                alt.Tooltip('strategy:N', title='Strategy'),
+                alt.Tooltip('returns:Q', title='Total Dividends', format=',.0f'),
+            ],
+        ).properties(
+            title='Multi-Stock Historical DRIP Comparison',
+            height=430
+        )
+
+        cols[1].altair_chart(
+            (investment_chart + return_chart).resolve_scale(
+                y='independent', color='independent'
+            ),
+            width="stretch",
+            theme=None,
+        )
+
+        st.download_button(
+            label="Download Multi-Stock Sim Data (CSV)",
+            data=df_to_csv(aggregate_df[EXPORT_COLUMNS]),
+            file_name='multi_stock_historical_sim.csv',
+            mime='text/csv',
+        )
