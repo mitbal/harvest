@@ -604,20 +604,33 @@ if raw_results.empty:
     st.warning("No companies had enough valid price and quarterly financial history for comparison.")
     st.stop()
 
-mask = (
-    (raw_results["Current PE"] > 0)
-    & (raw_results["Current PE"] <= filters["max_pe"])
-    & (raw_results["Current PS"] > 0)
-    & (raw_results["Revenue Growth 5Y"] >= filters["min_revenue_growth"])
-    & (raw_results["Earnings Growth 5Y"] >= filters["min_earnings_growth"])
-    & (raw_results["Earnings TTM"] > 0)
-    & (raw_results["Revenue TTM"] > 0)
-)
+# Each rule maps a short label (shown when a company fails it) to its pass condition.
+rules = {
+    "Loss-making": raw_results["Earnings TTM"] > 0,
+    "No revenue": raw_results["Revenue TTM"] > 0,
+    "Negative P/E": raw_results["Current PE"] > 0,
+    f"P/E > {filters['max_pe']:g}": raw_results["Current PE"] <= filters["max_pe"],
+    "Negative P/S": raw_results["Current PS"] > 0,
+    f"Revenue 5Y < {filters['min_revenue_growth']:g}%": (
+        raw_results["Revenue Growth 5Y"] >= filters["min_revenue_growth"]
+    ),
+    f"Earnings 5Y < {filters['min_earnings_growth']:g}%": (
+        raw_results["Earnings Growth 5Y"] >= filters["min_earnings_growth"]
+    ),
+}
 if filters["require_recent_growth"]:
-    mask &= (raw_results["Revenue Growth TTM"] > 0) & (raw_results["Earnings Growth TTM"] > 0)
+    rules["Revenue TTM falling"] = raw_results["Revenue Growth TTM"] > 0
+    rules["Earnings TTM falling"] = raw_results["Earnings Growth TTM"] > 0
 if filters["require_both_discounts"]:
-    mask &= (raw_results["PE Discount"] > 0) & (raw_results["PS Discount"] > 0)
+    rules["P/E above median"] = raw_results["PE Discount"] > 0
+    rules["P/S above median"] = raw_results["PS Discount"] > 0
 
+rule_checks = pd.DataFrame(rules)
+mask = rule_checks.all(axis=1)
+raw_results["Passes All"] = mask
+raw_results["Failed Rules"] = rule_checks.apply(
+    lambda row: ", ".join(label for label, passed in row.items() if not passed), axis=1
+)
 results = raw_results[mask].sort_values("Score", ascending=False).reset_index(drop=True)
 results.index += 1
 results.index.name = "Rank"
@@ -643,15 +656,32 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+show_all = st.toggle(
+    "Show all analyzed companies",
+    key="fundamental_show_all",
+    help="List every analyzed company. Companies that pass all selected rules are marked in the Passes column.",
+)
+
 if results.empty:
     st.warning(
         "No company passes every rule. Relax one constraint at a time, starting with positive TTM "
         "earnings growth, which can be volatile for cyclical businesses."
     )
-    st.stop()
+    if not show_all:
+        st.stop()
+
+if show_all:
+    table = raw_results.sort_values("Score", ascending=False).reset_index(drop=True)
+    table.index += 1
+    table.index.name = "Rank"
+    st.caption(f"{int(table['Passes All'].sum())} of {len(table)} analyzed companies pass every selected rule.")
+else:
+    table = results
 
 display_columns = [
+    "Passes All",
     "Symbol",
+    *(["Failed Rules"] if show_all else []),
     "Company",
     "Score",
     "Upside to Mean",
@@ -671,8 +701,18 @@ display_columns = [
     "Market Cap",
 ]
 st.dataframe(
-    results[display_columns],
+    table[display_columns].assign(
+        **{"Passes All": np.where(table["Passes All"], "✅", "❌" if show_all else "")},
+        **({"Failed Rules": table["Failed Rules"].map(lambda text: text.split(", ") if text else [])}
+           if show_all else {}),
+    ),
     column_config={
+        "Passes All": st.column_config.TextColumn(
+            "Passes", help="Passes every selected screening rule", width="small"
+        ),
+        "Failed Rules": st.column_config.ListColumn(
+            "Fails on", help="Screening rules this company does not meet", width="medium"
+        ),
         "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
         "Upside to Mean": st.column_config.NumberColumn("Mean Reversion", format="%.1f%%"),
         "Potential Upside 1Y": st.column_config.NumberColumn("Potential 1Y", format="%.1f%%"),
@@ -692,25 +732,28 @@ st.dataframe(
     },
     hide_index=False,
     width="stretch",
-    height=min(720, 38 * len(results) + 38),
+    height=min(720, 38 * len(table) + 38),
 )
 
 st.download_button(
-    "Download candidates",
-    data=results.reset_index().to_csv(index=False).encode("utf-8"),
+    "Download all analyzed" if show_all else "Download candidates",
+    data=table.reset_index().to_csv(index=False).encode("utf-8"),
     file_name=f"idx_growth_at_a_discount_{datetime.date.today().isoformat()}.csv",
     mime="text/csv",
 )
 
 
 st.subheader("Inspect a candidate", divider="green")
-symbols = results["Symbol"].tolist()
+symbols = table["Symbol"].tolist()
 selected_symbol = st.selectbox(
     "Company",
     symbols,
-    format_func=lambda symbol: f"{symbol} - {results.loc[results['Symbol'] == symbol, 'Company'].iloc[0]}",
+    format_func=lambda symbol: (
+        f"{symbol} - {table.loc[table['Symbol'] == symbol, 'Company'].iloc[0]}"
+        + ("" if table.loc[table["Symbol"] == symbol, "Passes All"].iloc[0] else " (does not pass all rules)")
+    ),
 )
-selected_row = results.loc[results["Symbol"] == selected_symbol].iloc[0]
+selected_row = table.loc[table["Symbol"] == selected_symbol].iloc[0]
 profile_row = scan_state["profiles"].loc[selected_symbol]
 profile_values = tuple(
     (field, profile_row.get(field))
