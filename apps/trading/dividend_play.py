@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from st_supabase_connection import SupabaseConnection
-from zoneinfo import ZoneInfo
 
 import harvest.data as hd
 import harvest.dividend_play as dp
@@ -20,6 +19,7 @@ import harvest.plot as hp
 import harvest.prices as hprices
 import harvest.swing as sw
 import harvest.trading_store as store
+import harvest.trading_ui as ui
 from harvest import chart_style as cs
 from harvest.dividend_play import (
     BASELINE_SETUP,
@@ -44,7 +44,6 @@ VIEW_TODAY, VIEW_EVIDENCE, VIEW_LAB = 'Today', 'Evidence', 'Lab'
 # The one stock whose evidence is open to everyone.
 FREE_EVIDENCE_TICKER = 'BBRI.JK'
 SOON_METRIC_DAYS = 14
-WIB = ZoneInfo('Asia/Jakarta')
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='Dividend Play - Panen Dividen')
@@ -452,48 +451,6 @@ def load_settings(email: str) -> dict:
     return store.get_settings(get_connection(), email)
 
 
-def _short(symbol: str) -> str:
-    return symbol.removesuffix('.JK')
-
-
-def _day(value, estimated: bool = False) -> str:
-    """'Mon 3 Nov', with '~' in front of estimated dates."""
-    date = pd.Timestamp(value)
-    return f"{'~' if estimated else ''}{date:%a} {date.day} {date:%b}"
-
-
-def _idr(value) -> str:
-    return f'Rp {value:,.0f}'
-
-
-def _entry_level(price: float) -> float:
-    """Round an 'at or below' price down to a valid IDX tick."""
-    tick = float(sw.idx_tick_size([price])[0])
-    return np.floor(price / tick) * tick
-
-
-def _first_session(value) -> datetime.date:
-    """The first IDX trading day on or after ``value``; windows are counted in calendar days."""
-    day = pd.Timestamp(value)
-    return store.idx_trading_days(day, day + pd.Timedelta(days=14))[0]
-
-
-def _open_view(target: str, stock: str | None = None) -> None:
-    st.session_state['view'] = target
-    if stock:
-        st.session_state['stock'] = stock
-
-
-def _status_line(run: dict) -> None:
-    as_of = pd.Timestamp(run['as_of'])
-    finished = pd.Timestamp(run.get('finished_at') or run['started_at']).tz_convert(WIB)
-    next_session = next(day for day in store.idx_trading_days(as_of + pd.Timedelta(days=1), as_of + pd.Timedelta(days=14)))
-    st.caption(
-        f"Updated {_day(as_of)}, {finished:%H:%M} WIB after close. "
-        f"Next update {_day(next_session)} after close."
-    )
-
-
 def _holdout_text(holdout: dict) -> str:
     trades = holdout.get('trades') or 0
     if not trades:
@@ -511,15 +468,15 @@ def track_dialog(signal: pd.Series) -> None:
     detail = signal['detail']
     estimated = bool(signal['key_date_estimated'])
     st.markdown(
-        f"**{_short(signal['symbol'])}** · sell by {_day(signal['exit_by'], estimated)}, "
-        f"cum date {_day(signal['key_date'], estimated)}"
+        f"**{ui.short(signal['symbol'])}** · sell by {ui.day(signal['exit_by'], estimated)}, "
+        f"cum date {ui.day(signal['key_date'], estimated)}"
     )
-    level = _entry_level(signal['entry_price'])
+    level = ui.tick_floor(signal['entry_price'])
     tick = float(sw.idx_tick_size([level])[0])
     entry_price = st.number_input('Entry price (Rp)', min_value=tick, value=level, step=tick, format='%.0f')
     lots = st.number_input('Lots', min_value=1, value=1, step=1, help='1 lot is 100 shares')
     entry_date = st.date_input('Bought on', value=datetime.date.today(), max_value=datetime.date.today())
-    st.caption(f'About {_idr(entry_price * lots * 100)} before fees. My Trades counts down to the sell-by date.')
+    st.caption(f'About {ui.idr(entry_price * lots * 100)} before fees. My Trades counts down to the sell-by date.')
     if st.button('Track', type='primary', icon=':material/bookmark_add:'):
         store.create_position(get_connection(), current_email(), {
             'tool': 'dividend_play',
@@ -541,7 +498,7 @@ def track_dialog(signal: pd.Series) -> None:
         })
         load_open_positions.clear()
         # A toast raised right before a rerun is lost, so show it on the next run.
-        st.session_state['dp_toast'] = f"Tracking {_short(signal['symbol'])}. See My Trades."
+        st.session_state['dp_toast'] = f"Tracking {ui.short(signal['symbol'])}. See My Trades."
         st.rerun()
 
 
@@ -556,12 +513,12 @@ def render_signal_card(signal: pd.Series, can_track: bool = False) -> None:
     detail = signal['detail']
     estimated = bool(signal['key_date_estimated'])
     with st.container(border=True):
-        st.markdown(f"**{_short(signal['symbol'])}** · {detail.get('company') or signal['symbol']}")
+        st.markdown(f"**{ui.short(signal['symbol'])}** · {detail.get('company') or signal['symbol']}")
         facts = []
         if detail.get('yield') is not None:
             facts.append(f"yield {detail['yield']:.1f}%")
         if detail.get('next_dividend') is not None:
-            facts.append(f"next dividend {_idr(detail['next_dividend'])}")
+            facts.append(f"next dividend {ui.idr(detail['next_dividend'])}")
         if facts:
             line = ' · '.join(facts)
             st.caption(line[0].upper() + line[1:])
@@ -570,9 +527,9 @@ def render_signal_card(signal: pd.Series, can_track: bool = False) -> None:
         else:
             st.badge('Cum date announced', icon=':material/event_available:', color='green')
         st.markdown(
-            f"Entry at or below **{_idr(_entry_level(signal['entry_price']))}**  \n"
-            f"Sell by **{_day(signal['exit_by'], estimated)}**  \n"
-            f"Cum date **{_day(signal['key_date'], estimated)}**"
+            f"Entry at or below **{ui.idr(ui.tick_floor(signal['entry_price']))}**  \n"
+            f"Sell by **{ui.day(signal['exit_by'], estimated)}**  \n"
+            f"Cum date **{ui.day(signal['key_date'], estimated)}**"
         )
         window = detail.get('window') or {}
         if window.get('of'):
@@ -592,20 +549,8 @@ def render_signal_card(signal: pd.Series, can_track: bool = False) -> None:
                 _track(signal)
             st.button(
                 'See evidence', key=f"evidence_{signal['symbol']}", icon=':material/query_stats:',
-                on_click=_open_view, args=(VIEW_EVIDENCE, signal['symbol']),
+                on_click=ui.open_view, args=(VIEW_EVIDENCE, signal['symbol']),
             )
-
-
-def render_unlock_prompt(hidden: int) -> None:
-    with st.container(border=True):
-        st.markdown(
-            f"**{hidden} more {'setup' if hidden == 1 else 'setups'} today.** Supporters see every card, "
-            "the evidence for any stock and the research lab."
-        )
-        st.button(
-            'Unlock the trading lab', type='primary', icon=':material/lock_open:',
-            on_click=_open_view, args=(VIEW_LAB,), key='today_unlock',
-        )
 
 
 def _save_watchlist(email: str, options: list[str], key: str) -> None:
@@ -633,7 +578,7 @@ def render_alert_picker(symbols: list[str]) -> None:
     watched = [symbol for symbol in settings['alert_prefs'].get('watch', []) if symbol in symbols]
     st.pills(
         'Alert me when the window opens', symbols, selection_mode='multi', default=watched,
-        format_func=_short, key='alert_watch', on_change=_save_watchlist, args=(email, symbols, 'alert_watch'),
+        format_func=ui.short, key='alert_watch', on_change=_save_watchlist, args=(email, symbols, 'alert_watch'),
     )
     if not settings.get('telegram_chat_id'):
         st.caption('Alerts arrive on Telegram. Link it under Settings in My Trades.')
@@ -650,7 +595,7 @@ def render_today(access: bool) -> None:
     if run is None:
         st.info('Signals have not been published yet. The first update arrives after the next market close.')
         return
-    _status_line(run)
+    ui.status_line(run)
     if published['stale']:
         st.warning("These signals missed at least one nightly update. They may be out of date.")
 
@@ -672,7 +617,7 @@ def render_today(access: bool) -> None:
             exiting = int((positions['exit_by'] == next_exit).sum()) if next_exit is not None else 0
             metrics.metric(
                 'Your positions', len(positions),
-                delta=f'{exiting} exits {_day(next_exit)}' if next_exit is not None else None,
+                delta=f'{exiting} exits {ui.day(next_exit)}' if next_exit is not None else None,
                 delta_color='off', delta_arrow='off',
             )
         except Exception:
@@ -691,19 +636,19 @@ def render_today(access: bool) -> None:
                 with column:
                     render_signal_card(signal, can_track=access)
         if not access and len(actionable) > 1:
-            st.markdown('Also open: ' + ', '.join(_short(s) for s in actionable['symbol'].iloc[1:]))
-            render_unlock_prompt(len(actionable) - 1)
+            st.markdown('Also open: ' + ', '.join(ui.short(s) for s in actionable['symbol'].iloc[1:]))
+            ui.unlock_prompt(len(actionable) - 1)
 
     st.subheader('Opening soon')
     if soon.empty:
         st.info('No entry window opens in the next 45 days.')
     elif not access:
-        st.markdown(', '.join(_short(s) for s in soon['symbol']))
+        st.markdown(', '.join(ui.short(s) for s in soon['symbol']))
     else:
         rows = pd.DataFrame({
-            'Stock': soon['symbol'].map(_short),
+            'Stock': soon['symbol'].map(ui.short),
             'Window opens': [
-                _day(_first_session(d['window_start']), est)
+                ui.day(ui.first_session(d['window_start']), est)
                 for d, est in zip(soon['detail'], soon['key_date_estimated'])
             ],
             'Historical run-up': soon['detail'].map(lambda d: (d.get('history') or {}).get('avg_return')),
@@ -738,7 +683,7 @@ def render_evidence(access: bool) -> None:
     stock = st.selectbox('Stock', options, key='stock', bind='query-params')
     if not access and stock != FREE_EVIDENCE_TICKER:
         require_premium(teaser=lambda: st.info(
-            f'The evidence for {_short(FREE_EVIDENCE_TICKER)} is free to explore. '
+            f'The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. '
             'Supporters can open any stock.', icon=':material/info:',
         ))
 

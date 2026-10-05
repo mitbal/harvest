@@ -211,6 +211,8 @@ create table if not exists user_settings (
   email text primary key,
   buy_fee_pct numeric default 0.15,
   sell_fee_pct numeric default 0.25,
+  capital_idr numeric,
+  risk_pct numeric default 1.0,
   telegram_chat_id text,
   telegram_link_token text,
   alert_prefs jsonb default '{}'
@@ -422,11 +424,11 @@ exit reminder in Telegram (verified with a test chat).
   - Walk-forward validation (rolling train/test windows) replacing the single holdout split.
   - Stricter gate accounting for the number of parameter combinations tried.
 - [x] Weekly optimize and daily scan functions for `swing`, same pattern as Phase 1.
-- [ ] Page restructure into Today / Evidence / Lab. Today cards: entry, stop, target, max hold
+- [x] Page restructure into Today / Evidence / Lab. Today cards: entry, stop, target, max hold
       sessions, holdout record. Remove the P/E filter from the shortlist.
-- [ ] Position sizing on cards: lots and IDR at risk from the user's risk percent (user setting),
+- [x] Position sizing on cards: lots and IDR at risk from the user's risk percent (user setting),
       prices rounded to IDX ticks (`idx_tick_size`), respecting ARA/ARB limits.
-- [ ] Tests for stop fills, gap handling, walk-forward splits, tick rounding.
+- [x] Tests for stop fills, gap handling, walk-forward splits, tick rounding.
 
 Done when: published swing signals come from OHLCV and walk-forward validation; Today loads instantly.
 
@@ -695,3 +697,24 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     entering at the next open, so its edge came from the close-to-close fill. The walk-forward
     picks nothing in any fold, so the jobs publish no swing signals. [ASK USER] how to proceed
     with the rest of Phase 3.
+  - User decision (2026-10-05): finish the page with an honest empty state.
+  - Swing page (`apps/trading/swing_trading.py`, title "Swing Trading", URL still /day_trading):
+    Today / Evidence / Lab like Dividend Play. Today reads only the store; when no global setup
+    is published it says so and quotes the last search's walk-forward result. Cards: buy at the
+    next open on <day>, stop and target as % with tick-rounded reference prices from the close,
+    sell-by session, next-session ARA/ARB band (and a note when the stop is below the floor),
+    walk-forward or stock holdout record, position size from the user's capital and risk %
+    (`sw.position_size`), Track this trade (fill price, lots prefilled from the size).
+    Evidence: OHLCV backtest (7 years, dividend-adjusted) with the published setup or the
+    baseline, price chart with trades, equity curve and trade log (no vectorbt). Lab: P/E filter
+    and valuation CSV removed (shared `sw.build_shortlist`), optimizer on OHLCV, default start 7
+    years back, walk-forward panel, Bonferroni gate on stock overrides.
+  - Shared: `harvest/universe.py` (universe loader, now used by the app and the jobs),
+    `harvest/trading_ui.py` (Today helpers used by both trading pages). `user_settings` gains
+    `capital_idr` and `risk_pct` (DDL updated plus `alter table ... add column if not exists`);
+    My Trades shows swing stop/target and saves capital and risk. Exit reminders now cover
+    tracked swing positions too. `tests/live/smoke.spec.js` heading updated to "Swing Trading".
+  - Tests: 9 swing AppTests plus a My Trades one (33 AppTests in total). Verified in the preview:
+    Today empty state from the real dry run, Lab optimizer on 167 stocks in 31 s (same
+    conclusion as the job), Evidence on BBCA.JK.
+  - Open [ASK USER]: Railway schedule for the swing jobs (not changed).

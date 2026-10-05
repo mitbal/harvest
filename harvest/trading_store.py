@@ -335,6 +335,8 @@ def delete_position(client, email: str, position_id: int) -> bool:
 SETTINGS_DEFAULTS = {
     'buy_fee_pct': 0.15,
     'sell_fee_pct': 0.25,
+    'capital_idr': None,
+    'risk_pct': 1.0,
     'telegram_chat_id': None,
     'telegram_link_token': None,
     'alert_prefs': {},

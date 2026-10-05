@@ -9,7 +9,7 @@ const publicPages = [
   { path: '/market_watch', heading: 'Market Heatmap' },
   { path: '/stock_comparison', heading: 'Stock Comparison' },
   { path: '/backtester', heading: 'Growth at a Discount' },
-  { path: '/day_trading', heading: 'Short-Term Swing Trading Strategy Lab' },
+  { path: '/day_trading', heading: 'Swing Trading' },
 ];
 
 async function expectHealthyStreamlitPage(page, path, heading) {

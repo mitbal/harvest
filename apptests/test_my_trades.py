@@ -171,3 +171,18 @@ def test_logged_out_visitors_get_login_buttons(run_page):
     assert "Log in to get alerts" in labels
     # Track this trade is still offered; it starts the Google login.
     assert "Track this trade" in labels
+
+
+def test_swing_positions_show_levels_and_sizing_settings_save(trades, trades_client):
+    store.create_position(trades_client, "fan@example.com", _position(
+        "GOTO.JK", tool="swing", exit_rule={"stop_price": 98.0, "target_price": 105.0, "setup_text": "Regime RSI"},
+    ))
+    app = trades()
+
+    assert "Stop Rp 98 · target Rp 105" in _texts(app)
+    capital = next(n for n in app.number_input if n.label == "Trading capital (Rp)")
+    capital.set_value(50_000_000)
+    app = next(b for b in app.button if b.label == "Save settings").click().run()
+
+    saved = store.get_settings(trades_client, "fan@example.com")
+    assert saved["capital_idr"] == 50_000_000 and saved["risk_pct"] == 1.0

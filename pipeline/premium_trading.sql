@@ -83,10 +83,16 @@ create table if not exists user_settings (
   email text primary key,
   buy_fee_pct numeric default 0.15,
   sell_fee_pct numeric default 0.25,
+  capital_idr numeric,                  -- for swing position sizing
+  risk_pct numeric default 1.0,
   telegram_chat_id text,
   telegram_link_token text,
   alert_prefs jsonb default '{}'
 );
+
+-- Added in Phase 3; harmless if the table was created with them.
+alter table user_settings add column if not exists capital_idr numeric;
+alter table user_settings add column if not exists risk_pct numeric default 1.0;
 
 create table if not exists alert_log (
   email text not null,

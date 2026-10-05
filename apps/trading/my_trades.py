@@ -101,6 +101,11 @@ for _, position in open_positions.iterrows():
         else:
             st.caption(countdown)
         rule = position['exit_rule'] or {}
+        if rule.get('stop_price') or rule.get('target_price'):
+            levels = [f"stop {_idr(rule['stop_price'])}" if rule.get('stop_price') else None,
+                      f"target {_idr(rule['target_price'])}" if rule.get('target_price') else None]
+            line = ' · '.join(filter(None, levels))
+            st.caption(line[0].upper() + line[1:])
         if rule.get('setup_text'):
             cum = rule.get('key_date')
             st.caption(f"{rule['setup_text']}" + (f"; cum date {'~' if rule.get('key_date_estimated') else ''}"
@@ -156,6 +161,15 @@ with st.form('trade_settings'):
                                        value=float(settings['buy_fee_pct']))
     sell_fee = fee_cols[1].number_input('Sell fee and tax %', min_value=0.0, max_value=5.0, step=0.01,
                                         value=float(settings['sell_fee_pct']))
+    size_cols = st.columns(2)
+    capital = size_cols[0].number_input(
+        'Trading capital (Rp)', min_value=0.0, step=1_000_000.0, format='%.0f',
+        value=float(settings.get('capital_idr') or 0.0),
+        help='Used to size swing trades. Stays private to your account.')
+    risk = size_cols[1].number_input(
+        'Risk per trade %', min_value=0.1, max_value=10.0, step=0.1,
+        value=float(settings.get('risk_pct') or 1.0),
+        help='How much of your capital a stop-out may lose')
     prefs = settings['alert_prefs']
     new_signals = st.toggle('Alert me about every new Dividend Play entry window',
                             value=bool(prefs.get('new_signals')))
@@ -165,6 +179,7 @@ with st.form('trade_settings'):
     if st.form_submit_button('Save settings', type='primary'):
         store.save_settings(client, email, {
             'buy_fee_pct': buy_fee, 'sell_fee_pct': sell_fee,
+            'capital_idr': capital or None, 'risk_pct': risk,
             'alert_prefs': {**prefs, 'new_signals': new_signals, 'watch': watch},
         })
         st.session_state['trades_toast'] = 'Settings saved.'

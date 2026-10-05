@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = 'https://api.telegram.org/bot{token}/{method}'
 SITE_URL = 'https://panendividen.com'
 TOOL = 'dividend_play'
+EXIT_REMINDER_TOOLS = ('dividend_play', 'swing')
 
 
 def bot_token() -> Optional[str]:
@@ -127,9 +128,9 @@ def send_dividend_play_alerts(
                 window = (signal.get('detail') or {}).get('window_start', '')
                 deliver(subscriber, 'signal', f"{TOOL}:{signal['symbol']}:{window}", signal_message(signal))
 
-    # Exit reminders go to anyone who tracked the trade, supporter or not.
+    # Exit reminders go to anyone who tracked the trade, supporter or not, for every tool.
     next_session = _next_session(as_of)
-    positions = store.open_positions_all(client, TOOL)
+    positions = pd.concat([store.open_positions_all(client, tool) for tool in EXIT_REMINDER_TOOLS], ignore_index=True)
     for _, position in positions.iterrows():
         subscriber = subscribers.get(position['email'])
         if subscriber is None or position['exit_by'] is None or pd.isna(position['exit_by']):
