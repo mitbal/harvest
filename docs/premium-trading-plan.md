@@ -342,7 +342,7 @@ Read first: `apps/trading/dividend_play.py`, `harvest/dividend_play.py`, `tests/
       data (`div_cal_*`) when present, set `key_date_estimated` accordingly.
 - [x] CLI entry points (`python -m pipeline.trading_scan --tool dividend_play`). Pipeline tests
       with fixture prices and a fake store.
-- [ ] Railway: propose cron config (daily scan after `daily_data`, weekly optimize on Sunday).
+- [x] Railway: propose cron config (daily scan after `daily_data`, weekly optimize on Sunday).
       [ASK USER] before changing any `railway*.toml`.
 
 ### 1.2 Page restructure
@@ -604,3 +604,9 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - Known gap: after "See evidence" the URL shows `?view=Evidence` without `&stock=`; Streamlit
     doesn't push a bound value set before the widget exists. Inbound `?stock=` links work, and the
     URL updates once the user picks a stock.
+- 2026-10-05: Railway schedule approved by the user (recommended option). `railway.pipeline-jkse.toml`
+  now runs `trading_scan --tool dividend_play` after `daily_data` in the same job (`sh -c "... &&
+  ..."`, scan timeout 1h), so it only runs on fresh prices. New `railway.trading-optimize.toml`:
+  weekly optimize, Sunday 10:00 WIB (`0 3 * * 0`), 3h timeout. The user creates the optimize
+  service in Railway with the same environment as the jkse pipeline and runs it once by hand
+  before the first scan.

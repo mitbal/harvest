@@ -1,0 +1,15 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.pipeline"
+watchPatterns = [
+  "harvest/**",
+  "pipeline/**",
+  "requirements-pipeline.txt",
+  "Dockerfile.pipeline",
+]
+
+[deploy]
+# Weekly setup search, Sunday 10:00 WIB. Needs the same environment as the jkse pipeline.
+startCommand = "timeout --signal=TERM --kill-after=60s 3h python -m pipeline.trading_optimize --tool dividend_play"
+cronSchedule = "0 3 * * 0"
+restartPolicyType = "NEVER"
