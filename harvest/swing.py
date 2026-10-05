@@ -1392,3 +1392,94 @@ def is_near_setup(
     if strategy_type == STRATEGY_CROSS_MOMENTUM:
         return indicator >= param_b - proximity
     return indicator <= proximity
+
+
+# ── Shortlist, published setups and price adjustment (page and pipeline) ─── #
+
+BLUE_CHIPS = [
+    'BBCA.JK', 'BMRI.JK', 'BBRI.JK', 'BBNI.JK', 'INDF.JK', 'ICBP.JK',
+    'UNVR.JK', 'AMRT.JK', 'TLKM.JK', 'EXCL.JK', 'ISAT.JK', 'ASII.JK',
+    'UNTR.JK', 'ADRO.JK', 'PTBA.JK', 'ITMG.JK', 'BRIS.JK', 'KLBF.JK', 'GOTO.JK',
+]
+VOLATILITY_LOOKBACK = 60
+# Daily moves beyond this are treated as corporate actions or bad data, not volatility.
+MAX_PLAUSIBLE_DAILY_MOVE = 0.35
+SETUP_KEYS = ('strategy_type', 'param_a', 'param_b', 'param_c', 'param_d', 'max_hold', 'profit_target', 'stop_loss')
+
+
+def price_volatility(prices: pd.DataFrame, lookback: int = VOLATILITY_LOOKBACK) -> pd.DataFrame:
+    """Recent daily volatility (%) per stock from a long ``symbol, date, close`` frame."""
+    columns = ['stock', 'Daily Volatility', 'Volatility Observations']
+    if prices.empty:
+        return pd.DataFrame(columns=columns)
+    prices = prices.sort_values(['symbol', 'date'])
+    prices = prices.groupby('symbol', group_keys=False).tail(int(lookback) + 1).copy()
+    prices['return'] = prices.groupby('symbol')['close'].pct_change()
+    prices.loc[prices['return'].abs() > MAX_PLAUSIBLE_DAILY_MOVE, 'return'] = np.nan
+    volatility = prices.groupby('symbol')['return'].agg(['std', 'count']).reset_index()
+    volatility['Daily Volatility'] = volatility['std'] * 100
+    volatility = volatility.rename(columns={'symbol': 'stock', 'count': 'Volatility Observations'})
+    return volatility[columns]
+
+
+def build_shortlist(
+    universe: pd.DataFrame,
+    volatility: pd.DataFrame,
+    min_mcap_trill: float = 1.0,
+    min_value_traded_bn: float = 5.0,
+    min_volatility: float = 1.0,
+    max_stocks: int = 200,
+    volatility_lookback: int = VOLATILITY_LOOKBACK,
+    pin_blue_chips: bool = True,
+) -> pd.DataFrame:
+    """Liquid stocks that move enough to swing trade, most volatile first.
+
+    ``universe`` has ``stock``, ``mktCap``, ``price`` and ``volAvg``;
+    ``volatility`` comes from :func:`price_volatility`.
+    """
+    frame = universe.merge(volatility, on='stock', how='inner')
+    mask = pd.Series(True, index=frame.index)
+    if 'mktCap' in frame.columns:
+        mask &= frame['mktCap'] >= min_mcap_trill * 1_000_000_000_000
+    if {'volAvg', 'price'}.issubset(frame.columns):
+        frame['Avg Value Traded'] = frame['volAvg'] * frame['price']
+        mask &= frame['Avg Value Traded'].fillna(0) >= min_value_traded_bn * 1_000_000_000
+    mask &= frame['Volatility Observations'] >= max(15, int(volatility_lookback) // 2)
+    mask &= frame['Daily Volatility'] >= float(min_volatility)
+    frame = frame[mask].copy()
+    frame['Volatility Score'] = frame['Daily Volatility'].rank(pct=True) * 100
+    ranked = frame.sort_values(['Volatility Score', 'Daily Volatility'], ascending=False)
+    if pin_blue_chips:
+        pinned = ranked[ranked['stock'].isin(BLUE_CHIPS)]
+        ranked = pd.concat([pinned, ranked[~ranked['stock'].isin(BLUE_CHIPS)]])
+    return ranked.drop_duplicates('stock').head(int(max_stocks)).reset_index(drop=True)
+
+
+def dividend_adjust_ohlc(frame: pd.DataFrame, dividends: pd.DataFrame | None) -> pd.DataFrame:
+    """Back-adjust open, high, low and close by the same factor as :func:`dividend_adjust`."""
+    if dividends is None or dividends.empty or frame.empty:
+        return frame
+    factor = dividend_adjust(frame['close'], dividends) / frame['close']
+    adjusted = frame.copy()
+    for column in ('open', 'high', 'low', 'close'):
+        if column in adjusted.columns:
+            adjusted[column] = adjusted[column] * factor
+    return adjusted
+
+
+def combo_setup(combo: tuple) -> dict:
+    """A parameter combination as a published setup dict."""
+    return dict(zip(SETUP_KEYS, (combo[0], *(float(v) for v in combo[1:5]), int(combo[5]),
+                                 float(combo[6]), float(combo[7]))))
+
+
+def preset_combos(preset: str = 'Balanced', strategy_types=None) -> list[tuple]:
+    """Every (strategy, params, max hold, target, stop) combination of a search preset."""
+    space = SEARCH_PRESETS[preset]
+    return [
+        (strategy_type, *params, hold, target, stop)
+        for strategy_type in (strategy_types or STRATEGY_TYPES)
+        for params in space['strategy_params'][strategy_type]
+        for hold in space['hold_days']
+        for target, stop in space['exit_rules']
+    ]

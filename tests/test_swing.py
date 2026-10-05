@@ -417,3 +417,58 @@ def test_position_size_by_risk_and_cash():
     capped = sw.position_size(capital=10_000_000, risk_pct=5.0, entry=1000, stop=999)
     assert capped["lots"] == 100  # the cash limit binds
     assert sw.position_size(10_000_000, 1.0, 1000, 1000)["lots"] == 0
+
+
+# ── Shortlist and helpers shared with the pipeline ──────────────────────── #
+
+def test_price_volatility_ignores_implausible_moves():
+    dates = pd.bdate_range("2024-01-01", periods=61)
+    calm = 100 * np.cumprod(np.r_[1, np.full(60, 1.01)])
+    jumpy = calm.copy()
+    jumpy[30:] *= 2  # a 100% jump is a corporate action, not volatility
+    prices = pd.concat([
+        pd.DataFrame({"symbol": "CALM", "date": dates, "close": calm}),
+        pd.DataFrame({"symbol": "JUMP", "date": dates, "close": jumpy}),
+    ])
+
+    vol = sw.price_volatility(prices).set_index("stock")
+
+    assert vol.loc["CALM", "Daily Volatility"] == pytest.approx(0.0, abs=1e-9)
+    assert vol.loc["JUMP", "Volatility Observations"] == 59
+
+
+def test_build_shortlist_needs_liquidity_and_movement():
+    universe = pd.DataFrame({
+        "stock": ["BBRI.JK", "WILD.JK", "THIN.JK", "TINY.JK", "CALM.JK"],
+        "mktCap": [500e12, 2e12, 2e12, 0.5e12, 2e12],
+        "price": [4000.0, 500.0, 500.0, 500.0, 500.0],
+        "volAvg": [1e8, 1e8, 1e3, 1e8, 1e8],
+    })
+    volatility = pd.DataFrame({
+        "stock": universe["stock"], "Daily Volatility": [1.5, 4.0, 4.0, 4.0, 0.5],
+        "Volatility Observations": 60,
+    })
+
+    shortlist = sw.build_shortlist(universe, volatility)
+
+    assert shortlist["stock"].tolist() == ["BBRI.JK", "WILD.JK"]  # blue chip pinned first
+    assert sw.build_shortlist(universe, volatility, pin_blue_chips=False)["stock"].tolist() == ["WILD.JK", "BBRI.JK"]
+
+
+def test_dividend_adjust_ohlc_scales_every_price():
+    frame = _bars([(100, 101, 99, 100), (100, 101, 99, 100), (95, 96, 94, 95)])
+    dividends = pd.DataFrame({"date": [frame.index[2]], "dividend": [5.0]})
+
+    adjusted = sw.dividend_adjust_ohlc(frame, dividends)
+
+    assert adjusted.iloc[0].tolist() == pytest.approx([95.0, 95.95, 94.05, 95.0])
+    assert adjusted.iloc[2].tolist() == [95, 96, 94, 95]
+
+
+def test_combo_setup_and_presets():
+    combos = sw.preset_combos("Quick")
+    setup = sw.combo_setup(combos[0])
+
+    assert len(combos) == len(sw.STRATEGY_TYPES)
+    assert list(setup) == list(sw.SETUP_KEYS)
+    assert setup["strategy_type"] == combos[0][0] and isinstance(setup["max_hold"], int)

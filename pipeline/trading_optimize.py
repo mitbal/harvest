@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 import harvest.dividend_play as dp
+import harvest.swing as sw
 import harvest.trading_store as store
 from pipeline import trading_data
 
@@ -165,7 +166,130 @@ def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dic
         raise
 
 
-TOOLS = {"dividend_play": dividend_play}
+SWING_PRESET = "Balanced"
+SWING_HISTORY_YEARS = 7      # 3 years of training before a 3-year walk-forward, plus warm-up
+SWING_HOLDOUT_YEARS = 3
+SWING_COSTS = {"buy_fee": 0.15, "sell_fee": 0.15, "sell_tax": 0.1, "slippage_ticks": sw.DEFAULT_SLIPPAGE_TICKS}
+INDICATOR_WARMUP_DAYS = 400
+
+
+def swing_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
+    """Shortlist, dividend-adjusted OHLCV per stock, JKSE regime, breadth and the index close."""
+    events = trading_data.load_dividend_events(client)
+    universe = trading_data.load_universe()
+    histories = trading_data.load_ohlcv_histories(
+        universe["stock"].tolist(), history_start - pd.Timedelta(days=INDICATOR_WARMUP_DAYS),
+    )
+    histories = {symbol: frame[frame.index <= as_of] for symbol, frame in histories.items()}
+    closes = pd.concat(
+        [frame["close"].rename("close").to_frame().assign(symbol=symbol).reset_index()
+         for symbol, frame in histories.items()],
+        ignore_index=True,
+    ) if histories else pd.DataFrame(columns=["symbol", "date", "close"])
+    shortlist = sw.build_shortlist(universe, sw.price_volatility(closes))
+    adjusted = {
+        symbol: sw.dividend_adjust_ohlc(histories[symbol], events.get(symbol))
+        for symbol in shortlist["stock"] if symbol in histories
+    }
+    index = trading_data.load_jkse_index()
+    index = index[index.index <= as_of]
+    regime = sw.compute_regime_series(index)
+    breadth = sw.build_market_breadth({symbol: frame["close"] for symbol, frame in adjusted.items()})
+    return shortlist, adjusted, regime, breadth, index["close"]
+
+
+def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
+    """Search swing setups on the default shortlist and publish those that pass walk-forward.
+
+    The global setup is the walk-forward's latest choice, published only when
+    the walk-forward record passes the gates. Per-stock overrides must beat
+    the global setup on their own holdout with a t-stat corrected for the
+    number of combinations tried.
+    """
+    as_of = pd.Timestamp(as_of or datetime.date.today()).normalize()
+    run_id = store.start_run(client, "swing", "optimize", as_of)
+    started = time.monotonic()
+    try:
+        history_start = as_of - pd.DateOffset(years=SWING_HISTORY_YEARS)
+        split = as_of - pd.DateOffset(years=SWING_HOLDOUT_YEARS)
+        shortlist, histories, regime, breadth, benchmark = swing_inputs(client, as_of, history_start)
+        if not histories:
+            raise RuntimeError("The swing shortlist has no price history")
+        combos = sw.preset_combos(preset)
+        momentum = sw.build_momentum_percentiles(
+            {symbol: frame["close"] for symbol, frame in histories.items()},
+            {int(c[1]) for c in combos if c[0] == sw.STRATEGY_CROSS_MOMENTUM},
+        )
+
+        results, trades, statuses = [], [], {}
+        for symbol, frame in histories.items():
+            rows, status = sw.evaluate_stock_strategies(
+                symbol, frame, regime, combos, split,
+                SWING_COSTS["buy_fee"], SWING_COSTS["sell_fee"], SWING_COSTS["sell_tax"],
+                benchmark, {lookback: ranks[symbol] for lookback, ranks in momentum.items() if symbol in ranks},
+                breadth=breadth, slippage_ticks=SWING_COSTS["slippage_ticks"], trades_out=trades,
+            )
+            results.extend(rows)
+            statuses[status] = statuses.get(status, 0) + 1
+        if not results:
+            raise RuntimeError("No swing backtests were produced")
+        results = pd.DataFrame(results)
+        trades = pd.DataFrame(trades)
+
+        forward = sw.walk_forward(trades, split, as_of)
+        record = forward["record"]
+        published, stock_setups = [], {}
+        if forward["final_combo"] is not None and sw.passes_walk_forward_gates(record):
+            global_setup = sw.combo_setup(combos[forward["final_combo"]])
+            published.append({
+                "scope": "global",
+                "params": global_setup,
+                "holdout": {"level": "global", "method": "walk_forward", **record,
+                            "folds": forward["folds"]},
+            })
+            stock_setups = sw.select_stock_strategies(
+                results, global_setup, min_t_stat=sw.required_t_stat(len(combos)),
+            )
+            for symbol, chosen in stock_setups.items():
+                published.append({
+                    "scope": symbol,
+                    "params": {key: chosen[key] for key in sw.SETUP_KEYS},
+                    "holdout": {
+                        "level": "stock", "method": "holdout",
+                        "trades": chosen["validation_trades"],
+                        "win_rate": chosen["validation_win_rate"],
+                        "avg_trade": chosen["validation_avg_trade"],
+                        "t_stat": chosen["validation_t_stat"],
+                        "return_uplift": chosen["return_uplift"],
+                    },
+                })
+        store.write_setups(client, "swing", published, run_id)
+
+        stats = {
+            "preset": preset,
+            "history_start": history_start.date().isoformat(),
+            "holdout_from": split.date().isoformat(),
+            "shortlist": len(shortlist),
+            "stocks_with_prices": len(histories),
+            "statuses": statuses,
+            "combinations": len(combos),
+            "walk_forward": record,
+            "walk_forward_choices": [fold["combo"] for fold in forward["folds"]],
+            "global_setup": (sw.format_strategy_params(*[published[0]["params"][k] for k in SETUP_PARAM_KEYS])
+                             if published else None),
+            "stock_setups": len(stock_setups),
+            "required_stock_t_stat": round(sw.required_t_stat(len(combos)), 2),
+            "duration_seconds": round(time.monotonic() - started, 1),
+        }
+        store.finish_run(client, run_id, "ok", stats)
+        return stats
+    except Exception as exc:
+        store.finish_run(client, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"[:500]})
+        raise
+
+
+SETUP_PARAM_KEYS = ("strategy_type", "param_a", "param_b", "param_c", "param_d")
+TOOLS = {"dividend_play": dividend_play, "swing": swing}
 
 
 def build_parser() -> argparse.ArgumentParser:

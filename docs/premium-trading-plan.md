@@ -421,7 +421,7 @@ exit reminder in Telegram (verified with a test chat).
   - Stop and target fills using daily high and low, gaps fill at the open.
   - Walk-forward validation (rolling train/test windows) replacing the single holdout split.
   - Stricter gate accounting for the number of parameter combinations tried.
-- [ ] Weekly optimize and daily scan functions for `swing`, same pattern as Phase 1.
+- [x] Weekly optimize and daily scan functions for `swing`, same pattern as Phase 1.
 - [ ] Page restructure into Today / Evidence / Lab. Today cards: entry, stop, target, max hold
       sessions, holdout record. Remove the P/E filter from the shortlist.
 - [ ] Position sizing on cards: lots and IDR at risk from the user's risk percent (user setting),
@@ -676,3 +676,22 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     one-sided Bonferroni at 5% (2.84 for the 22 Balanced combinations).
   - IDX rules: `round_to_tick`, `price_limits` (ARA 35/25/20% by price, ARB flat 15% until
     2026-12-31 then symmetric, Rp 1 band for Rp 1-10 stocks), `position_size`.
+  - Swing jobs: `trading_optimize.swing` (Balanced preset, 7 years of dividend-adjusted OHLCV,
+    holdout/walk-forward from 3 years ago, walk-forward gate for the global setup, Bonferroni
+    gate for per-stock overrides; publishes nothing and withdraws old setups when nothing
+    passes) and `trading_scan.swing` (actionable when the published setup fired at the latest
+    close: entry at the next open, stop/target as % of the fill with tick-rounded reference
+    prices from the close, `exit_by` = close `max_hold` sessions after entry, next-session
+    ARA/ARB band, flag when the stop is below the ARB floor; near-setups as `opening_soon`).
+    Shortlist without P/E: liquidity (>= Rp 5bn/day), market cap (>= Rp 1T), 60-day volatility
+    (>= 1%), most volatile first, blue chips pinned (`harvest.swing.build_shortlist`), using
+    the same universe as the Dividend Play jobs. `trading_data.load_jkse_index`,
+    `load_ohlcv_histories`.
+  - Finding from the real-data dry run (167 shortlist stocks, 22 combinations, 2018-2026): no
+    setup has an edge after costs. Trade-weighted average per trade: -1.14% with OHLC fills and
+    costs, -0.01% with OHLC fills before costs, -1.01% / +0.13% with close-only fills. Costs
+    (0.4% fees and tax plus 0.5 tick slippage per side) are about 1.1% a round trip. The one
+    positive close-only setup (Breadth Capitulation RSI(2) 2/5/15/100: +1.0%) drops to -0.2% when
+    entering at the next open, so its edge came from the close-to-close fill. The walk-forward
+    picks nothing in any fold, so the jobs publish no swing signals. [ASK USER] how to proceed
+    with the rest of Phase 3.

@@ -287,3 +287,120 @@ def test_cli_passes_as_of():
         trading_data, "get_supabase_client", return_value="client"
     ), patch.dict(trading_scan.TOOLS, {"dividend_play": lambda client, as_of: {"as_of": as_of}}) :
         assert trading_scan.main(["--tool", "dividend_play", "--as-of", "2026-10-02"]) == 0
+
+
+
+# ── Swing jobs ──────────────────────────────────────────────────────────── #
+
+import harvest.swing as sw
+
+
+SWING_SETUP = {"strategy_type": sw.STRATEGY_REGIME_RSI, "param_a": 14.0, "param_b": 30.0, "param_c": 50.0,
+               "param_d": 45.0, "max_hold": 5, "profit_target": 5.0, "stop_loss": 2.0}
+
+
+def _swing_bars(closes, end=AS_OF):
+    dates = pd.bdate_range(end=end, periods=len(closes))
+    closes = np.asarray(closes, dtype=float)
+    return pd.DataFrame({"open": closes, "high": closes * 1.01, "low": closes * 0.99, "close": closes}, index=dates)
+
+
+def test_swing_signal_fires_with_card_prices():
+    bars = _swing_bars(np.r_[np.full(100, 1000.0), np.linspace(1000, 800, 20)])  # steady fall: RSI very low
+    regime = pd.Series("bear", index=bars.index)
+
+    signal = trading_scan.swing_signal(
+        "TEST.JK", bars, regime, SWING_SETUP, "global", {"level": "global", "trades": 50, "win_rate": 60.0, "avg_trade": 0.8},
+        {"companyName": "PT Test Tbk"}, AS_OF, bars["close"], pd.Series(dtype=float),
+    )
+
+    assert signal["status"] == "actionable"
+    assert signal["entry_price"] == 800.0
+    assert signal["stop_price"] == 780.0 and signal["target_price"] == 840.0  # Rp 5 ticks between Rp 500 and 2,000
+    assert signal["key_date"] == datetime.date(2026, 10, 6)  # entry at the next session's open
+    assert signal["exit_by"] == datetime.date(2026, 10, 13)  # five sessions after the entry day
+    detail = signal["detail"]
+    assert detail["price_limits"] == {"floor": 680.0, "ceiling": 1000.0}
+    assert detail["holdout"]["wins"] == 30
+
+
+def test_swing_signal_needs_todays_bar_and_a_setup():
+    falling = _swing_bars(np.linspace(1000, 800, 120), end=AS_OF - pd.Timedelta(days=3))
+    flat = _swing_bars(np.full(120, 1000.0) + np.sin(np.arange(120)))
+    for bars in (falling, flat):
+        assert trading_scan.swing_signal(
+            "TEST.JK", bars, pd.Series(dtype=str), SWING_SETUP, "global", {}, {}, AS_OF,
+            bars["close"], pd.Series(dtype=float),
+        ) is None
+
+
+def _patch_swing_inputs(shortlist, histories, regime=None, breadth=None):
+    index = next(iter(histories.values()))["close"]
+    return patch.object(trading_optimize, "swing_inputs", return_value=(
+        shortlist, histories, regime if regime is not None else pd.Series("bear", index=index.index),
+        breadth if breadth is not None else pd.Series(dtype=float), index,
+    ))
+
+
+def _cycles(seed, years=8):
+    """A price that dips to RSI lows and rebounds, giving Regime RSI a real edge."""
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range(end=AS_OF, periods=252 * years)
+    phase = np.arange(len(dates)) % 30
+    close = 1000 * np.where(phase < 10, 1 - phase * 0.012, 0.88 + (phase - 10) * 0.009) * (1 + rng.normal(0, 0.002, len(dates)))
+    return pd.DataFrame({"open": close, "high": close * 1.004, "low": close * 0.996, "close": close}, index=dates)
+
+
+def test_swing_optimize_publishes_a_walk_forward_winner():
+    client = FakeSupabase()
+    symbols = [f"S{i}.JK" for i in range(6)]
+    histories = {s: _cycles(i) for i, s in enumerate(symbols)}
+    with _patch_swing_inputs(pd.DataFrame({"stock": symbols}), histories), \
+            patch.object(sw, "preset_combos", return_value=[
+                (sw.STRATEGY_REGIME_RSI, 14, 30, 50, 45, 5, 5.0, 2.0),
+                (sw.STRATEGY_REGIME_RSI, 7, 30, 50, 45, 5, 5.0, 2.0),
+            ]):
+        stats = trading_optimize.swing(client, as_of=AS_OF)
+
+    setups = store.read_setups(client, "swing")
+    assert stats["walk_forward"]["trades"] >= sw.MIN_WALK_FORWARD_TRADES
+    assert stats["global_setup"] is not None
+    assert setups["global"]["holdout"]["method"] == "walk_forward"
+    assert len(setups["global"]["holdout"]["folds"]) == 6
+    assert set(setups["global"]["params"]) == set(sw.SETUP_KEYS)
+
+
+def test_swing_optimize_publishes_nothing_without_an_edge():
+    client = FakeSupabase()
+    store.write_setups(client, "swing", [{"scope": "global", "params": SWING_SETUP, "holdout": {}}])
+    rng = np.random.default_rng(7)
+    symbols = [f"S{i}.JK" for i in range(4)]
+    histories = {}
+    for s in symbols:
+        close = 1000 * np.cumprod(1 + rng.normal(0, 0.015, 252 * 8))
+        histories[s] = pd.DataFrame({"open": close, "high": close * 1.01, "low": close * 0.99, "close": close},
+                                    index=pd.bdate_range(end=AS_OF, periods=len(close)))
+    with _patch_swing_inputs(pd.DataFrame({"stock": symbols}), histories):
+        stats = trading_optimize.swing(client, as_of=AS_OF)
+
+    assert stats["global_setup"] is None and stats["stock_setups"] == 0
+    assert store.read_setups(client, "swing") == {}  # last week's setup is withdrawn
+    assert store.latest_run(client, "swing", "optimize")["status"] == "ok"
+
+
+def test_swing_scan_publishes_from_stored_setups():
+    client = FakeSupabase()
+    store.write_setups(client, "swing", [{"scope": "global", "params": SWING_SETUP,
+                                          "holdout": {"level": "global", "trades": 50, "win_rate": 60.0}}])
+    falling = _swing_bars(np.r_[np.full(100, 1000.0), np.linspace(1000, 800, 20)])
+    flat = _swing_bars(np.full(120, 1000.0) + np.sin(np.arange(120)))
+    with patch.object(trading_optimize, "swing_inputs", return_value=(
+        pd.DataFrame({"stock": ["FALL.JK", "FLAT.JK"], "companyName": ["PT Fall", "PT Flat"]}),
+        {"FALL.JK": falling, "FLAT.JK": flat}, pd.Series("bear", index=falling.index),
+        pd.Series(dtype=float), falling["close"],
+    )):
+        stats = trading_scan.swing(client)
+
+    signals = store.read_signals(client, "swing")
+    assert signals["symbol"].tolist() == ["FALL.JK"]
+    assert stats["actionable"] == 1 and stats["as_of"] == AS_OF.date().isoformat()

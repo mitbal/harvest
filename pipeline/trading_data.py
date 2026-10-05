@@ -119,3 +119,18 @@ def load_price_histories(symbols: Iterable[str], start, exchange: str = "jkse") 
         symbol: dp.prepare_prices(group)
         for symbol, group in frame.groupby("symbol")
     }
+
+
+def load_jkse_index() -> pd.DataFrame:
+    """Daily JKSE closes (``close`` by date) for the market regime, from FMP."""
+    frame = hd.get_daily_stock_price("^JKSE", start_from="2000-01-01")
+    if frame is None or frame.empty:
+        raise RuntimeError("JKSE index prices are unavailable")
+    frame = frame.assign(date=pd.to_datetime(frame["date"])).set_index("date").sort_index()
+    return frame[["close"]]
+
+
+def load_ohlcv_histories(symbols: Iterable[str], start, exchange: str = "jkse") -> dict[str, pd.DataFrame]:
+    """OHLCV frames by date per symbol from R2; failures propagate."""
+    frame = prices.read_prices(exchange, symbols=list(symbols), start=start, columns=prices.OHLCV_COLUMNS)
+    return {symbol: group.drop(columns="symbol").set_index("date") for symbol, group in frame.groupby("symbol")}

@@ -20,6 +20,7 @@ import pandas as pd
 
 import harvest.alerts as alerts
 import harvest.dividend_play as dp
+import harvest.swing as sw
 import harvest.trading_store as store
 from pipeline import trading_data
 
@@ -228,7 +229,162 @@ def dividend_play(client, as_of=None, opening_within: int = dp.DEFAULT_OPENING_W
         raise
 
 
-TOOLS = {"dividend_play": dividend_play}
+# How close an indicator must be to its trigger to make the watch list (as in the Lab scanner).
+SWING_WATCH_PROXIMITY = 5.0
+SWING_HISTORY_DAYS = 500
+
+
+def swing_signal(
+    symbol: str,
+    frame: pd.DataFrame,
+    regime: pd.Series,
+    setup: dict,
+    scope: str,
+    holdout: dict,
+    company: dict,
+    as_of: pd.Timestamp,
+    benchmark: pd.Series,
+    breadth: pd.Series,
+    momentum: Optional[pd.Series] = None,
+) -> Optional[dict]:
+    """Today's swing signal for one stock: actionable when the setup fired at the latest close.
+
+    Entry is the next session's open, as in the backtest, so stop and target
+    are percentages of that fill; the card's reference prices use the latest
+    close, rounded to IDX ticks, with the next session's auto-reject band.
+    """
+    bars, _ = sw.ohlc_frame(frame)
+    if bars.empty or bars.index[-1] != as_of:
+        return None
+    params = [setup[k] for k in ("param_a", "param_b", "param_c", "param_d")]
+    aligned = regime.reindex(bars.index, method="ffill").fillna("bear") if not regime.empty \
+        else pd.Series("bear", index=bars.index)
+    fired, _, indicator = sw.strategy_components(
+        bars["close"], aligned, benchmark, momentum, setup["strategy_type"], *params, breadth=breadth,
+    )
+    indicator_now = float(indicator.iloc[-1]) if pd.notna(indicator.iloc[-1]) else np.nan
+    if bool(fired.iloc[-1]):
+        status = "actionable"
+    elif sw.is_near_setup(setup["strategy_type"], indicator_now, tuple(params), SWING_WATCH_PROXIMITY,
+                          regime=str(aligned.iloc[-1])):
+        status = "opening_soon"
+    else:
+        return None
+
+    close = float(bars["close"].iloc[-1])
+    next_session = store.idx_trading_days(as_of + pd.Timedelta(days=1), as_of + pd.Timedelta(days=14))[0]
+    sessions = store.idx_trading_days(next_session, next_session + pd.Timedelta(days=60))
+    floor, ceiling = sw.price_limits(close, next_session)
+    stop = sw.round_to_tick(close * (1 - setup["stop_loss"] / 100), "down") if setup["stop_loss"] > 0 else None
+    target = sw.round_to_tick(close * (1 + setup["profit_target"] / 100), "down") if setup["profit_target"] > 0 else None
+    trades = int(holdout.get("trades") or 0)
+    win_rate = holdout.get("win_rate")
+    detail = {
+        "company": company.get("companyName"),
+        "close": close,
+        "price_date": as_of.date().isoformat(),
+        "entry": "next_open",
+        "entry_session": next_session.isoformat(),
+        "setup": f"{setup['strategy_type']}: {sw.format_strategy_params(setup['strategy_type'], *params)}",
+        "params": setup,
+        "stop_pct": setup["stop_loss"],
+        "target_pct": setup["profit_target"],
+        "max_hold": int(setup["max_hold"]),
+        "indicator": _finite(indicator_now) if np.isfinite(indicator_now) else None,
+        "regime": str(aligned.iloc[-1]),
+        "price_limits": {"floor": floor, "ceiling": ceiling},
+        "stop_below_floor": bool(stop is not None and stop < floor),
+        "daily_volatility": _finite(company.get("Daily Volatility", np.nan)),
+        "holdout": {
+            "level": holdout.get("level"),
+            "method": holdout.get("method"),
+            "trades": trades,
+            "wins": int(round(win_rate * trades / 100)) if win_rate is not None and trades else None,
+            "win_rate": win_rate,
+            "avg_return": holdout.get("avg_trade"),
+            "profit_factor": holdout.get("profit_factor"),
+        },
+    }
+    return {
+        "symbol": symbol,
+        "status": status,
+        "entry_price": close if status == "actionable" else None,
+        "stop_price": stop if status == "actionable" else None,
+        "target_price": target if status == "actionable" else None,
+        "exit_by": sessions[min(int(setup["max_hold"]), len(sessions) - 1)] if status == "actionable" else None,
+        "key_date": next_session if status == "actionable" else None,
+        "key_date_estimated": False,
+        "setup_scope": scope,
+        "detail": detail,
+    }
+
+
+def swing(client, as_of=None) -> dict:
+    """Publish today's swing signals from the stored setups (latest price session by default)."""
+    from pipeline.trading_optimize import swing_inputs
+
+    started = time.monotonic()
+    setups = store.read_setups(client, "swing")
+    latest = pd.Timestamp(as_of or datetime.date.today()).normalize()
+    shortlist, histories, regime, breadth, benchmark = swing_inputs(
+        client, latest, latest - pd.Timedelta(days=SWING_HISTORY_DAYS),
+    )
+    if not histories:
+        raise RuntimeError("No price history for the swing shortlist")
+    if as_of is None:
+        latest = max(frame.index.max() for frame in histories.values())
+    as_of = pd.Timestamp(latest).normalize()
+
+    run_id = store.start_run(client, "swing", "scan", as_of)
+    try:
+        companies = shortlist.set_index("stock").to_dict("index")
+        momentum = sw.build_momentum_percentiles(
+            {symbol: frame["close"] for symbol, frame in histories.items()},
+            {int(p["params"]["param_a"]) for p in setups.values()
+             if p["params"]["strategy_type"] == sw.STRATEGY_CROSS_MOMENTUM},
+        )
+        counts = {"no_setup": 0, "stale_prices": 0, "not_signalled": 0}
+        signals = []
+        for symbol in shortlist["stock"]:
+            scope = symbol if symbol in setups else "global"
+            published = setups.get(scope)
+            frame = histories.get(symbol)
+            if published is None:
+                counts["no_setup"] += 1
+                continue
+            if frame is None or frame.empty or frame.index.max() < as_of:
+                counts["stale_prices"] += 1
+                continue
+            ranks = momentum.get(int(published["params"]["param_a"]))
+            signal = swing_signal(
+                symbol, frame[frame.index <= as_of], regime, published["params"], scope, published["holdout"],
+                companies.get(symbol, {}), as_of, benchmark, breadth,
+                momentum=ranks[symbol] if ranks is not None and symbol in ranks else None,
+            )
+            if signal is None:
+                counts["not_signalled"] += 1
+            else:
+                signals.append(signal)
+
+        store.write_signals(client, "swing", as_of, signals)
+        stats = {
+            "as_of": as_of.date().isoformat(),
+            "setups": len(setups),
+            "global_setup": "global" in setups,
+            "shortlist": len(shortlist),
+            "actionable": sum(s["status"] == "actionable" for s in signals),
+            "watch": sum(s["status"] == "opening_soon" for s in signals),
+            **counts,
+            "duration_seconds": round(time.monotonic() - started, 1),
+        }
+        store.finish_run(client, run_id, "ok", stats)
+        return stats
+    except Exception as exc:
+        store.finish_run(client, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"[:500]})
+        raise
+
+
+TOOLS = {"dividend_play": dividend_play, "swing": swing}
 
 
 def build_parser() -> argparse.ArgumentParser:
