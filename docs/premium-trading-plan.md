@@ -312,15 +312,15 @@ non-premium users (call `require_premium()` at the top of each page for now).
 
 ### 0.4 Extract the swing engine
 
-- [ ] Move pure logic from `apps/trading/day_trading.py` into `harvest/swing.py`: strategy
+- [x] Move pure logic from `apps/trading/day_trading.py` into `harvest/swing.py`: strategy
       constants, `_wilder_rsi`, `_close_supertrend`, `_dividend_adjust`, `_idx_tick_size`,
       `_slippage_fraction`, `_build_trade_fees`, `_build_market_breadth`, `_strategy_components`,
       `_build_regime_signals`, `_run_regime_backtest`, regime helpers, summary and gate functions.
       Drop leading underscores for public functions.
-- [ ] Rename the page to `apps/trading/swing_trading.py` and update `main.py`.
-- [ ] `tests/apps/test_short_term_swing.py` passes unchanged in behaviour (update imports only);
+- [x] Rename the page to `apps/trading/swing_trading.py` and update `main.py`.
+- [x] `tests/apps/test_short_term_swing.py` passes unchanged in behaviour (update imports only);
       add `tests/test_swing.py` for the moved functions.
-- [ ] Verify the page in the local preview: optimizer and single-ticker backtest give the same
+- [x] Verify the page in the local preview: optimizer and single-ticker backtest give the same
       numbers as before for one fixed ticker and date range.
 
 ## Phase 1: Dividend Play revamp (supporter launch)
@@ -531,3 +531,24 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - `tests/fake_supabase.py`: in-memory query builder for store and pipeline tests. The store's
     calls were also checked against the real supabase-py 2.31 builder (request URLs only, no
     network).
+- 2026-10-05: Phase 0, task 0.4 implemented on branch `premium/phase-0-swing-engine`, stacked on
+  `premium/phase-0-trading-store`. Phase 0 is complete apart from the [ASK USER] items above.
+  - `harvest/swing.py`: constants (including `SEARCH_PRESETS` and the parameter labels and input
+    bounds), regime helpers, indicators, dividend adjustment, IDX ticks and fees, breadth,
+    `strategy_components`, `build_regime_signals`, `run_regime_backtest`, summaries, gates,
+    stock selection, `scanner_strategy_plan`, `clean_price_series`, `is_near_setup`. Copied from
+    the page by line range, then renamed. Leading underscores dropped except for internal helpers
+    (`_align_to_prices`, `_weighted_mean`, `_score_stock_strategy_candidates`).
+    `_test_stock_strategies` became `evaluate_stock_strategies` (a `test_` name would be collected
+    by pytest). `is_near_setup` takes `regime=` instead of reading the page's `curr_regime`.
+  - Page renamed to `apps/trading/swing_trading.py`; `main.py` keeps `url_path='day_trading'` so
+    home page links, bookmarks and `tests/live/smoke.spec.js` keep working. Removed the stale
+    commented-out `page_swing_trading` entry.
+  - `tests/apps/test_short_term_swing.py`: import and name changes only, plus the regime
+    argument, plus a smoke test that the page imports. New `tests/test_swing.py`.
+  - Same numbers: a golden-master script on real local prices (12 IDX tickers, Balanced preset,
+    7 strategies, 308 result rows) gave bit-identical results, summary, per-stock selections,
+    scanner plan and single backtest before and after. In the preview, the old and new page gave
+    identical single-ticker results for BBCA.JK (Regime RSI and Supertrend pullback). The
+    optimizer could not run in the preview with either version: the shortlist needs the last 60
+    sessions of prices and the local file ends 2026-04-08 (no FMP key locally to top it up).
