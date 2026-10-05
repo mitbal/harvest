@@ -43,20 +43,27 @@ def fetch_gap(frame: pd.DataFrame, max_concurrency: int) -> pd.DataFrame:
     symbols = frame["symbol"].unique().tolist()
     logger.info("Refetching %s symbols from %s", len(symbols), start)
 
-    fetched, failed = [], []
+    fetched, empty, failed = [], [], []
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
         futures = {executor.submit(core._fetch_with_retries, symbol, start): symbol for symbol in symbols}
         for future in as_completed(futures):
             try:
                 result = future.result()
             except Exception:
-                result = None
-            if result is None or result.empty:
                 failed.append(futures[future])
+                continue
+            if result is None or result.empty:
+                empty.append(futures[future])
             else:
                 fetched.append(result)
-    # Delisted symbols fail here and keep their cached history.
-    logger.info("Gap fill: %s symbols fetched, %s without new data", len(fetched), len(failed))
+    # Delisted symbols return no data and keep their cached history.
+    logger.info(
+        "Gap fill: %s symbols fetched, %s without new data, %s failed",
+        len(fetched), len(empty), len(failed),
+    )
+    if failed:
+        # Usually rate limiting; rerun with a lower --max-concurrency to fill them.
+        logger.warning("Gap fill downloads failed for: %s", ", ".join(sorted(failed)))
     return pd.concat(fetched, ignore_index=True) if fetched else pd.DataFrame()
 
 
