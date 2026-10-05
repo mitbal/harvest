@@ -415,3 +415,101 @@ def test_usd_statements_are_converted_to_idr(monkeypatch):
     assert converted["totalStockholdersEquity"].iloc[-1] == pytest.approx(statements["totalStockholdersEquity"].iloc[-1] * 16000)
     assert converted["weightedAverageShsOut"].iloc[-1] == statements["weightedAverageShsOut"].iloc[-1]
     assert pos.statements_in_idr(pos.prepare_statements(*make_statements())) is not None
+
+
+# ── Backtest ────────────────────────────────────────────────────────────── #
+
+def test_statements_become_public_after_the_reporting_lag():
+    dates = pd.Series(pd.to_datetime(["2025-12-31", "2026-03-31", "2026-06-30"]))
+
+    assert pos.available_from(dates).dt.strftime("%Y-%m-%d").tolist() == ["2026-03-31", "2026-05-30", "2026-08-29"]
+
+
+def test_point_in_time_cuts_unpublished_quarters():
+    income, balance, cash = make_statements(quarters=8, end="2026-06-30")
+    statements = pos.prepare_statements(income, balance, cash)
+
+    visible = pos.point_in_time(statements, "2026-05-15")
+
+    # Q1 2026 is public from 30 May, so the latest is the annual report, public from 31 Mar.
+    assert visible["date"].max() == pd.Timestamp("2026-03-31")
+    assert pos.point_in_time(None, "2026-05-15") is None
+
+
+def test_rebalance_dates_are_the_first_april_session():
+    sessions = pd.bdate_range("2016-01-01", "2018-06-30")
+
+    dates = pos.rebalance_dates(sessions, 2016)
+
+    # 1 April 2017 and 2018 fall on a weekend.
+    assert [d.date().isoformat() for d in dates] == ["2016-04-01", "2017-04-03", "2018-04-02"]
+
+
+def _inputs(symbols, end="2026-09-30"):
+    income, balance, cash = make_statements(end="2026-06-30", ocf=200.0)
+    statements = pos.prepare_statements(income, balance, cash)
+    prices = make_prices(start="2015-01-01", end=end, price=100.0)
+    prices = prices.assign(date=pd.to_datetime(prices["date"])).sort_values("date").reset_index(drop=True)
+    return {
+        symbol: {
+            "prices": prices, "financials": make_financials(), "statements": statements,
+            "profile": {"companyName": symbol, "sector": "Industrials", "industry": "Conglomerates"},
+        }
+        for symbol in symbols
+    }
+
+
+def test_screen_at_uses_only_public_statements_and_period_market_cap():
+    screen = {**pos.DEFAULT_FILTERS, "min_market_cap": 1e-8}
+
+    screened = pos.screen_at(_inputs(["A.JK"]), "2026-05-15", screen)
+
+    row = screened.iloc[0]
+    assert row["Statement Date"] == pd.Timestamp("2026-03-31").date()
+    assert row["Market Cap"] == pytest.approx(100.0 * 100)
+    assert bool(row["Passes All"])
+    assert pos.screen_at(_inputs(["A.JK"]), "2026-05-15", {**screen, "min_market_cap": 1.0}).empty
+
+
+def test_backtest_compounds_yearly_picks_against_the_index(monkeypatch):
+    inputs = _inputs(["UP.JK", "FLAT.JK"])
+    sessions = pd.bdate_range("2023-01-02", "2025-12-31")
+    inputs["UP.JK"]["prices"] = pd.DataFrame({"date": sessions, "close": 100.0 * 1.2 ** ((sessions - sessions[0]).days / 365.25)})
+    inputs["FLAT.JK"]["prices"] = pd.DataFrame({"date": sessions, "close": 100.0})
+    benchmark = pd.Series(1000.0 * 1.05 ** ((sessions - sessions[0]).days / 365.25), index=sessions)
+    picks = {pd.Timestamp("2023-04-03"): ["UP.JK", "FLAT.JK"], pd.Timestamp("2024-04-01"): [], pd.Timestamp("2025-04-01"): ["UP.JK"]}
+
+    def fake_screen(inputs, as_of, screen):
+        symbols = picks[pd.Timestamp(as_of)]
+        return pd.DataFrame({"Symbol": symbols, "Passes All": True, "Score": 80.0})
+
+    monkeypatch.setattr(pos, "screen_at", fake_screen)
+    result = pos.backtest_screen(inputs, benchmark, pos.DEFAULT_FILTERS, start_year=2023)
+
+    years = result["years"]
+    assert years["start"].astype(str).tolist() == ["2023-04-03", "2024-04-01", "2025-04-01"]
+    assert years["complete"].tolist() == [True, True, False]
+    first = years.iloc[0]
+    up = (1.2 ** ((pd.Timestamp("2024-04-01") - pd.Timestamp("2023-04-03")).days / 365.25) - 1) * 100
+    assert first["portfolio"] == pytest.approx(((up - 0.4) + (0 - 0.4)) / 2)
+    assert years.iloc[1]["portfolio"] == 0.0 and years.iloc[1]["holdings"] == {}
+    summary = result["summary"]
+    assert summary["years"] == 2 and summary["cash_years"] == 1
+    assert summary["total_return"] == pytest.approx(first["portfolio"])
+    assert summary["benchmark_cagr"] == pytest.approx(5.0, abs=0.1)
+    assert summary["beat_years"] == int(first["excess"] > 0)
+
+
+def test_backtest_on_synthetic_inputs_runs_end_to_end():
+    screen = {**pos.DEFAULT_FILTERS, "min_market_cap": 1e-8}
+    inputs = _inputs(["A.JK"])
+    sessions = pd.DatetimeIndex(inputs["A.JK"]["prices"]["date"])
+    benchmark = pd.Series(1000.0, index=sessions)
+
+    result = pos.backtest_screen(inputs, benchmark, screen, start_year=2025)
+
+    years = result["years"]
+    assert years["start"].astype(str).tolist() == ["2025-04-01", "2026-04-01"]
+    assert list(years.iloc[0]["holdings"]) == ["A.JK"]
+    assert years.iloc[0]["portfolio"] == pytest.approx(-0.4)
+    assert result["summary"]["years"] == 1

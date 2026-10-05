@@ -6,6 +6,7 @@ Results go to ``trading_setups`` (one global setup plus per-stock overrides)
 with a ``trading_runs`` row recording what was searched.
 """
 import argparse
+import concurrent.futures
 import datetime
 import json
 import logging
@@ -18,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 import harvest.dividend_play as dp
+import harvest.position as pos
 import harvest.swing as sw
 import harvest.trading_store as store
 from pipeline import trading_data
@@ -289,7 +291,103 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
 
 
 SETUP_PARAM_KEYS = ("strategy_type", "param_a", "param_b", "param_c", "param_d")
-TOOLS = {"dividend_play": dividend_play, "swing": swing}
+# ── Long Term ───────────────────────────────────────────────────────────── #
+# Nothing is searched: the job backtests the published screen and stores its
+# yearly record with it, so the page can show how the screen would have done.
+
+# Companies this size today make up the base set; each year the backtest
+# re-selects by that year's market cap, so today's size doesn't pick the winners.
+LONG_TERM_BASE_MIN_CAP = 0.5
+LONG_TERM_BASE_MAX = 400
+LONG_TERM_PRICE_START = "2010-01-01"
+
+
+def long_term_inputs(profiles: pd.DataFrame, histories: dict[str, pd.DataFrame]) -> tuple[dict, dict]:
+    """Backtest inputs per symbol, plus the symbols whose statements could not be fetched."""
+    def fetch(symbol: str) -> dict:
+        financials, statements = trading_data.load_long_term_fundamentals(symbol)
+        return {"financials": financials, "statements": statements}
+
+    inputs, failed = {}, {}
+    symbols = [s for s in profiles.index if s in histories]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=pos.SCAN_WORKERS) as executor:
+        futures = {executor.submit(fetch, symbol): symbol for symbol in symbols}
+        for future in concurrent.futures.as_completed(futures):
+            symbol = futures[future]
+            try:
+                fundamentals = future.result()
+            except Exception as exc:
+                failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
+                continue
+            inputs[symbol] = {
+                "prices": histories[symbol],
+                "profile": profiles.loc[symbol, ["companyName", "sector", "industry"]].to_dict(),
+                **fundamentals,
+            }
+    return inputs, failed
+
+
+def long_term_record(result: dict) -> dict:
+    """The backtest as stored with the published screen: summary plus one entry per year."""
+    years = [
+        {
+            "start": row["start"].isoformat(),
+            "end": row["end"].isoformat(),
+            "complete": bool(row["complete"]),
+            "analyzed": int(row["analyzed"]),
+            "passed": int(row["passed"]),
+            "holdings": row["holdings"],
+            "portfolio": row["portfolio"],
+            "benchmark": row["benchmark"],
+        }
+        for _, row in result["years"].iterrows()
+    ]
+    return {
+        "method": "yearly_rebalance",
+        "rebalance": "first session in April",
+        "costs_pct": pos.BACKTEST_ROUND_TRIP_COST,
+        "reporting_lag_days": {"interim": pos.INTERIM_LAG_DAYS, "annual": pos.ANNUAL_LAG_DAYS},
+        **result["summary"],
+        "per_year": years,
+    }
+
+
+def long_term(client, as_of=None) -> dict:
+    """Backtest the published Long Term screen and publish it with its record."""
+    started = time.monotonic()
+    as_of = pd.Timestamp(as_of or datetime.date.today()).normalize()
+    run_id = store.start_run(client, "long_term", "optimize", as_of)
+    try:
+        screen = dict(pos.PUBLISHED_SCREEN)
+        universe = trading_data.load_long_term_universe()
+        base = pos.select_universe(universe, LONG_TERM_BASE_MIN_CAP, LONG_TERM_BASE_MAX)
+        histories = trading_data.load_price_histories(base.index.tolist(), LONG_TERM_PRICE_START)
+        histories = {symbol: frame[frame["date"] <= as_of] for symbol, frame in histories.items()}
+        inputs, failed = long_term_inputs(base, histories)
+        benchmark = trading_data.load_jkse_index()["close"]
+        result = pos.backtest_screen(
+            inputs, benchmark[benchmark.index <= as_of], screen, start_year=pos.BACKTEST_START_YEAR,
+        )
+        record = long_term_record(result)
+        store.write_setups(client, "long_term", [{"scope": "global", "params": screen, "holdout": record}], run_id)
+        stats = {
+            "as_of": as_of.date().isoformat(),
+            "base": len(base),
+            "with_prices": len(histories),
+            "with_statements": len(inputs),
+            "failed": len(failed),
+            "failed_symbols": dict(sorted(failed.items())[:20]),
+            **{key: value for key, value in record.items() if key != "per_year"},
+            "duration_seconds": round(time.monotonic() - started, 1),
+        }
+        store.finish_run(client, run_id, "ok", stats)
+        return stats
+    except Exception as exc:
+        store.finish_run(client, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"[:500]})
+        raise
+
+
+TOOLS = {"dividend_play": dividend_play, "swing": swing, "long_term": long_term}
 
 
 def build_parser() -> argparse.ArgumentParser:

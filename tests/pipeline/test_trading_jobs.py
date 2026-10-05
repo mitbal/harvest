@@ -558,3 +558,28 @@ def test_with_retries_backs_off_on_rate_limits(monkeypatch):
     with pytest.raises(requests.HTTPError):
         trading_data.with_retries(denied)
     assert len(calls) == 1
+
+
+def test_long_term_optimize_publishes_the_screen_with_its_backtest(monkeypatch):
+    monkeypatch.setattr(pos, "PUBLISHED_SCREEN", {**pos.PUBLISHED_SCREEN, "min_market_cap": TINY_FLOOR})
+    monkeypatch.setattr(trading_optimize, "LONG_TERM_BASE_MIN_CAP", TINY_FLOOR)
+    monkeypatch.setattr(pos, "BACKTEST_START_YEAR", 2025)
+    client = FakeSupabase()
+    universe = _lt_profiles(["GOOD.JK", "DOWN.JK"])
+    prices = _lt_prices()
+    index = pd.DataFrame({"close": 1000.0}, index=pd.DatetimeIndex(prices["date"]))
+    fundamentals = {"GOOD.JK": _growing(), "DOWN.JK": requests.HTTPError("403 Forbidden")}
+
+    a, b, c = _lt_inputs(fundamentals, {"GOOD.JK": prices, "DOWN.JK": prices}, universe)
+    with a, b, c, patch.object(trading_data, "load_jkse_index", return_value=index):
+        stats = trading_optimize.long_term(client, as_of="2026-10-05")
+
+    published = store.read_setups(client, "long_term")["global"]
+    assert published["params"]["max_companies"] == 200
+    record = published["holdout"]
+    assert record["method"] == "yearly_rebalance" and record["years"] == 1
+    assert [year["start"] for year in record["per_year"]] == ["2025-04-01", "2026-04-01"]
+    assert record["per_year"][0]["holdings"] == {"GOOD.JK": pytest.approx(-0.4)}
+    assert record["benchmark_cagr"] == pytest.approx(0.0)
+    assert stats["with_statements"] == 1 and "HTTPError" in stats["failed_symbols"]["DOWN.JK"]
+    assert store.latest_run(client, "long_term", "optimize")["stats"]["years"] == 1

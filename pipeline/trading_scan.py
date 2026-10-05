@@ -388,9 +388,7 @@ def swing(client, as_of=None) -> dict:
 
 # ── Long Term ───────────────────────────────────────────────────────────── #
 
-# The published screen analyzes more companies than the page's default form.
-LONG_TERM_MAX_COMPANIES = 200
-LONG_TERM_DEFAULTS = {**pos.DEFAULT_FILTERS, "max_companies": LONG_TERM_MAX_COMPANIES}
+LONG_TERM_DEFAULTS = pos.PUBLISHED_SCREEN
 MAX_FAILURES_LISTED = 20
 
 

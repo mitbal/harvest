@@ -80,6 +80,8 @@ DEFAULT_FILTERS = {
     "require_both_discounts": True,
     "require_quality": True,
 }
+# The published screen (scan and backtest) analyzes more companies than the page's form.
+PUBLISHED_SCREEN = {**DEFAULT_FILTERS, "max_companies": 200}
 # Quality thresholds. Leverage, interest cover and cash conversion don't describe a bank,
 # so banks are held to ROE and dilution only.
 MAX_DEBT_TO_EQUITY = 1.5
@@ -842,3 +844,170 @@ def detail_is_current(detail_row: dict) -> bool:
         "Implied Price 1Y",
         "Implied Price 5Y",
     }.issubset(detail_row)
+
+
+# ── Historical backtest of the screen ───────────────────────────────────── #
+# Once a year, rank the companies passing the screen with only the information
+# public on that day, hold the top N equally weighted for a year, and compare
+# with the JKSE index. Price returns on both sides (dividends excluded).
+
+# Days after the period end by which IDX companies must publish: interim
+# quarters within 60 days at the latest (with a limited review), the audited
+# annual report within 90. FMP's filing dates equal the period end, so unusable.
+INTERIM_LAG_DAYS = 60
+ANNUAL_LAG_DAYS = 90
+REBALANCE_MONTH = 4
+BACKTEST_START_YEAR = 2016
+BACKTEST_TOP_N = 10
+BACKTEST_ROUND_TRIP_COST = 0.40  # % per yearly rebalance: 0.15% buy + 0.25% sell
+
+
+def available_from(dates: pd.Series) -> pd.Series:
+    """The day each quarter's statement can be assumed public."""
+    dates = as_dates(dates)
+    lag = np.where(dates.dt.month == 12, ANNUAL_LAG_DAYS, INTERIM_LAG_DAYS)
+    return dates + pd.to_timedelta(lag, unit="D")
+
+
+def point_in_time(frame: Optional[pd.DataFrame], as_of) -> Optional[pd.DataFrame]:
+    """Statements re-dated to their publication day and cut at ``as_of``.
+
+    Re-dating also makes the P/E, P/S and P/B histories use each statement only
+    from the day it was public.
+    """
+    if frame is None or frame.empty or "date" not in frame:
+        return frame
+    shifted = frame.assign(date=available_from(frame["date"]))
+    return shifted[shifted["date"] <= pd.Timestamp(as_of)]
+
+
+def shares_at(statements: Optional[pd.DataFrame]) -> float:
+    """Latest reported weighted average share count in ``statements``."""
+    if statements is None or statements.empty:
+        return np.nan
+    shares = statements.sort_values("date")["weightedAverageShsOut"].dropna()
+    shares = shares[shares > 0]
+    return float(shares.iloc[-1]) if not shares.empty else np.nan
+
+
+def close_on(prices: pd.DataFrame, date) -> float:
+    """Last close on or before ``date``."""
+    before = prices[prices["date"] <= pd.Timestamp(date)]
+    return float(before["close"].iloc[-1]) if not before.empty else np.nan
+
+
+def rebalance_dates(sessions: pd.DatetimeIndex, start_year: int = BACKTEST_START_YEAR) -> list[pd.Timestamp]:
+    """First session on or after 1 April of each year from ``start_year``."""
+    sessions = pd.DatetimeIndex(sessions).sort_values()
+    dates = []
+    for year in range(start_year, sessions[-1].year + 1):
+        after = sessions[sessions >= pd.Timestamp(year, REBALANCE_MONTH, 1)]
+        if len(after):
+            dates.append(after[0])
+    return dates
+
+
+def screen_at(inputs: dict[str, dict], as_of, screen: dict) -> pd.DataFrame:
+    """The screen as it would have run on ``as_of``: scored, ranked rows with ``Passes All``.
+
+    ``inputs`` maps symbols to ``prices`` (date, close), ``financials``,
+    ``statements`` (from ``prepare_statements``) and ``profile`` (name,
+    sector, industry). Market cap uses the close and share count of the day.
+    """
+    as_of = pd.Timestamp(as_of)
+    caps, analysis = {}, {}
+    for symbol, data in inputs.items():
+        prices = data["prices"][data["prices"]["date"] <= as_of]
+        statements = point_in_time(data.get("statements"), as_of)
+        close = close_on(prices, as_of)
+        shares = shares_at(statements)
+        if prices.empty or not np.isfinite(close) or not np.isfinite(shares) \
+                or prices["date"].iloc[-1] < as_of - pd.Timedelta(days=14):
+            continue
+        caps[symbol] = close * shares
+        analysis[symbol] = (prices, statements, close)
+
+    floor = screen["min_market_cap"] * 1_000_000_000_000
+    eligible = sorted((s for s in caps if caps[s] >= floor), key=caps.get, reverse=True)
+    rows = []
+    for symbol in eligible[: int(screen["max_companies"])]:
+        prices, statements, close = analysis[symbol]
+        profile = {**inputs[symbol].get("profile", {}), "price": close, "mktCap": caps[symbol]}
+        try:
+            rows.append(analyze_frames(
+                symbol, profile, prices, point_in_time(inputs[symbol]["financials"], as_of),
+                int(screen["history_years"]), statements=statements,
+            ))
+        except SkipStock:
+            continue
+    scored = score_results(rows)
+    if scored.empty:
+        return scored.assign(**{"Passes All": pd.Series(dtype=bool), "Failed Rules": pd.Series(dtype=str)})
+    return ranked(apply_screen(scored, screen))
+
+
+def backtest_screen(
+    inputs: dict[str, dict],
+    benchmark: pd.Series,
+    screen: dict,
+    top_n: int = BACKTEST_TOP_N,
+    start_year: int = BACKTEST_START_YEAR,
+    end=None,
+) -> dict:
+    """Yearly rebalance of the screen's top ``top_n`` against the benchmark (close by date).
+
+    Returns ``years`` (one row per holding period; the last may be open) and
+    ``summary`` (complete years only). Without a qualifying company the
+    portfolio holds cash for the year.
+    """
+    benchmark = benchmark.sort_index()
+    if end is not None:
+        benchmark = benchmark[benchmark.index <= pd.Timestamp(end)]
+    starts = rebalance_dates(benchmark.index, start_year)
+    last = benchmark.index[-1]
+    years = []
+    for start, finish in zip(starts, [*starts[1:], last]):
+        if finish <= start:
+            continue
+        screened = screen_at(inputs, start, screen)
+        picks = screened[screened["Passes All"]].head(top_n) if not screened.empty else screened
+        returns = {}
+        for symbol in picks["Symbol"] if not picks.empty else []:
+            prices = inputs[symbol]["prices"]
+            buy, sell = close_on(prices, start), close_on(prices, finish)
+            returns[symbol] = (sell / buy - 1) * 100 - BACKTEST_ROUND_TRIP_COST
+        portfolio = float(np.mean(list(returns.values()))) if returns else 0.0
+        index_return = float((benchmark.asof(finish) / benchmark.asof(start) - 1) * 100)
+        years.append({
+            "start": start.date(),
+            "end": finish.date(),
+            "complete": finish in starts,
+            "analyzed": len(screened),
+            "passed": int(screened["Passes All"].sum()) if not screened.empty else 0,
+            "holdings": returns,
+            "portfolio": portfolio,
+            "benchmark": index_return,
+            "excess": portfolio - index_return,
+        })
+
+    table = pd.DataFrame(years)
+    complete = table[table["complete"]] if not table.empty else table
+    summary = {"years": int(len(complete)), "top_n": top_n}
+    if not complete.empty:
+        growth = (1 + complete["portfolio"] / 100).prod()
+        index_growth = (1 + complete["benchmark"] / 100).prod()
+        span = len(complete)
+        summary.update({
+            "start": complete["start"].iloc[0].isoformat(),
+            "end": complete["end"].iloc[-1].isoformat(),
+            "total_return": (growth - 1) * 100,
+            "benchmark_total_return": (index_growth - 1) * 100,
+            "cagr": (growth ** (1 / span) - 1) * 100,
+            "benchmark_cagr": (index_growth ** (1 / span) - 1) * 100,
+            "beat_years": int((complete["excess"] > 0).sum()),
+            "worst_year": float(complete["portfolio"].min()),
+            "benchmark_worst_year": float(complete["benchmark"].min()),
+            "avg_holdings": float(complete["holdings"].map(len).mean()),
+            "cash_years": int((complete["holdings"].map(len) == 0).sum()),
+        })
+    return {"years": table, "summary": summary}
