@@ -345,6 +345,24 @@ def get_financial_data_dag(stock):
     return None
 
 
+def get_fmp_statement(stock, statement, period='quarter', limit=80, api_key=None):
+    """One FMP financial statement ('income-statement', 'balance-sheet-statement' or
+    'cash-flow-statement'), newest first."""
+    if api_key is None:
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("FMP_API_KEY") or os.environ.get('FMP_API_KEY')
+        except Exception:
+            api_key = os.environ.get('FMP_API_KEY')
+    if not api_key:
+        raise ValueError("FMP_API_KEY not found in environment or st.secrets")
+
+    url = f'https://financialmodelingprep.com/api/v3/{statement}/{stock}?period={period}&limit={limit}&apikey={api_key}'
+    r = requests.get(url, timeout=_FMP_TIMEOUT)
+    r.raise_for_status()
+    return pd.DataFrame(r.json())
+
+
 def get_shares_outstanding(stock, api_key=None):
 
     if api_key is None:

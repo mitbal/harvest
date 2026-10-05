@@ -1,14 +1,17 @@
 """Long Term engine ("Growth at a Discount"): valuation history, growth, scoring and projections.
 
-Each company is compared with its own history: P/E and P/S against their
-means and medians over the chosen window, and trailing-twelve-month revenue
-and earnings growth to confirm a low multiple is not a shrinking business.
+Each company is compared with its own history: P/E and P/S (P/B for banks)
+against their means and medians over the chosen window, and trailing-twelve-
+month revenue and earnings growth to confirm a low multiple is not a
+shrinking business. Quality checks from the balance sheet and cash flow
+statement screen out cheap companies that are cheap for a reason.
 
 Streamlit-free so the page and the pipeline jobs share one implementation.
 """
 import concurrent.futures
 import datetime
 import hashlib
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -16,7 +19,7 @@ import pandas as pd
 import harvest.data as hd
 
 
-SCAN_SCHEMA_VERSION = 3
+SCAN_SCHEMA_VERSION = 4
 PROFILE_BATCH_SIZE = 30
 SCAN_WORKERS = 5
 MIN_PROJECTION_GROWTH = -20.0
@@ -52,6 +55,18 @@ RESULT_COLUMNS = [
     "Implied Price 1Y",
     "Implied Price 5Y",
     "Statement Date",
+    "Value Basis",
+    "Current PB",
+    "PB Mean",
+    "PB Median",
+    "PB Discount",
+    "PB Percentile",
+    "Debt to Equity",
+    "Interest Coverage",
+    "Cash Conversion",
+    "ROE",
+    "Share Change 1Y",
+    "Quality Data",
 ]
 # The page's form defaults; the published screen uses the same values.
 DEFAULT_FILTERS = {
@@ -63,7 +78,26 @@ DEFAULT_FILTERS = {
     "min_earnings_growth": 0.0,
     "require_recent_growth": True,
     "require_both_discounts": True,
+    "require_quality": True,
 }
+# Quality thresholds. Leverage, interest cover and cash conversion don't describe a bank,
+# so banks are held to ROE and dilution only.
+MAX_DEBT_TO_EQUITY = 1.5
+MIN_INTEREST_COVERAGE = 3.0
+MIN_CASH_CONVERSION = 80.0
+MIN_ROE = 8.0
+MAX_SHARE_CHANGE = 5.0
+CASH_CONVERSION_QUARTERS = 12
+# FMP statement fields the quality checks and P/B need, by statement.
+STATEMENT_FIELDS = {
+    "income-statement": ["interestExpense", "incomeBeforeTax", "weightedAverageShsOut"],
+    "balance-sheet-statement": ["totalDebt", "totalStockholdersEquity"],
+    "cash-flow-statement": ["operatingCashFlow", "netIncome"],
+}
+MONETARY_FIELDS = [
+    "interestExpense", "incomeBeforeTax", "totalDebt", "totalStockholdersEquity",
+    "operatingCashFlow", "cashFlowNetIncome",
+]
 
 
 class SkipStock(Exception):
@@ -143,6 +177,11 @@ def format_idr(value: float) -> str:
     if abs(value) >= 1_000_000_000:
         return f"IDR {value / 1_000_000_000:.1f}B"
     return f"IDR {value:,.0f}"
+
+
+def is_bank(profile: dict) -> bool:
+    """Banks are valued on book value, not sales (FMP industry "Banks - ...")."""
+    return str(profile.get("industry") or "").startswith("Banks")
 
 
 # ── Universe ────────────────────────────────────────────────────────────── #
@@ -274,20 +313,24 @@ def ratio_summary(
     history["ratio"] = pd.to_numeric(history["ratio"], errors="coerce")
     history = history.replace([np.inf, -np.inf], np.nan).dropna()
     history = history[history["ratio"] > 0].sort_values("date")
-    if history.empty:
-        return history, {}
+    return history, summarize_ratio(history, history_years)
 
+
+def summarize_ratio(history: pd.DataFrame, history_years: int) -> dict:
+    """Current, mean, median, percentile and median discount of a positive ratio history."""
+    if history.empty:
+        return {}
     cutoff = history["date"].max() - pd.DateOffset(years=history_years)
     window = history[history["date"] >= cutoff]
     if len(window) < 60:
-        return history, {}
+        return {}
 
     current = finite(history["ratio"].iloc[-1])
     mean = finite(window["ratio"].mean())
     median = finite(window["ratio"].median())
     percentile = finite((window["ratio"] <= current).mean() * 100)
     discount = finite((median / current - 1) * 100) if current > 0 else np.nan
-    return history, {
+    return {
         "current": current,
         "mean": mean,
         "median": median,
@@ -295,6 +338,150 @@ def ratio_summary(
         "discount": discount,
         "observations": len(window),
     }
+
+
+# ── Balance sheet and cash flow ─────────────────────────────────────────── #
+
+def load_statements(symbol: str) -> pd.DataFrame:
+    """Quarterly FMP fields for the quality checks and P/B; raises when FMP fails."""
+    frames = [
+        hd.get_fmp_statement(symbol, statement)
+        for statement in STATEMENT_FIELDS
+    ]
+    return prepare_statements(*frames)
+
+
+def prepare_statements(income: pd.DataFrame, balance: pd.DataFrame, cash_flow: pd.DataFrame) -> pd.DataFrame:
+    """One row per quarter, oldest first; the cash flow statement's net income is ``cashFlowNetIncome``.
+
+    ``reportedCurrency`` is the first currency any statement reports.
+    """
+    merged = None
+    currency = None
+    for frame, (statement, fields) in zip((income, balance, cash_flow), STATEMENT_FIELDS.items()):
+        if frame is None or frame.empty or "date" not in frame:
+            frame = pd.DataFrame(columns=["date", *fields])
+        if currency is None and "reportedCurrency" in frame and frame["reportedCurrency"].notna().any():
+            currency = str(frame["reportedCurrency"].dropna().iloc[0])
+        part = frame.reindex(columns=["date", *fields]).copy()
+        if statement == "cash-flow-statement":
+            part = part.rename(columns={"netIncome": "cashFlowNetIncome"})
+        part["date"] = pd.to_datetime(part["date"], errors="coerce")
+        part = part.dropna(subset=["date"]).drop_duplicates("date")
+        merged = part if merged is None else merged.merge(part, on="date", how="outer")
+    for column in merged.columns.drop("date"):
+        merged[column] = pd.to_numeric(merged[column], errors="coerce")
+    merged["reportedCurrency"] = currency or "IDR"
+    return merged.sort_values("date").reset_index(drop=True)
+
+
+def usd_idr_rate(currency: Optional[str]) -> float:
+    """Multiplier from a reporting currency to IDR (as ``calc_ratio_history`` converts P/E and P/S)."""
+    return float(hd.get_usd_idr_rate()) if currency == "USD" else 1.0
+
+
+def statements_in_idr(statements: pd.DataFrame) -> pd.DataFrame:
+    if statements.empty:
+        return statements
+    rate = usd_idr_rate(statements["reportedCurrency"].iloc[0])
+    if rate == 1.0:
+        return statements
+    converted = statements.copy()
+    converted[MONETARY_FIELDS] = converted[MONETARY_FIELDS] * rate
+    converted["reportedCurrency"] = "IDR"
+    return converted
+
+
+def book_ratio_summary(
+    prices: pd.DataFrame,
+    statements: pd.DataFrame,
+    shares: float,
+    history_years: int,
+) -> tuple[pd.DataFrame, dict]:
+    """Daily P/B from quarterly equity per share (same share count as P/E and P/S)."""
+    book = statements[["date", "totalStockholdersEquity"]].dropna()
+    book = book[book["totalStockholdersEquity"] > 0]
+    if book.empty or not np.isfinite(shares) or shares <= 0:
+        return pd.DataFrame(columns=["date", "ratio"]), {}
+    book = book.assign(bvps=book["totalStockholdersEquity"] / shares).sort_values("date")
+    daily = prices[["date", "close"]].copy()
+    daily["date"] = pd.to_datetime(daily["date"])
+    daily = pd.merge_asof(daily.sort_values("date"), book[["date", "bvps"]], on="date", direction="backward")
+    history = pd.DataFrame({"date": daily["date"], "ratio": daily["close"] / daily["bvps"]})
+    history = history.replace([np.inf, -np.inf], np.nan).dropna()
+    history = history[history["ratio"] > 0].sort_values("date")
+    return history, summarize_ratio(history, history_years)
+
+
+def book_growth(statements: pd.DataFrame) -> dict:
+    """Year-over-year growth of equity per reported share: latest and five-year median."""
+    frame = statements[["date", "totalStockholdersEquity", "weightedAverageShsOut"]].dropna()
+    frame = frame[(frame["totalStockholdersEquity"] > 0) & (frame["weightedAverageShsOut"] > 0)]
+    if len(frame) < 5:
+        return {"ttm": np.nan, "5y": np.nan}
+    per_share = frame["totalStockholdersEquity"] / frame["weightedAverageShsOut"]
+    growth = (per_share.pct_change(4) * 100).dropna()
+    return {"ttm": finite(growth.iloc[-1]), "5y": finite(growth.tail(20).median())}
+
+
+def quality_metrics(
+    statements: Optional[pd.DataFrame],
+    earnings_ttm: float,
+    net_income: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Leverage, interest cover, cash conversion, ROE and dilution from the latest quarters.
+
+    ROE uses the same trailing earnings as P/E over the average of the latest
+    and year-ago equity. Cash conversion divides operating cash flow by
+    ``net_income`` (``date, netIncome``, the statements P/E uses) when given,
+    else by the cash flow statement's own net income. Interest cover is
+    infinite without interest expense. Monetary values must share a currency.
+    """
+    metrics = {key: np.nan for key in ("Debt to Equity", "Interest Coverage", "Cash Conversion", "ROE", "Share Change 1Y")}
+    if statements is None or statements.empty:
+        return metrics
+    frame = statements.sort_values("date")
+
+    equity = frame["totalStockholdersEquity"].dropna()
+    debt = frame.dropna(subset=["totalDebt", "totalStockholdersEquity"])
+    if not debt.empty:
+        latest = debt.iloc[-1]
+        metrics["Debt to Equity"] = (
+            finite(latest["totalDebt"] / latest["totalStockholdersEquity"])
+            if latest["totalStockholdersEquity"] > 0 else np.inf
+        )
+
+    income = frame.dropna(subset=["interestExpense", "incomeBeforeTax"]).tail(4)
+    if len(income) == 4:
+        interest = income["interestExpense"].abs().sum()
+        ebit = income["incomeBeforeTax"].sum() + interest
+        metrics["Interest Coverage"] = ebit / interest if interest > 0 else np.inf
+
+    if net_income is not None:
+        frame = frame.drop(columns="cashFlowNetIncome").merge(
+            net_income[["date", "netIncome"]].rename(columns={"netIncome": "cashFlowNetIncome"}),
+            on="date", how="left",
+        )
+    cash = frame.dropna(subset=["operatingCashFlow", "cashFlowNetIncome"]).tail(CASH_CONVERSION_QUARTERS)
+    if len(cash) == CASH_CONVERSION_QUARTERS and cash["cashFlowNetIncome"].sum() > 0:
+        metrics["Cash Conversion"] = finite(cash["operatingCashFlow"].sum() / cash["cashFlowNetIncome"].sum() * 100)
+
+    if len(equity) >= 5 and np.isfinite(earnings_ttm):
+        average = (equity.iloc[-1] + equity.iloc[-5]) / 2
+        if average > 0:
+            metrics["ROE"] = finite(earnings_ttm / average * 100)
+
+    shares = frame["weightedAverageShsOut"].dropna()
+    shares = shares[shares > 0]
+    if len(shares) >= 5:
+        metrics["Share Change 1Y"] = finite((shares.iloc[-1] / shares.iloc[-5] - 1) * 100)
+    return metrics
+
+
+def has_quality_data(metrics: dict, bank: bool) -> bool:
+    """Every metric the stock is judged on is available (an infinite interest cover counts)."""
+    needed = ["ROE", "Share Change 1Y"] if bank else list(metrics)
+    return all(not pd.isna(metrics[key]) for key in needed)
 
 
 def price_start(history_years: int) -> str:
@@ -309,11 +496,14 @@ def analyze_frames(
     financials: pd.DataFrame,
     history_years: int,
     include_history: bool = False,
+    statements: Optional[pd.DataFrame] = None,
 ):
-    """One company's screen row from its prices and raw quarterly income statements.
+    """One company's screen row from its prices, quarterly income statements and FMP statements.
 
-    Raises ``SkipStock`` when the data is insufficient; other exceptions are
-    real failures and are left to the caller.
+    ``statements`` (from ``load_statements``) adds P/B and the quality
+    metrics; banks need it, other companies are valued without it. Raises
+    ``SkipStock`` when the data is insufficient; other exceptions are real
+    failures and are left to the caller.
     """
     price = finite(profile.get("price"))
     market_cap = finite(profile.get("mktCap"))
@@ -327,35 +517,53 @@ def analyze_frames(
     if len(financials) < 8:
         raise SkipStock("fewer than 8 quarterly statements")
 
+    bank = is_bank(profile)
+    statements = statements_in_idr(
+        prepare_statements(None, None, None) if statements is None else statements
+    )
     history, growth = financial_history(financials)
     pe_history, pe = ratio_summary(prices, financials, shares, "pe", history_years)
     ps_history, ps = ratio_summary(prices, financials, shares, "ps", history_years)
+    pb_history, pb = book_ratio_summary(prices, statements, shares, history_years)
     if not growth:
         raise SkipStock("no trailing twelve months")
-    if not pe or not ps:
+    second = pb if bank else ps
+    if not pe or not second:
         raise SkipStock("valuation history too short or not positive")
 
+    books = book_growth(statements)
+    second_growth_ttm = books["ttm"] if bank else growth["revenue_growth_ttm"]
+    second_growth_5y = books["5y"] if bank else growth["revenue_growth_5y"]
     mean_reversion = np.mean(
-        [pe["mean"] / pe["current"], ps["mean"] / ps["current"]]
+        [pe["mean"] / pe["current"], second["mean"] / second["current"]]
     )
     one_year = project_upside(
         pe["current"],
         pe["mean"],
-        ps["current"],
-        ps["mean"],
+        second["current"],
+        second["mean"],
         growth["earnings_growth_ttm"],
-        growth["revenue_growth_ttm"],
+        second_growth_ttm,
         1,
     )
     five_year = project_upside(
         pe["current"],
         pe["mean"],
-        ps["current"],
-        ps["mean"],
+        second["current"],
+        second["mean"],
         growth["earnings_growth_5y"],
-        growth["revenue_growth_5y"],
+        second_growth_5y,
         5,
     )
+    # Quality metrics compare income with the statements in one currency (IDR).
+    income_rate = usd_idr_rate(str(financials["reportedCurrency"].dropna().iloc[0]))
+    quality = quality_metrics(
+        statements,
+        growth["earnings_ttm"] * income_rate,
+        financials[["date", "netIncome"]].assign(netIncome=financials["netIncome"] * income_rate),
+    )
+    leg = "Book" if bank else "Revenue"
+    other = "Revenue" if bank else "Book"
 
     row = {
         "Symbol": symbol,
@@ -368,11 +576,11 @@ def analyze_frames(
         "PE Median": pe["median"],
         "PE Discount": pe["discount"],
         "PE Percentile": pe["percentile"],
-        "Current PS": ps["current"],
-        "PS Mean": ps["mean"],
-        "PS Median": ps["median"],
-        "PS Discount": ps["discount"],
-        "PS Percentile": ps["percentile"],
+        "Current PS": ps.get("current", np.nan),
+        "PS Mean": ps.get("mean", np.nan),
+        "PS Median": ps.get("median", np.nan),
+        "PS Discount": ps.get("discount", np.nan),
+        "PS Percentile": ps.get("percentile", np.nan),
         "Revenue Growth 5Y": growth["revenue_growth_5y"],
         "Revenue Growth TTM": growth["revenue_growth_ttm"],
         "Earnings Growth 5Y": growth["earnings_growth_5y"],
@@ -385,16 +593,27 @@ def analyze_frames(
         "Potential Upside 1Y": one_year["blended"],
         "Potential Upside 5Y": five_year["blended"],
         "Earnings Upside 1Y": one_year["earnings"],
-        "Revenue Upside 1Y": one_year["revenue"],
+        f"{leg} Upside 1Y": one_year["revenue"],
         "Earnings Upside 5Y": five_year["earnings"],
-        "Revenue Upside 5Y": five_year["revenue"],
+        f"{leg} Upside 5Y": five_year["revenue"],
         "Earnings Growth Assumption 1Y": one_year["earnings_growth"],
-        "Revenue Growth Assumption 1Y": one_year["revenue_growth"],
+        f"{leg} Growth Assumption 1Y": one_year["revenue_growth"],
         "Earnings Growth Assumption 5Y": five_year["earnings_growth"],
-        "Revenue Growth Assumption 5Y": five_year["revenue_growth"],
+        f"{leg} Growth Assumption 5Y": five_year["revenue_growth"],
+        **{f"{other} {key}": np.nan for key in ("Upside 1Y", "Upside 5Y", "Growth Assumption 1Y", "Growth Assumption 5Y")},
         "Implied Price 1Y": price * (1 + one_year["blended"] / 100),
         "Implied Price 5Y": price * (1 + five_year["blended"] / 100),
         "Statement Date": growth["statement_date"],
+        "Value Basis": "P/B" if bank else "P/S",
+        "Current PB": pb.get("current", np.nan),
+        "PB Mean": pb.get("mean", np.nan),
+        "PB Median": pb.get("median", np.nan),
+        "PB Discount": pb.get("discount", np.nan),
+        "PB Percentile": pb.get("percentile", np.nan),
+        "Book Growth TTM": books["ttm"],
+        "Book Growth 5Y": books["5y"],
+        **quality,
+        "Quality Data": has_quality_data(quality, bank),
     }
     if not include_history:
         return row
@@ -402,6 +621,7 @@ def analyze_frames(
         "row": row,
         "pe_history": pe_history,
         "ps_history": ps_history,
+        "pb_history": pb_history,
         "financial_history": history,
     }
 
@@ -412,11 +632,20 @@ def analyze_stock(
     history_years: int,
     include_history: bool = False,
 ):
-    """``analyze_frames`` on FMP prices and Daguerreo statements; None when anything fails."""
+    """``analyze_frames`` on FMP prices and statements and Daguerreo income; None when it fails.
+
+    A failed statements request leaves the quality data missing (and skips banks).
+    """
     try:
         prices = hd.get_daily_stock_price(symbol, start_from=price_start(history_years))
         financials = hd.get_financial_data(symbol, period="quarter", source="dag")
-        return analyze_frames(symbol, profile, prices, financials, history_years, include_history)
+        try:
+            statements = load_statements(symbol)
+        except Exception:
+            statements = None
+        return analyze_frames(
+            symbol, profile, prices, financials, history_years, include_history, statements=statements,
+        )
     except Exception:
         return None
 
@@ -429,7 +658,10 @@ def score_results(rows: list[dict]) -> pd.DataFrame:
         return empty_results()
 
     result = pd.DataFrame(rows)
-    result["Valuation Score"] = 100 - result[["PE Percentile", "PS Percentile"]].mean(axis=1)
+    if "Value Basis" not in result:
+        result["Value Basis"] = "P/S"
+    second = result["PS Percentile"].where(result["Value Basis"] != "P/B", result.get("PB Percentile"))
+    result["Valuation Score"] = 100 - pd.concat([result["PE Percentile"], second], axis=1).mean(axis=1)
     growth_columns = [
         "Revenue Growth 5Y",
         "Revenue Growth TTM",
@@ -439,7 +671,10 @@ def score_results(rows: list[dict]) -> pd.DataFrame:
     result["Growth Score"] = pd.concat(
         [pct_rank(result[column]).rename(column) for column in growth_columns], axis=1
     ).mean(axis=1)
-    result["Quality Score"] = pct_rank(result["Margin TTM"])
+    quality_columns = [column for column in ("Margin TTM", "ROE") if column in result]
+    result["Quality Score"] = pd.concat(
+        [pct_rank(result[column]).rename(column) for column in quality_columns], axis=1
+    ).mean(axis=1).fillna(50.0)
     result["Score"] = (
         result["Valuation Score"] * 0.55
         + result["Growth Score"] * 0.35
@@ -470,13 +705,18 @@ def scan_profiles(profiles: dict[str, dict], history_years: int) -> pd.DataFrame
 # ── Screen rules ────────────────────────────────────────────────────────── #
 
 def screen_rules(results: pd.DataFrame, filters: dict) -> pd.DataFrame:
-    """One boolean column per rule, named by the short label shown when a company fails it."""
+    """One boolean column per rule, named by the short label shown when a company fails it.
+
+    Banks are judged on P/B where other companies are judged on P/S, and only
+    on the quality rules that describe a bank.
+    """
+    bank = _series(results, "Value Basis", "P/S") == "P/B"
     rules = {
         "Loss-making": results["Earnings TTM"] > 0,
         "No revenue": results["Revenue TTM"] > 0,
         "Negative P/E": results["Current PE"] > 0,
         f"P/E > {filters['max_pe']:g}": results["Current PE"] <= filters["max_pe"],
-        "Negative P/S": results["Current PS"] > 0,
+        "Negative P/S": bank | (results["Current PS"] > 0),
         f"Revenue 5Y < {filters['min_revenue_growth']:g}%": (
             results["Revenue Growth 5Y"] >= filters["min_revenue_growth"]
         ),
@@ -489,7 +729,23 @@ def screen_rules(results: pd.DataFrame, filters: dict) -> pd.DataFrame:
         rules["Earnings TTM falling"] = results["Earnings Growth TTM"] > 0
     if filters["require_both_discounts"]:
         rules["P/E above median"] = results["PE Discount"] > 0
-        rules["P/S above median"] = results["PS Discount"] > 0
+        rules["P/S above median"] = bank | (results["PS Discount"] > 0)
+        rules["P/B above median"] = ~bank | (_series(results, "PB Discount") > 0)
+    if filters.get("require_quality"):
+        rules["Quality data missing"] = _series(results, "Quality Data", False).fillna(False).astype(bool)
+        # A missing metric is reported once, by the rule above.
+        leverage = _series(results, "Debt to Equity")
+        coverage = _series(results, "Interest Coverage")
+        conversion = _series(results, "Cash Conversion")
+        roe = _series(results, "ROE")
+        dilution = _series(results, "Share Change 1Y")
+        rules[f"Debt/equity > {MAX_DEBT_TO_EQUITY:g}"] = bank | leverage.isna() | (leverage <= MAX_DEBT_TO_EQUITY)
+        rules[f"Interest cover < {MIN_INTEREST_COVERAGE:g}x"] = bank | coverage.isna() | (coverage >= MIN_INTEREST_COVERAGE)
+        rules[f"Cash flow < {MIN_CASH_CONVERSION:g}% of profit"] = (
+            bank | conversion.isna() | (conversion >= MIN_CASH_CONVERSION)
+        )
+        rules[f"ROE < {MIN_ROE:g}%"] = roe.isna() | (roe >= MIN_ROE)
+        rules[f"Shares up > {MAX_SHARE_CHANGE:g}%"] = dilution.isna() | (dilution <= MAX_SHARE_CHANGE)
     return pd.DataFrame(rules)
 
 
@@ -512,28 +768,56 @@ def ranked(results: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+def _metric_check(test: str, value, passed, evidence: str):
+    if pd.isna(value):
+        return (test, False, "Not reported")
+    return (test, bool(passed), evidence)
+
+
 def checklist(row: dict) -> pd.DataFrame:
     """The detail view's pass/review table for one company."""
-    checks = pd.DataFrame(
-        [
-            (
-                "Earnings valuation",
-                row["PE Discount"] > 0,
-                median_comparison(row["PE Discount"], "P/E"),
-            ),
-            (
-                "Revenue valuation",
-                row["PS Discount"] > 0,
-                median_comparison(row["PS Discount"], "P/S"),
-            ),
-            ("Durable revenue growth", row["Revenue Growth 5Y"] > 0, f"5Y median growth is {row['Revenue Growth 5Y']:.1f}%"),
-            ("Durable earnings growth", row["Earnings Growth 5Y"] > 0, f"5Y median growth is {row['Earnings Growth 5Y']:.1f}%"),
-            ("Recent revenue growth", row["Revenue Growth TTM"] > 0, f"Latest TTM growth is {row['Revenue Growth TTM']:.1f}%"),
-            ("Recent earnings growth", row["Earnings Growth TTM"] > 0, f"Latest TTM growth is {row['Earnings Growth TTM']:.1f}%"),
-            ("Profitable", row["Earnings TTM"] > 0, f"Net margin is {row['Margin TTM']:.1f}%"),
-        ],
-        columns=["Test", "Pass", "Evidence"],
+    bank = row.get("Value Basis") == "P/B"
+    second = (
+        ("Book valuation", row.get("PB Discount", np.nan) > 0, median_comparison(row.get("PB Discount", np.nan), "P/B"))
+        if bank else
+        ("Revenue valuation", row["PS Discount"] > 0, median_comparison(row["PS Discount"], "P/S"))
     )
+    rows = [
+        (
+            "Earnings valuation",
+            row["PE Discount"] > 0,
+            median_comparison(row["PE Discount"], "P/E"),
+        ),
+        second,
+        ("Durable revenue growth", row["Revenue Growth 5Y"] > 0, f"5Y median growth is {row['Revenue Growth 5Y']:.1f}%"),
+        ("Durable earnings growth", row["Earnings Growth 5Y"] > 0, f"5Y median growth is {row['Earnings Growth 5Y']:.1f}%"),
+        ("Recent revenue growth", row["Revenue Growth TTM"] > 0, f"Latest TTM growth is {row['Revenue Growth TTM']:.1f}%"),
+        ("Recent earnings growth", row["Earnings Growth TTM"] > 0, f"Latest TTM growth is {row['Earnings Growth TTM']:.1f}%"),
+        ("Profitable", row["Earnings TTM"] > 0, f"Net margin is {row['Margin TTM']:.1f}%"),
+    ]
+    if "ROE" in row:
+        roe, dilution = row["ROE"], row["Share Change 1Y"]
+        rows.append(_metric_check("Return on equity", roe, roe >= MIN_ROE, f"ROE is {roe:.1f}% (at least {MIN_ROE:g}%)"))
+        rows.append(_metric_check(
+            "No heavy dilution", dilution, dilution <= MAX_SHARE_CHANGE,
+            f"Share count {'up' if dilution >= 0 else 'down'} {abs(dilution):.1f}% in a year",
+        ))
+        if not bank:
+            leverage, coverage, conversion = row["Debt to Equity"], row["Interest Coverage"], row["Cash Conversion"]
+            rows.append(_metric_check(
+                "Moderate debt", leverage, leverage <= MAX_DEBT_TO_EQUITY,
+                f"Debt is {leverage:.2f}x equity (at most {MAX_DEBT_TO_EQUITY:g}x)",
+            ))
+            rows.append(_metric_check(
+                "Interest covered", coverage, coverage >= MIN_INTEREST_COVERAGE,
+                "No interest expense" if coverage == np.inf
+                else f"Profit covers interest {coverage:.1f}x (at least {MIN_INTEREST_COVERAGE:g}x)",
+            ))
+            rows.append(_metric_check(
+                "Profit backed by cash", conversion, conversion >= MIN_CASH_CONVERSION,
+                f"Operating cash flow is {conversion:.0f}% of net income over 3 years",
+            ))
+    checks = pd.DataFrame(rows, columns=["Test", "Pass", "Evidence"])
     checks["Status"] = np.where(checks["Pass"], "Pass", "Review")
     return checks
 
