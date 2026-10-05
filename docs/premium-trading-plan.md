@@ -415,7 +415,7 @@ exit reminder in Telegram (verified with a test chat).
 
 ## Phase 3: Swing Trading revamp
 
-- [ ] OHLCV: extend `historical_prices_core.py` and the Parquet schema with `open, high, low,
+- [x] OHLCV: extend `historical_prices_core.py` and the Parquet schema with `open, high, low,
       volume`; backfill script. [ASK USER] to confirm FMP plan limits before the backfill.
 - [ ] `harvest/swing.py`:
   - Stop and target fills using daily high and low, gaps fill at the open.
@@ -645,3 +645,13 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     `BMC_WEBHOOK_SECRET`, `TRAKTEER_WEBHOOK_TOKEN` in the app; register the BMC and Trakteer
     webhook URLs; run `pipeline/telegram_setup.py`; confirm tier prices, durations and the USD
     rate. "Done when" needs these.
+- 2026-10-05: Phase 3 started on branch `premium/phase-3-swing` (stacked on Phase 2).
+  - OHLCV: `fetch_stock_price` keeps open/high/low/close/volume (the FMP endpoint already
+    returned them). `read_prices` returns requested columns the file lacks as NaN (S&P 500 stays
+    close-only until its daily runs add OHLC to new rows). `harvest.prices.OHLCV_COLUMNS`.
+  - Backfill approved by the user and run: `python -m pipeline.backfill_ohlcv --exchange jkse
+    --upload`. 893 symbols refreshed from FMP since 2010 (none failed), 2,427,827 rows, all with
+    OHLC. Previous file kept as `prices/jkse.backup-2026-10-05.parquet` in R2. 98.3% of
+    overlapping closes are identical; 13 symbols changed by 80-96% (consistent split adjustment,
+    e.g. MLPT, DSSA). 219 rows (0.009%) have a high/low that doesn't bracket open/close; the
+    engine clamps them. 11.6% of rows have zero volume.

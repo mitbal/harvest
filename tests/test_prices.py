@@ -175,3 +175,25 @@ def test_normalize_prices_drops_unusable_rows():
     )
 
     assert prices.normalize_prices(frame)["close"].tolist() == [1.0]
+
+
+def test_missing_columns_come_back_empty(tmp_path):
+    path = tmp_path / "close_only.parquet"
+    prices.write_prices("jkse", _frame()[["symbol", "date", "close"]], path=path)
+
+    frame = prices.read_prices("jkse", columns=prices.OHLCV_COLUMNS, path=path)
+
+    assert list(frame.columns) == ["symbol", "date", *prices.OHLCV_COLUMNS]
+    assert frame["open"].isna().all() and frame["volume"].isna().all()
+    assert frame["close"].tolist() == [5000.0, 5050.0, 5100.0, 3900.0, 3950.0]
+
+
+def test_ohlcv_round_trip(tmp_path):
+    path = tmp_path / "ohlcv.parquet"
+    ohlcv = _frame().assign(open=4990.0, high=5200.0, low=4900.0)
+    prices.write_prices("jkse", ohlcv, path=path)
+
+    frame = prices.read_prices("jkse", symbols=["BBRI.JK"], columns=prices.OHLCV_COLUMNS, path=path)
+
+    assert frame[["open", "high", "low"]].iloc[0].tolist() == [4990.0, 5200.0, 4900.0]
+    assert frame["volume"].tolist() == [100, 200, 300]

@@ -39,7 +39,7 @@ def get_local_path(exchange: str) -> Path:
 
 
 def fetch_stock_price(symbol: str, start_date: str) -> Optional[pd.DataFrame]:
-    """Fetch and normalize daily prices for one symbol."""
+    """Fetch and normalize daily OHLCV prices for one symbol."""
     frame = hd.get_daily_stock_price(symbol, start_from=start_date)
     if frame is None or frame.empty:
         return None
@@ -47,7 +47,8 @@ def fetch_stock_price(symbol: str, start_date: str) -> Optional[pd.DataFrame]:
     frame = frame.copy()
     frame["symbol"] = symbol
     frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.strftime("%Y-%m-%d")
-    return frame[["symbol", "date", "close"]]
+    columns = [column for column in prices.OHLCV_COLUMNS if column in frame.columns]
+    return frame[["symbol", "date", *columns]]
 
 
 def _fetch_with_retries(symbol: str, start_date: str) -> Optional[pd.DataFrame]:

@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Iterable, Mapping, Optional
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PRICE_COLUMNS = ("close",)
+OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
 INTEGER_COLUMNS = ("volume",)
 # About 40 IDX symbols of full history per row group: small enough that a
 # one-symbol read stays cheap, large enough to keep the file footer small.
@@ -103,29 +105,36 @@ def read_prices(
 ) -> pd.DataFrame:
     """Read prices from ``path`` if given, else from R2. Errors propagate.
 
-    ``columns=None`` reads every stored column. Used by the pipeline, which
-    must never mistake a failed read for an empty history.
+    ``columns=None`` reads every stored column. A requested column the file
+    doesn't have yet (such as ``open`` before the OHLCV backfill) comes back as
+    NaN. Used by the pipeline, which must never mistake a failed read for an
+    empty history.
     """
     if symbols is not None:
         symbols = list(dict.fromkeys(str(symbol) for symbol in symbols))
         if not symbols:
             return _empty(columns or PRICE_COLUMNS)
-    read_columns = None if columns is None else ["symbol", "date", *columns]
     filters = _filters(symbols, start, end) or None
 
     if path is not None:
-        table = pq.read_table(path, columns=read_columns, filters=filters)
+        source, filesystem = path, None
     else:
         config = config or r2_config()
         if config is None:
             raise RuntimeError("R2 is not configured; set the R2_* settings")
-        table = pq.read_table(
-            f"{config['bucket']}/{r2_key(exchange)}",
-            filesystem=_filesystem(config),
-            columns=read_columns,
-            filters=filters,
-        )
-    return _to_frame(table)
+        source, filesystem = f"{config['bucket']}/{r2_key(exchange)}", _filesystem(config)
+
+    read_columns = missing = None
+    if columns is not None:
+        stored = set(pq.read_schema(source, filesystem=filesystem).names)
+        missing = [column for column in columns if column not in stored]
+        read_columns = ["symbol", "date", *(column for column in columns if column in stored)]
+    frame = _to_frame(pq.read_table(source, filesystem=filesystem, columns=read_columns, filters=filters))
+    if missing:
+        for column in missing:
+            frame[column] = np.nan
+        frame = frame[["symbol", "date", *columns]]
+    return frame
 
 
 def load_prices(
