@@ -160,7 +160,7 @@ create table if not exists trading_runs (
   tool text not null,                   -- 'dividend_play' | 'swing' | 'long_term'
   kind text not null,                   -- 'optimize' | 'scan'
   as_of date not null,
-  status text not null,                 -- 'ok' | 'failed'
+  status text not null,                 -- 'running' | 'ok' | 'failed'
   stats jsonb,
   started_at timestamptz,
   finished_at timestamptz
@@ -304,11 +304,11 @@ non-premium users (call `require_premium()` at the top of each page for now).
 
 ### 0.3 Trading store
 
-- [ ] `harvest/trading_store.py`: `start_run`, `finish_run`, `latest_run(tool, kind)`,
+- [x] `harvest/trading_store.py`: `start_run`, `finish_run`, `latest_run(tool, kind)`,
       `write_setups`, `read_setups(tool)`, `write_signals`, `read_signals(tool, as_of=None)`,
       `is_stale(tool, max_trading_days=1)`, plus position CRUD. Supabase client passed in, so the
       pipeline (supabase-py) and the app (`st.connection`) can both use it.
-- [ ] Unit tests with a fake client.
+- [x] Unit tests with a fake client.
 
 ### 0.4 Extract the swing engine
 
@@ -515,3 +515,19 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - Open [ASK USER]: replace the email in `app_server()` and run the SQL; confirm whether the
     pipeline's `SUPABASE_KEY` is the service-role key (needed for Phase 1 writes under RLS);
     final tier prices and durations.
+- 2026-10-05: Phase 0, task 0.3 implemented on branch `premium/phase-0-trading-store`, stacked on
+  `premium/phase-0-premium-gate`.
+  - `harvest/trading_store.py` (Streamlit-free, client passed in): runs (`start_run` records
+    `status='running'`, now in the SQL comment; `latest_run` defaults to `ok` runs), setups
+    (`write_setups` replaces the tool's scopes, so dropped per-stock setups are deleted;
+    `read_setups` returns `{scope: {params, holdout, run_id}}`), signals (`write_signals` refuses
+    a day older than the latest stored one and replaces only its own day on rerun;
+    `read_signals` returns a DataFrame for the latest or given day), `is_stale`, positions
+    (`create_position`, `list_positions`, `update_position`, `close_position`,
+    `delete_position`, all filtered by the owner's email), and `idx_trading_days`.
+  - `is_stale`: the latest successful scan is stale once `max_trading_days` IDX sessions
+    before today have no scan (today's session doesn't count until its nightly scan). Uses the
+    same IDX closing rule as `apps/calendar/calendar.py::market_holidays`.
+  - `tests/fake_supabase.py`: in-memory query builder for store and pipeline tests. The store's
+    calls were also checked against the real supabase-py 2.31 builder (request URLs only, no
+    network).

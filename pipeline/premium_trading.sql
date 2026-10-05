@@ -32,7 +32,7 @@ create table if not exists trading_runs (
   tool text not null,                   -- 'dividend_play' | 'swing' | 'long_term'
   kind text not null,                   -- 'optimize' | 'scan'
   as_of date not null,
-  status text not null,                 -- 'ok' | 'failed'
+  status text not null,                 -- 'running' | 'ok' | 'failed'
   stats jsonb,
   started_at timestamptz,
   finished_at timestamptz
