@@ -513,3 +513,11 @@ def test_backtest_on_synthetic_inputs_runs_end_to_end():
     assert list(years.iloc[0]["holdings"]) == ["A.JK"]
     assert years.iloc[0]["portfolio"] == pytest.approx(-0.4)
     assert result["summary"]["years"] == 1
+
+
+def test_median_comparison_measures_the_gap_from_the_median():
+    # Median 28.6, current 16.0: the median is 79% higher, the current multiple 44% lower.
+    discount = (28.6 / 16.0 - 1) * 100
+
+    assert pos.median_comparison(discount, "P/E") == "P/E is 44.1% below its median"
+    assert pos.median_comparison((10 / 12.5 - 1) * 100, "P/S") == "P/S is 25.0% above its median"

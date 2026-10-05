@@ -158,6 +158,11 @@ def _ratio_chart(history: pd.DataFrame, label: str, years: int):
     return (interval + line + mean_rule).properties(height=290)
 
 
+def _vs_median(discount: float) -> str:
+    gap = pos.gap_to_median(discount)
+    return f"{abs(gap):.0f}% {'below' if gap >= 0 else 'above'}"
+
+
 def _pct(value, signed: bool = True) -> str:
     if value is None or pd.isna(value):
         return "n/a"
@@ -327,9 +332,9 @@ def candidates_table(signals: pd.DataFrame) -> pd.DataFrame:
             "Sector": d.get("sector") or "Unknown",
             "Score": d["scores"]["score"],
             "P/E": d["pe"]["current"],
-            "P/E discount": d["pe"]["discount"],
+            "P/E discount": pos.gap_to_median(d["pe"]["discount"]),
             "Basis": d.get("basis"),
-            "Second discount": d["second"]["discount"],
+            "Second discount": pos.gap_to_median(d["second"]["discount"]),
             "Upside to mean": d["upside"]["to_mean"],
             "Potential 1Y": d["upside"]["potential_1y"],
             "Revenue 5Y": d["growth"]["revenue_5y"],
@@ -382,10 +387,9 @@ def render_candidate_card(signal: pd.Series, can_track: bool) -> None:
         st.markdown(f"**#{d.get('rank')} {ui.short(signal['symbol'])}** · {d.get('company') or signal['symbol']}")
         st.caption(f"{d.get('sector') or 'Unknown sector'} · score {d['scores']['score']:.0f} / 100")
         lines = [
-            f"P/E **{pe['current']:.1f}**, {abs(pe['discount']):.0f}% "
-            f"{'below' if pe['discount'] >= 0 else 'above'} its median of {pe['median']:.1f}",
-            f"{second['label']} **{second['current']:.2f}**, {abs(second['discount']):.0f}% "
-            f"{'below' if second['discount'] >= 0 else 'above'} its median",
+            f"P/E **{pe['current']:.1f}**, {_vs_median(pe['discount'])} its median of {pe['median']:.1f}",
+            f"{second['label']} **{second['current']:.2f}**, {_vs_median(second['discount'])} its median "
+            f"of {second['median']:.2f}",
             f"Growth a year: revenue **{_pct(growth['revenue_5y'])}**, earnings **{_pct(growth['earnings_5y'])}** "
             f"(latest {_pct(growth['earnings_ttm'])})",
         ]
@@ -452,9 +456,9 @@ def render_backtest(record: dict) -> None:
     table = pd.DataFrame({
         "Held from": years["start"].dt.date,
         "To": years["end"].dt.date,
-        "Picks": years["holdings"].map(lambda h: [ui.short(s) for s in h] if h else ["cash"]),
         "Screen": years["portfolio"],
         "JKSE": years["benchmark"],
+        "Picks": years["holdings"].map(lambda h: [ui.short(s) for s in h] if h else ["cash"]),
     })
     st.dataframe(
         table, hide_index=True, width="stretch",
@@ -540,10 +544,10 @@ def render_today(access: bool) -> None:
                 "Rank": st.column_config.NumberColumn("Rank", format="%d", width="small"),
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
                 "P/E": st.column_config.NumberColumn("P/E", format="%.1f"),
-                "P/E discount": st.column_config.NumberColumn("P/E vs median", format="%+.0f%%",
-                                                              help="Positive means below the median"),
+                "P/E discount": st.column_config.NumberColumn("P/E below median", format="%.0f%%",
+                                                              help="Negative means above the median"),
                 "Basis": st.column_config.TextColumn("Second multiple", help="P/S, or P/B for banks"),
-                "Second discount": st.column_config.NumberColumn("vs median", format="%+.0f%%"),
+                "Second discount": st.column_config.NumberColumn("Below median", format="%.0f%%"),
                 "Upside to mean": st.column_config.NumberColumn("Upside to mean", format="%+.0f%%"),
                 "Potential 1Y": st.column_config.NumberColumn("Potential 1Y", format="%+.0f%%"),
                 "Revenue 5Y": st.column_config.NumberColumn("Revenue 5Y", format="%+.1f%%"),

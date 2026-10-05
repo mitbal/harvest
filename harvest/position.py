@@ -131,9 +131,18 @@ def _text(value, default: str) -> str:
     return text if text else default
 
 
+def gap_to_median(discount: float) -> float:
+    """How far the current multiple is below (+) or above (-) its median, in percent of the median.
+
+    ``discount`` is median / current - 1, the upside if the multiple returned to its median.
+    """
+    return (1 - 1 / (1 + discount / 100)) * 100
+
+
 def median_comparison(discount: float, multiple: str) -> str:
-    direction = "below" if discount >= 0 else "above"
-    return f"{multiple} is {abs(discount):.1f}% {direction} its median"
+    gap = gap_to_median(discount)
+    direction = "below" if gap >= 0 else "above"
+    return f"{multiple} is {abs(gap):.1f}% {direction} its median"
 
 
 def bounded_growth(value: float) -> float:

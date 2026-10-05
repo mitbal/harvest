@@ -434,18 +434,18 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
 
 ## Phase 4: Long Term revamp
 
-- [ ] Extract `harvest/position.py` from `apps/trading/backtester.py` (`_analyze_stock`, scan,
+- [x] Extract `harvest/position.py` from `apps/trading/backtester.py` (`_analyze_stock`, scan,
       scoring, projections). No behaviour change.
-- [ ] Daily scan job storing ranked candidates as `trading_signals` (`status='candidate'`), with
+- [x] Daily scan job storing ranked candidates as `trading_signals` (`status='candidate'`), with
       coverage stats in `trading_runs.stats` (analyzed, failed, skipped) instead of silently
       dropping failures.
-- [ ] Quality checks: debt to equity, interest coverage, operating cash flow vs net income, ROE,
+- [x] Quality checks: debt to equity, interest coverage, operating cash flow vs net income, ROE,
       share count change. Sector rule: price to book for banks instead of P/S.
-- [ ] Historical backtest of the screen: yearly rebalance of the top N using financials available
+- [x] Historical backtest of the screen: yearly rebalance of the top N using financials available
       at the time (statement date plus reporting lag), compared with the JKSE index.
-- [ ] Exit monitoring alerts for tracked positions: P/E back at historical mean, or new quarter
+- [x] Exit monitoring alerts for tracked positions: P/E back at historical mean, or new quarter
       turning TTM growth negative.
-- [ ] Page restructure into Today (instant filters on stored candidates) / Evidence (current
+- [x] Page restructure into Today (instant filters on stored candidates) / Evidence (current
       detail view) / Lab (current form).
 
 ## Phase 5: Hub and track record
@@ -718,3 +718,62 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     Today empty state from the real dry run, Lab optimizer on 167 stocks in 31 s (same
     conclusion as the job), Evidence on BBCA.JK.
   - Open [ASK USER]: Railway schedule for the swing jobs (not changed).
+- 2026-10-05: Phase 4 built on branch `premium/phase-4-long-term` (stacked on Phase 3).
+  - `harvest/position.py`: the page's engine moved out unchanged (golden master on 18 real stocks,
+    scan at 3 and 5 years plus detail histories: bit-identical). `analyze_frames` takes prices and
+    statements directly and raises `SkipStock` for missing data; `analyze_stock` keeps the page's
+    fetch-and-return-None behaviour. Screen rules, ranking and the checklist are functions now.
+  - Data: Daguerreo has income statements only (revenue, gross profit, net income), so the quality
+    checks use FMP quarterly balance sheets, cash flows and income statements
+    (`hd.get_fmp_statement`). FMP's `fillingDate` equals the period end, so it can't date a filing.
+    FMP's cash flow net income has unit errors (ADRO 2025 Q2 in IDR inside a USD series), so cash
+    conversion divides by the Daguerreo net income the P/E uses. USD reporters' statements are
+    converted to IDR like P/E and P/S. Prices from R2 carry `datetime64[ns]` while pandas 3 parses
+    strings as `[us]`; `pos.as_dates` normalizes before the merges.
+  - Quality rules (Lab option, on in the published screen): debt/equity <= 1.5, interest cover >= 3x
+    (pre-tax profit plus interest over interest, TTM), operating cash flow >= 80% of net income over
+    12 quarters, ROE >= 8% (TTM earnings over average equity), share count up <= 5% in a year.
+    Banks (FMP industry "Banks - ...") are valued on P/E + P/B with book value per share growth in
+    the projection, and judged on ROE and dilution only. Quality score = mean rank of net margin
+    and ROE (was margin only). `SCAN_SCHEMA_VERSION` 4.
+  - `trading_scan.long_term`: the 200 largest companies above Rp 2T (`pos.PUBLISHED_SCREEN`), R2
+    prices, publishes the ranked companies passing every rule as `candidate` signals (entry = close,
+    target = price at the mean valuation, key date = latest statement, detail with scores,
+    multiples, growth, quality, upside). Only passing companies are stored, to keep the table small;
+    Today's filters only narrow. Run stats: requested, analyzed, skipped by reason, failed symbols
+    with the error, and how many companies each rule removed. FMP calls are throttled
+    (`FMP_CALLS_PER_MINUTE`, default 240) and retried on 429/5xx; the first dry run without the
+    throttle got 429s.
+  - Security fix: request errors quote the URL including `apikey=`, and run stats are readable by
+    the app. `trading_store.finish_run` now redacts `apikey`/`token`/`secret` query parameters for
+    every tool. The FMP key appeared in a local terminal during the dry run [ASK USER: rotate?].
+  - Exit alerts (`alerts.send_long_term_exit_alerts`, from the nightly scan): once when P/E is back
+    at its historical mean, once per new quarter (statement dated after entry) that turns TTM
+    revenue or earnings growth negative. Position symbols outside the screen are analyzed too.
+  - Backtest (`pos.backtest_screen`, published by `trading_optimize.long_term` as the global setup's
+    `holdout`): first session in April each year from 2016, statements public 60 days after a
+    quarter / 90 after the year end (re-dated, so the valuation history is point in time too),
+    share counts from the statements of the time, universe re-selected by that day's market cap
+    from a base of companies above Rp 0.5T today (400 max), top 10 equal weight, price returns
+    net of 0.4% a year vs the JKSE price index. Known bias: delisted companies are missing.
+  - Page: Today (status line, coverage metric, backtest line, filterable candidate table with a
+    card and "Track this position", year-by-year backtest), Evidence (company detail, free for
+    BBRI.JK), Lab (previous form plus "Require quality checks"). My Trades shows a Long Term
+    position's exit conditions instead of a sell-by date. 11 AppTests (44 in total).
+  - Fixed copy: "P/E is X% below its median" used median/current - 1 (79% for 16.0 vs 28.6);
+    it now reports the gap from the median (44%), also in the Evidence checklist.
+  - Real-data dry runs (in-memory store, nothing written to Supabase): optimize 384 s (400 base
+    companies, 0 failed); scan 176 s (196 of 200 analyzed, 0 failed, 28 candidates, top CMRY,
+    MSIN, BRIS). Backtest April 2016 - April 2026: **+2.5% a year vs +4.0% for the JKSE** (total
+    +27% vs +48%), ahead in 4 of 10 years; worst year -17.7% vs -30.8%; 6-24 companies passed each
+    year. Price returns only, so the higher dividend yield of cheap stocks isn't counted, and
+    survivorship bias flatters the screen. The page states the result as is. [ASK USER] how to
+    position the tool given this record (as with the swing result).
+  - Verified in the preview against those dry-run tables (wrapper script with an in-memory store):
+    Today with filters, row selection, bank card, backtest expander, Track dialog (position count
+    0 -> 1), Evidence on BRIS.JK with live FMP data (P/E and P/B charts), mobile width. Free and
+    logged-out tiers checked by AppTests only.
+  - Open [ASK USER]: Railway schedule for `trading_scan --tool long_term` (after `daily_data`) and
+    `trading_optimize --tool long_term` (weekly; about 7 minutes); rotate the FMP key; confirm the
+    quality thresholds; MSIN shows a 686% upside to mean (the original model's mean reversion on a
+    short P/S history), which may need a cap.
