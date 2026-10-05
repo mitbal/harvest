@@ -1,14 +1,12 @@
-import concurrent.futures
 import datetime
-import hashlib
 
 import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-import harvest.data as hd
 import harvest.plot as hp
+import harvest.position as pos
 from harvest import chart_style as cs
 from harvest.premium import require_premium
 
@@ -17,42 +15,8 @@ hp.enable_chart_theme()
 
 
 CACHE_TTL = 6 * 60 * 60
-SCAN_SCHEMA_VERSION = 3
-PROFILE_BATCH_SIZE = 30
-SCAN_WORKERS = 5
-MIN_PROJECTION_GROWTH = -20.0
-MAX_PROJECTION_GROWTH = 30.0
-RESULT_COLUMNS = [
-    "Symbol",
-    "Company",
-    "Sector",
-    "Market Cap",
-    "Current PE",
-    "PE Mean",
-    "PE Median",
-    "PE Discount",
-    "PE Percentile",
-    "Current PS",
-    "PS Mean",
-    "PS Median",
-    "PS Discount",
-    "PS Percentile",
-    "Revenue Growth 5Y",
-    "Revenue Growth TTM",
-    "Earnings Growth 5Y",
-    "Earnings Growth TTM",
-    "Margin TTM",
-    "Valuation Score",
-    "Growth Score",
-    "Quality Score",
-    "Score",
-    "Upside to Mean",
-    "Potential Upside 1Y",
-    "Potential Upside 5Y",
-    "Implied Price 1Y",
-    "Implied Price 5Y",
-    "Statement Date",
-]
+SCAN_SCHEMA_VERSION = pos.SCAN_SCHEMA_VERSION
+_finite, _format_idr = pos.finite, pos.format_idr
 
 
 st.set_page_config(page_title='Position Trading - Panen Dividen')
@@ -91,303 +55,11 @@ st.html(
 )
 
 
-def _empty_results() -> pd.DataFrame:
-    return pd.DataFrame(columns=RESULT_COLUMNS)
-
-
-def _series(df: pd.DataFrame, column: str, default=None) -> pd.Series:
-    if column in df.columns:
-        return df[column]
-    return pd.Series(default, index=df.index)
-
-
-def _finite(value, default=np.nan) -> float:
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return default
-    return value if np.isfinite(value) else default
-
-
-def _text(value, default: str) -> str:
-    if value is None or pd.isna(value):
-        return default
-    text = str(value).strip()
-    return text if text else default
-
-
-def _median_comparison(discount: float, multiple: str) -> str:
-    direction = "below" if discount >= 0 else "above"
-    return f"{multiple} is {abs(discount):.1f}% {direction} its median"
-
-
-def _bounded_growth(value: float) -> float:
-    """Convert a percentage to a conservative annual projection rate."""
-    return np.clip(_finite(value, 0.0), MIN_PROJECTION_GROWTH, MAX_PROJECTION_GROWTH) / 100
-
-
-def _project_upside(
-    pe_current: float,
-    pe_mean: float,
-    ps_current: float,
-    ps_mean: float,
-    earnings_growth: float,
-    revenue_growth: float,
-    years: int,
-) -> dict:
-    earnings_rate = _bounded_growth(earnings_growth)
-    revenue_rate = _bounded_growth(revenue_growth)
-    pe_factor = pe_mean / pe_current * (1 + earnings_rate) ** years
-    ps_factor = ps_mean / ps_current * (1 + revenue_rate) ** years
-    blended_factor = np.mean([pe_factor, ps_factor])
-    return {
-        "blended": (blended_factor - 1) * 100,
-        "earnings": (pe_factor - 1) * 100,
-        "revenue": (ps_factor - 1) * 100,
-        "earnings_growth": earnings_rate * 100,
-        "revenue_growth": revenue_rate * 100,
-    }
-
-
-def _pct_rank(series: pd.Series) -> pd.Series:
-    numeric = pd.to_numeric(series, errors="coerce")
-    if numeric.notna().sum() <= 1:
-        return pd.Series(50.0, index=series.index)
-    return numeric.rank(pct=True, method="average") * 100
-
-
-def _format_idr(value: float) -> str:
-    if not np.isfinite(value):
-        return "N/A"
-    if abs(value) >= 1_000_000_000_000:
-        return f"IDR {value / 1_000_000_000_000:.1f}T"
-    if abs(value) >= 1_000_000_000:
-        return f"IDR {value / 1_000_000_000:.1f}B"
-    return f"IDR {value:,.0f}"
-
-
-def _fetch_profiles(symbols: list[str]) -> pd.DataFrame:
-    frames = []
-    for start in range(0, len(symbols), PROFILE_BATCH_SIZE):
-        try:
-            frame = hd.get_company_profile(symbols[start : start + PROFILE_BATCH_SIZE])
-            if frame is not None and not frame.empty:
-                frames.append(frame)
-        except Exception:
-            continue
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames).loc[lambda frame: ~frame.index.duplicated(keep="first")]
 
 
 @st.cache_data(ttl=CACHE_TTL, max_entries=8, show_spinner=False)
 def load_idx_universe() -> pd.DataFrame:
-    listed = hd.get_all_idx_stocks()
-    symbols = listed["symbol"].dropna().astype(str).unique().tolist()
-    profiles = _fetch_profiles(symbols)
-    if profiles.empty:
-        return profiles
-
-    profiles = profiles.copy()
-    profiles["mktCap"] = pd.to_numeric(_series(profiles, "mktCap"), errors="coerce")
-    profiles["price"] = pd.to_numeric(_series(profiles, "price"), errors="coerce")
-    profiles["isActivelyTrading"] = (
-        _series(profiles, "isActivelyTrading", False).fillna(False).astype(bool)
-    )
-    profiles["isEtf"] = _series(profiles, "isEtf", False).fillna(False).astype(bool)
-    profiles["isFund"] = _series(profiles, "isFund", False).fillna(False).astype(bool)
-    profiles = profiles[
-        profiles["isActivelyTrading"]
-        & ~profiles["isEtf"]
-        & ~profiles["isFund"]
-        & (profiles["mktCap"] > 0)
-        & (profiles["price"] > 0)
-    ]
-    profiles.index.name = "symbol"
-    return profiles.sort_values("mktCap", ascending=False)
-
-
-def _prepare_financials(financials: pd.DataFrame) -> pd.DataFrame:
-    required = {"date", "revenue", "netIncome", "reportedCurrency"}
-    if financials is None or financials.empty or not required.issubset(financials.columns):
-        return pd.DataFrame()
-
-    frame = financials.copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
-    for column in ("revenue", "netIncome"):
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame = frame.dropna(subset=["date", "revenue", "netIncome"])
-    return frame.sort_values("date", ascending=False).reset_index(drop=True)
-
-
-def _financial_history(financials: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    ordered = financials.sort_values("date").copy()
-    ordered["Revenue TTM"] = ordered["revenue"].rolling(4, min_periods=4).sum()
-    ordered["Earnings TTM"] = ordered["netIncome"].rolling(4, min_periods=4).sum()
-    ordered["Revenue Growth"] = ordered["Revenue TTM"].pct_change(4) * 100
-    ordered["Earnings Growth"] = ordered["Earnings TTM"].pct_change(4) * 100
-    ordered["Margin"] = ordered["Earnings TTM"] / ordered["Revenue TTM"] * 100
-    valid = ordered.dropna(subset=["Revenue TTM", "Earnings TTM"])
-    if valid.empty:
-        return ordered, {}
-
-    recent_growth = valid.tail(20)
-    stats = {
-        "revenue_ttm": _finite(valid["Revenue TTM"].iloc[-1]),
-        "earnings_ttm": _finite(valid["Earnings TTM"].iloc[-1]),
-        "revenue_growth_ttm": _finite(valid["Revenue Growth"].iloc[-1]),
-        "earnings_growth_ttm": _finite(valid["Earnings Growth"].iloc[-1]),
-        "revenue_growth_5y": _finite(recent_growth["Revenue Growth"].median()),
-        "earnings_growth_5y": _finite(recent_growth["Earnings Growth"].median()),
-        "margin_ttm": _finite(valid["Margin"].iloc[-1]),
-        "margin_median": _finite(valid.tail(20)["Margin"].median()),
-        "statement_date": valid["date"].iloc[-1],
-    }
-    return ordered, stats
-
-
-def _ratio_summary(
-    prices: pd.DataFrame,
-    financials: pd.DataFrame,
-    shares: float,
-    ratio: str,
-    history_years: int,
-) -> tuple[pd.DataFrame, dict]:
-    reported_currency = str(financials["reportedCurrency"].dropna().iloc[0])
-    history = hd.calc_ratio_history(
-        prices,
-        financials.copy(),
-        n_shares=shares,
-        ratio=ratio,
-        reported_currency=reported_currency,
-        target_currency="IDR",
-    )
-    history = history.rename(columns={"pe": "ratio"})[["date", "ratio"]].copy()
-    history["date"] = pd.to_datetime(history["date"], errors="coerce")
-    history["ratio"] = pd.to_numeric(history["ratio"], errors="coerce")
-    history = history.replace([np.inf, -np.inf], np.nan).dropna()
-    history = history[history["ratio"] > 0].sort_values("date")
-    if history.empty:
-        return history, {}
-
-    cutoff = history["date"].max() - pd.DateOffset(years=history_years)
-    window = history[history["date"] >= cutoff]
-    if len(window) < 60:
-        return history, {}
-
-    current = _finite(history["ratio"].iloc[-1])
-    mean = _finite(window["ratio"].mean())
-    median = _finite(window["ratio"].median())
-    percentile = _finite((window["ratio"] <= current).mean() * 100)
-    discount = _finite((median / current - 1) * 100) if current > 0 else np.nan
-    return history, {
-        "current": current,
-        "mean": mean,
-        "median": median,
-        "percentile": percentile,
-        "discount": discount,
-        "observations": len(window),
-    }
-
-
-def _analyze_stock(
-    symbol: str,
-    profile: dict,
-    history_years: int,
-    include_history: bool = False,
-):
-    try:
-        price = _finite(profile.get("price"))
-        market_cap = _finite(profile.get("mktCap"))
-        shares = market_cap / price if price > 0 and market_cap > 0 else np.nan
-        if not np.isfinite(shares) or shares <= 0:
-            return None
-
-        start = (datetime.date.today() - datetime.timedelta(days=(history_years + 1) * 366)).isoformat()
-        prices = hd.get_daily_stock_price(symbol, start_from=start)
-        financials = _prepare_financials(
-            hd.get_financial_data(symbol, period="quarter", source="dag")
-        )
-        if prices is None or prices.empty or len(financials) < 8:
-            return None
-
-        financial_history, growth = _financial_history(financials)
-        pe_history, pe = _ratio_summary(prices, financials, shares, "pe", history_years)
-        ps_history, ps = _ratio_summary(prices, financials, shares, "ps", history_years)
-        if not growth or not pe or not ps:
-            return None
-
-        mean_reversion = np.mean(
-            [pe["mean"] / pe["current"], ps["mean"] / ps["current"]]
-        )
-        one_year = _project_upside(
-            pe["current"],
-            pe["mean"],
-            ps["current"],
-            ps["mean"],
-            growth["earnings_growth_ttm"],
-            growth["revenue_growth_ttm"],
-            1,
-        )
-        five_year = _project_upside(
-            pe["current"],
-            pe["mean"],
-            ps["current"],
-            ps["mean"],
-            growth["earnings_growth_5y"],
-            growth["revenue_growth_5y"],
-            5,
-        )
-
-        row = {
-            "Symbol": symbol,
-            "Company": _text(profile.get("companyName"), symbol),
-            "Sector": _text(profile.get("sector"), "Unknown"),
-            "Market Cap": market_cap,
-            "Current Price": price,
-            "Current PE": pe["current"],
-            "PE Mean": pe["mean"],
-            "PE Median": pe["median"],
-            "PE Discount": pe["discount"],
-            "PE Percentile": pe["percentile"],
-            "Current PS": ps["current"],
-            "PS Mean": ps["mean"],
-            "PS Median": ps["median"],
-            "PS Discount": ps["discount"],
-            "PS Percentile": ps["percentile"],
-            "Revenue Growth 5Y": growth["revenue_growth_5y"],
-            "Revenue Growth TTM": growth["revenue_growth_ttm"],
-            "Earnings Growth 5Y": growth["earnings_growth_5y"],
-            "Earnings Growth TTM": growth["earnings_growth_ttm"],
-            "Margin TTM": growth["margin_ttm"],
-            "Margin Median": growth["margin_median"],
-            "Revenue TTM": growth["revenue_ttm"],
-            "Earnings TTM": growth["earnings_ttm"],
-            "Upside to Mean": (mean_reversion - 1) * 100,
-            "Potential Upside 1Y": one_year["blended"],
-            "Potential Upside 5Y": five_year["blended"],
-            "Earnings Upside 1Y": one_year["earnings"],
-            "Revenue Upside 1Y": one_year["revenue"],
-            "Earnings Upside 5Y": five_year["earnings"],
-            "Revenue Upside 5Y": five_year["revenue"],
-            "Earnings Growth Assumption 1Y": one_year["earnings_growth"],
-            "Revenue Growth Assumption 1Y": one_year["revenue_growth"],
-            "Earnings Growth Assumption 5Y": five_year["earnings_growth"],
-            "Revenue Growth Assumption 5Y": five_year["revenue_growth"],
-            "Implied Price 1Y": price * (1 + one_year["blended"] / 100),
-            "Implied Price 5Y": price * (1 + five_year["blended"] / 100),
-            "Statement Date": growth["statement_date"],
-        }
-        if not include_history:
-            return row
-        return {
-            "row": row,
-            "pe_history": pe_history,
-            "ps_history": ps_history,
-            "financial_history": financial_history,
-        }
-    except Exception:
-        return None
+    return pos.load_idx_universe()
 
 
 @st.cache_data(ttl=CACHE_TTL, max_entries=8, show_spinner=False)
@@ -399,42 +71,7 @@ def run_fundamental_scan(
 ) -> pd.DataFrame:
     del profile_version, schema_version
     profiles = {symbol: dict(values) for symbol, values in _profile_records}
-    rows = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as executor:
-        futures = {
-            executor.submit(_analyze_stock, symbol, profile, history_years): symbol
-            for symbol, profile in profiles.items()
-        }
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                row = future.result()
-            except Exception:
-                row = None
-            if row:
-                rows.append(row)
-
-    if not rows:
-        return _empty_results()
-
-    result = pd.DataFrame(rows)
-    result["Valuation Score"] = 100 - result[["PE Percentile", "PS Percentile"]].mean(axis=1)
-    growth_columns = [
-        "Revenue Growth 5Y",
-        "Revenue Growth TTM",
-        "Earnings Growth 5Y",
-        "Earnings Growth TTM",
-    ]
-    result["Growth Score"] = pd.concat(
-        [_pct_rank(result[column]).rename(column) for column in growth_columns], axis=1
-    ).mean(axis=1)
-    result["Quality Score"] = _pct_rank(result["Margin TTM"])
-    result["Score"] = (
-        result["Valuation Score"] * 0.55
-        + result["Growth Score"] * 0.35
-        + result["Quality Score"] * 0.10
-    )
-    result["Statement Date"] = pd.to_datetime(result["Statement Date"]).dt.date
-    return result.sort_values("Score", ascending=False).reset_index(drop=True)
+    return pos.scan_profiles(profiles, history_years)
 
 
 @st.cache_data(ttl=CACHE_TTL, max_entries=16, show_spinner=False)
@@ -445,22 +82,8 @@ def load_stock_detail(
     schema_version: int,
 ):
     del schema_version  # Included in the cache key to invalidate older detail schemas.
-    return _analyze_stock(symbol, dict(profile_values), history_years, include_history=True)
+    return pos.analyze_stock(symbol, dict(profile_values), history_years, include_history=True)
 
-
-def _profile_records(profiles: pd.DataFrame) -> tuple:
-    fields = ["price", "mktCap", "companyName", "sector", "industry"]
-    records = []
-    for symbol, row in profiles.iterrows():
-        values = tuple((field, row.get(field)) for field in fields)
-        records.append((str(symbol), values))
-    return tuple(records)
-
-
-def _profile_snapshot(profiles: pd.DataFrame) -> tuple[str, tuple]:
-    records = _profile_records(profiles)
-    version = hashlib.sha256(repr(records).encode()).hexdigest()
-    return version, records
 
 
 def _ratio_chart(history: pd.DataFrame, label: str, years: int):
@@ -543,15 +166,14 @@ with st.form("fundamental_screen"):
 
 
 if submitted:
-    market_cap_floor = min_market_cap * 1_000_000_000_000
-    selected_profiles = universe[universe["mktCap"] >= market_cap_floor].head(int(max_companies))
+    selected_profiles = pos.select_universe(universe, min_market_cap, max_companies)
     if selected_profiles.empty:
         st.warning("No active companies meet the selected market-cap floor.")
     else:
         with st.spinner(
             f"Analyzing earnings, revenue, and valuation history for {len(selected_profiles)} companies..."
         ):
-            profile_version, profile_records = _profile_snapshot(selected_profiles)
+            profile_version, profile_records = pos.profile_snapshot(selected_profiles)
             raw_results = run_fundamental_scan(
                 profile_version,
                 profile_records,
@@ -575,17 +197,9 @@ if submitted:
 
 
 scan_state = st.session_state.get("fundamental_scan")
-required_projection_columns = {
-    "Current Price",
-    "Upside to Mean",
-    "Potential Upside 1Y",
-    "Potential Upside 5Y",
-    "Implied Price 1Y",
-    "Implied Price 5Y",
-}
 if scan_state and (
     scan_state.get("schema_version") != SCAN_SCHEMA_VERSION
-    or not required_projection_columns.issubset(scan_state.get("results", pd.DataFrame()).columns)
+    or not pos.detail_is_current(scan_state.get("results", pd.DataFrame()).columns)
 ):
     st.session_state.pop("fundamental_scan", None)
     scan_state = None
@@ -606,36 +220,8 @@ if raw_results.empty:
     st.warning("No companies had enough valid price and quarterly financial history for comparison.")
     st.stop()
 
-# Each rule maps a short label (shown when a company fails it) to its pass condition.
-rules = {
-    "Loss-making": raw_results["Earnings TTM"] > 0,
-    "No revenue": raw_results["Revenue TTM"] > 0,
-    "Negative P/E": raw_results["Current PE"] > 0,
-    f"P/E > {filters['max_pe']:g}": raw_results["Current PE"] <= filters["max_pe"],
-    "Negative P/S": raw_results["Current PS"] > 0,
-    f"Revenue 5Y < {filters['min_revenue_growth']:g}%": (
-        raw_results["Revenue Growth 5Y"] >= filters["min_revenue_growth"]
-    ),
-    f"Earnings 5Y < {filters['min_earnings_growth']:g}%": (
-        raw_results["Earnings Growth 5Y"] >= filters["min_earnings_growth"]
-    ),
-}
-if filters["require_recent_growth"]:
-    rules["Revenue TTM falling"] = raw_results["Revenue Growth TTM"] > 0
-    rules["Earnings TTM falling"] = raw_results["Earnings Growth TTM"] > 0
-if filters["require_both_discounts"]:
-    rules["P/E above median"] = raw_results["PE Discount"] > 0
-    rules["P/S above median"] = raw_results["PS Discount"] > 0
-
-rule_checks = pd.DataFrame(rules)
-mask = rule_checks.all(axis=1)
-raw_results["Passes All"] = mask
-raw_results["Failed Rules"] = rule_checks.apply(
-    lambda row: ", ".join(label for label, passed in row.items() if not passed), axis=1
-)
-results = raw_results[mask].sort_values("Score", ascending=False).reset_index(drop=True)
-results.index += 1
-results.index.name = "Rank"
+raw_results = pos.apply_screen(raw_results, filters)
+results = pos.ranked(raw_results[raw_results["Passes All"]])
 
 st.subheader("Candidates", divider="green")
 summary_cols = st.columns(4)
@@ -673,9 +259,7 @@ if results.empty:
         st.stop()
 
 if show_all:
-    table = raw_results.sort_values("Score", ascending=False).reset_index(drop=True)
-    table.index += 1
-    table.index.name = "Rank"
+    table = pos.ranked(raw_results)
     st.caption(f"{int(table['Passes All'].sum())} of {len(table)} analyzed companies pass every selected rule.")
 else:
     table = results
@@ -757,10 +341,7 @@ selected_symbol = st.selectbox(
 )
 selected_row = table.loc[table["Symbol"] == selected_symbol].iloc[0]
 profile_row = scan_state["profiles"].loc[selected_symbol]
-profile_values = tuple(
-    (field, profile_row.get(field))
-    for field in ["price", "mktCap", "companyName", "sector", "industry"]
-)
+profile_values = pos.profile_values(profile_row)
 
 with st.spinner(f"Loading the research view for {selected_symbol}..."):
     detail = load_stock_detail(
@@ -775,15 +356,7 @@ if not detail:
     st.stop()
 
 detail_row = detail["row"]
-required_detail_fields = {
-    "Current Price",
-    "Upside to Mean",
-    "Potential Upside 1Y",
-    "Potential Upside 5Y",
-    "Implied Price 1Y",
-    "Implied Price 5Y",
-}
-if not required_detail_fields.issubset(detail_row):
+if not pos.detail_is_current(detail_row):
     load_stock_detail.clear()
     st.warning("The cached company detail is outdated. Select the company again to refresh it.")
     st.stop()
@@ -842,7 +415,7 @@ with st.expander("How potential upside is estimated"):
         - **One year:** earnings growth **{detail_row['Earnings Growth Assumption 1Y']:.1f}%**, revenue growth **{detail_row['Revenue Growth Assumption 1Y']:.1f}%**
         - **Five years:** earnings growth **{detail_row['Earnings Growth Assumption 5Y']:.1f}%**, revenue growth **{detail_row['Revenue Growth Assumption 5Y']:.1f}%** per year
 
-        Growth assumptions are capped at {MIN_PROJECTION_GROWTH:.0f}% to {MAX_PROJECTION_GROWTH:.0f}% annually.
+        Growth assumptions are capped at {pos.MIN_PROJECTION_GROWTH:.0f}% to {pos.MAX_PROJECTION_GROWTH:.0f}% annually.
         The result is a scenario, not a price target or discounted cash-flow valuation.
         """
     )
@@ -896,27 +469,7 @@ with growth_tab:
     growth_metrics[3].metric("Historical margin", f"{detail_row['Margin Median']:.1f}%")
 
 with checklist_tab:
-    checks = pd.DataFrame(
-        [
-            (
-                "Earnings valuation",
-                detail_row["PE Discount"] > 0,
-                _median_comparison(detail_row["PE Discount"], "P/E"),
-            ),
-            (
-                "Revenue valuation",
-                detail_row["PS Discount"] > 0,
-                _median_comparison(detail_row["PS Discount"], "P/S"),
-            ),
-            ("Durable revenue growth", detail_row["Revenue Growth 5Y"] > 0, f"5Y median growth is {detail_row['Revenue Growth 5Y']:.1f}%"),
-            ("Durable earnings growth", detail_row["Earnings Growth 5Y"] > 0, f"5Y median growth is {detail_row['Earnings Growth 5Y']:.1f}%"),
-            ("Recent revenue growth", detail_row["Revenue Growth TTM"] > 0, f"Latest TTM growth is {detail_row['Revenue Growth TTM']:.1f}%"),
-            ("Recent earnings growth", detail_row["Earnings Growth TTM"] > 0, f"Latest TTM growth is {detail_row['Earnings Growth TTM']:.1f}%"),
-            ("Profitable", detail_row["Earnings TTM"] > 0, f"Net margin is {detail_row['Margin TTM']:.1f}%"),
-        ],
-        columns=["Test", "Pass", "Evidence"],
-    )
-    checks["Status"] = np.where(checks["Pass"], "Pass", "Review")
+    checks = pos.checklist(detail_row)
     st.dataframe(checks[["Status", "Test", "Evidence"]], hide_index=True, width="stretch")
     st.warning(
         "This screen identifies candidates, not intrinsic value. Review debt, cash flow, dilution, one-off "
