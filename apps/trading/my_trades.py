@@ -88,19 +88,23 @@ closed_positions = positions[positions['closed_at'].notna()]
 # ── Open positions ─────────────────────────────────────────────────────────── #
 st.subheader('Open positions')
 if open_positions.empty:
-    st.info('No open positions. Use "Track this trade" on a Dividend Play card to add one.')
+    st.info('No open positions. Use "Track this trade" on a trading card to add one.')
 for _, position in open_positions.iterrows():
     with st.container(border=True):
         st.markdown(
             f"**{_short(position['symbol'])}** · {TOOL_LABELS.get(position['tool'], position['tool'])} · "
             f"{int(position['lots'])} lots at {_idr(position['entry_price'])}, bought {_day(position['entry_date'])}"
         )
+        rule = position['exit_rule'] or {}
         countdown = _countdown(position['exit_by'])
-        if countdown in ('Sell today', 'Sell-by date has passed'):
+        if rule.get('kind') == 'valuation':
+            # Long Term positions have no sell-by date; the nightly scan watches the exit conditions.
+            st.caption(f"Exit when P/E reaches its mean of {rule['pe_mean']:.1f} (it was {rule['pe_at_entry']:.1f}) "
+                       'or a new quarter turns growth negative')
+        elif countdown in ('Sell today', 'Sell-by date has passed'):
             st.warning(countdown, icon=':material/alarm:')
         else:
             st.caption(countdown)
-        rule = position['exit_rule'] or {}
         if rule.get('stop_price') or rule.get('target_price'):
             levels = [f"stop {_idr(rule['stop_price'])}" if rule.get('stop_price') else None,
                       f"target {_idr(rule['target_price'])}" if rule.get('target_price') else None]
