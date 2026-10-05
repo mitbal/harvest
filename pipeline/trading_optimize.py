@@ -1,0 +1,195 @@
+"""Weekly job: search each trading tool's setups and publish the ones that pass the gates.
+
+    python -m pipeline.trading_optimize --tool dividend_play
+
+Results go to ``trading_setups`` (one global setup plus per-stock overrides)
+with a ``trading_runs`` row recording what was searched.
+"""
+import argparse
+import datetime
+import json
+import logging
+import os
+import sys
+import time
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+import harvest.dividend_play as dp
+import harvest.trading_store as store
+from pipeline import trading_data
+
+
+logger = logging.getLogger(__name__)
+
+DIVIDEND_PLAY_PRESET = "Balanced"
+
+
+def _number(value) -> Optional[float]:
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
+def _profit_factor(gains: float, losses: float) -> Optional[float]:
+    if losses > 0:
+        return gains / losses
+    return None if gains <= 0 else float("inf")
+
+
+def _t_stat(total: float, sum_sq: float, trades: int) -> Optional[float]:
+    if trades < 2:
+        return None
+    mean = total / trades
+    variance = (sum_sq - trades * mean ** 2) / (trades - 1)
+    if variance <= 0:
+        return None
+    return float(mean / np.sqrt(variance / trades))
+
+
+def dividend_play_global_holdout(row) -> dict:
+    """Pooled holdout record of the recommended setup across the shortlist."""
+    return {
+        "level": "global",
+        "trades": int(row["Validation Trades"]),
+        "win_rate": _number(row["Validation Win Rate"]),
+        "avg_trade": _number(row["Validation Avg Trade"]),
+        "profit_factor": _number(row["Validation Profit Factor"]),
+        "t_stat": _number(row["Validation t-stat"]),
+        "avg_days": _number(row["Avg Days"]),
+        "return_per_month": _number(row["Return / Month"]),
+        "stocks_validated": int(row["Stocks Validated"]),
+        "positive_stocks_pct": _number(row["Positive Stocks %"]),
+        "setup_score": _number(row["Setup Score"]),
+    }
+
+
+def dividend_play_stock_holdout(row) -> dict:
+    """Holdout record of one stock's own best setup."""
+    trades = int(row["Validation Trades"])
+    return {
+        "level": "stock",
+        "trades": trades,
+        "win_rate": _number(row["Validation Win Rate"]),
+        "avg_trade": _number(row["Validation Avg Trade"]),
+        "profit_factor": _profit_factor(float(row["Validation Gains"]), float(row["Validation Losses"])),
+        "t_stat": _t_stat(float(row["Validation Sum"]), float(row["Validation Sum Sq"]), trades),
+        "avg_days": _number(row["Avg Days"]),
+        "return_per_month": _number(row["Return / Month"]),
+        "train_avg_trade": _number(row["Train Avg Trade"]),
+        "stock_setup_score": _number(row["Stock Setup Score"]),
+    }
+
+
+def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dict:
+    """Search Dividend Play setups on the default shortlist and publish those that pass.
+
+    Uses the page's defaults: shortlist filters, history from 2015, the latest
+    30% of ex-dates held out, default costs and the same holdout gates. The
+    global setup is published only when one qualifies; per-stock setups when a
+    stock's own best setup passes the stock gates.
+    """
+    as_of = pd.Timestamp(as_of or datetime.date.today()).normalize()
+    run_id = store.start_run(client, "dividend_play", "optimize", as_of)
+    started = time.monotonic()
+    try:
+        events = trading_data.load_dividend_events(client)
+        universe = trading_data.load_universe()
+        shortlist, eligible = dp.build_shortlist(universe, events)
+        symbols = shortlist["stock"].tolist()
+        if not symbols:
+            raise RuntimeError("The Dividend Play shortlist is empty")
+
+        start = pd.Timestamp(dp.DEFAULT_START)
+        histories = trading_data.load_price_histories(
+            symbols, start - pd.Timedelta(days=dp.PRICE_WARMUP_DAYS),
+        )
+        setups = dp.build_setup_grid(**dp.SEARCH_PRESETS[preset])
+        split = dp.holdout_split_date(start, as_of, dp.DEFAULT_VALIDATION_PCT)
+        costs = dp.trade_costs()
+
+        results = []
+        for symbol in symbols:
+            if symbol not in histories:
+                continue
+            data = dp.play_data(histories[symbol], events.get(symbol), start, as_of)
+            results.extend(dp.evaluate_stock_setups(symbol, data, setups, split, costs))
+        if not results:
+            raise RuntimeError("No Dividend Play backtests were produced")
+        results = pd.DataFrame(results)
+
+        setup_df = dp.summarize_setups(results, setups, dp.MIN_PROFIT_FACTOR, dp.MIN_T_STAT)
+        qualified, min_stocks, min_trades = dp.qualify_setups(setup_df, results)
+        best_stock = dp.best_stock_setups(
+            results, setups, dp.MIN_STOCK_VALIDATION_TRADES, dp.MIN_STOCK_VALIDATION_WIN_RATE,
+        )
+
+        published = []
+        if not qualified.empty:
+            top = qualified.iloc[0]
+            published.append({
+                "scope": "global",
+                "params": dp.setup_from_row(top),
+                "holdout": dividend_play_global_holdout(top),
+            })
+        for _, row in best_stock.iterrows():
+            published.append({
+                "scope": row["Symbol"],
+                "params": dp.setup_from_row(row),
+                "holdout": dividend_play_stock_holdout(row),
+            })
+        store.write_setups(client, "dividend_play", published, run_id)
+
+        stats = {
+            "preset": preset,
+            "start": start.date().isoformat(),
+            "holdout_from": split.date().isoformat(),
+            "costs": costs,
+            "eligible_stocks": int(eligible),
+            "shortlist": len(symbols),
+            "stocks_with_prices": len(histories),
+            "stocks_tested": int(results["Symbol"].nunique()),
+            "setups_searched": len(setups),
+            "setups_passing_gates": int(setup_df["Passes Gates"].sum()),
+            "required_validated_stocks": min_stocks,
+            "required_holdout_trades": min_trades,
+            "global_setup": None if qualified.empty else dp.format_setup(published[0]["params"]),
+            "stock_setups": int(len(best_stock)),
+            "duration_seconds": round(time.monotonic() - started, 1),
+        }
+        store.finish_run(client, run_id, "ok", stats)
+        return stats
+    except Exception as exc:
+        store.finish_run(client, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"[:500]})
+        raise
+
+
+TOOLS = {"dividend_play": dividend_play}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Search and publish trading setups")
+    parser.add_argument("--tool", choices=sorted(TOOLS), required=True)
+    parser.add_argument("--as-of", help="Date to optimize as of (YYYY-MM-DD), default today")
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        trading_data.validate_environment()
+        stats = TOOLS[args.tool](trading_data.get_supabase_client(), as_of=args.as_of)
+        logger.info("Optimize summary for %s: %s", args.tool, json.dumps(stats, sort_keys=True, default=str))
+        return 0
+    except Exception:
+        logger.exception("Optimize job failed for %s", args.tool)
+        return 1
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    sys.exit(main())

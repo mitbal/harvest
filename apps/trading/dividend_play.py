@@ -17,58 +17,24 @@ import harvest.dividend_play as dp
 import harvest.plot as hp
 import harvest.prices as hprices
 from harvest import chart_style as cs
+from harvest.dividend_play import (
+    BASELINE_SETUP,
+    DEFAULT_BUY_FEE,
+    DEFAULT_DIVIDEND_TAX,
+    DEFAULT_SELL_FEE,
+    DEFAULT_SELL_TAX,
+    MIN_PROFIT_FACTOR,
+    MIN_STOCK_VALIDATION_TRADES,
+    MIN_STOCK_VALIDATION_WIN_RATE,
+    MIN_T_STAT,
+    PRICE_WARMUP_DAYS,
+    SEARCH_PRESETS,
+)
 from harvest.premium import require_premium
 
 
-# Absolute holdout gates a setup must pass before it can be recommended.
-MIN_PROFIT_FACTOR = 1.3
-MIN_T_STAT = 2.0
-# Dividends are roughly annual, so a stock only has a handful of holdout trades.
-MIN_STOCK_VALIDATION_TRADES = 4
-MIN_STOCK_VALIDATION_WIN_RATE = 60.0
 FETCH_WORKERS = 8
-PRICE_WARMUP_DAYS = 400
 
-DEFAULT_BUY_FEE = 0.15
-DEFAULT_SELL_FEE = 0.15
-DEFAULT_SELL_TAX = 0.1
-DEFAULT_DIVIDEND_TAX = 10.0
-
-BASELINE_SETUP = {
-    'entry_start_days': 90, 'entry_end_days': 30,
-    'entry_rule': dp.ENTRY_DIP, 'dip_ma_days': 50, 'dip_pct': 0.0,
-    'exit_rule': dp.EXIT_CUM, 'hold_after_days': 5,
-    'take_profit_pct': 0.0, 'stop_loss_pct': 0.0,
-}
-
-SEARCH_PRESETS = {
-    'Quick': dict(
-        windows=[(90, 30), (150, 60)],
-        entries=[(dp.ENTRY_FIXED, 50, 0.0), (dp.ENTRY_DIP, 50, 0.0)],
-        exits=[(dp.EXIT_CUM, 0), (dp.EXIT_AFTER, 5)],
-        exit_limits=[(0.0, 0.0)],
-    ),
-    'Balanced': dict(
-        windows=[(60, 20), (90, 30), (120, 45), (150, 60), (180, 90)],
-        entries=[(dp.ENTRY_FIXED, 50, 0.0), (dp.ENTRY_DIP, 20, 0.0), (dp.ENTRY_DIP, 50, 0.0), (dp.ENTRY_DIP, 50, 3.0)],
-        exits=[(dp.EXIT_CUM, 0), (dp.EXIT_AFTER, 3), (dp.EXIT_AFTER, 10)],
-        exit_limits=[(0.0, 0.0), (10.0, 0.0), (15.0, 8.0)],
-    ),
-    'Deep': dict(
-        windows=[(45, 10), (60, 20), (90, 30), (120, 30), (120, 45), (150, 60), (180, 90), (240, 120)],
-        entries=[
-            (dp.ENTRY_FIXED, 50, 0.0), (dp.ENTRY_DIP, 20, 0.0), (dp.ENTRY_DIP, 20, 2.0),
-            (dp.ENTRY_DIP, 50, 0.0), (dp.ENTRY_DIP, 50, 3.0), (dp.ENTRY_DIP, 100, 5.0),
-        ],
-        exits=[(dp.EXIT_CUM, 0), (dp.EXIT_AFTER, 3), (dp.EXIT_AFTER, 10), (dp.EXIT_AFTER, 20)],
-        exit_limits=[(0.0, 0.0), (8.0, 0.0), (10.0, 0.0), (15.0, 8.0), (20.0, 10.0)],
-    ),
-}
-
-BLUE_CHIPS = [
-    'BBCA.JK', 'BMRI.JK', 'BBRI.JK', 'BBNI.JK', 'INDF.JK', 'ICBP.JK', 'UNVR.JK',
-    'TLKM.JK', 'ASII.JK', 'UNTR.JK', 'ADRO.JK', 'PTBA.JK', 'ITMG.JK', 'KLBF.JK',
-]
 
 st.set_page_config(page_title='Dividend Play - Panen Dividen')
 require_premium()
@@ -239,20 +205,6 @@ def fetch_price_histories(symbols: list[str], start: str, label: str) -> dict[st
     return histories
 
 
-def _setup_from_row(row) -> dict:
-    return {
-        'entry_start_days': int(row['entry_start_days']),
-        'entry_end_days': int(row['entry_end_days']),
-        'entry_rule': str(row['entry_rule']),
-        'dip_ma_days': int(row['dip_ma_days']),
-        'dip_pct': float(row['dip_pct']),
-        'exit_rule': str(row['exit_rule']),
-        'hold_after_days': int(row['hold_after_days']),
-        'take_profit_pct': float(row['take_profit_pct']),
-        'stop_loss_pct': float(row['stop_loss_pct']),
-    }
-
-
 def _pct(value, digits=1, signed=True):
     if value is None or not np.isfinite(value):
         return 'N/A'
@@ -302,30 +254,12 @@ with st.container():
     if universe_df.empty:
         st.warning("Dividend universe data is unavailable.")
     else:
-        eligible_df = universe_df[universe_df['stock'].isin(dividend_events)].copy()
-        mask = pd.Series(True, index=eligible_df.index)
-        if 'mktCap' in eligible_df.columns:
-            mask &= eligible_df['mktCap'] >= min_mcap_trill * 1_000_000_000_000
-        if 'yield' in eligible_df.columns:
-            mask &= eligible_df['yield'] >= float(min_yield)
-        if 'numDividendYear' in eligible_df.columns:
-            mask &= eligible_df['numDividendYear'] >= int(min_div_years)
-        if {'volAvg', 'price'}.issubset(eligible_df.columns):
-            eligible_df['Avg Value Traded'] = eligible_df['volAvg'] * eligible_df['price']
-            mask &= eligible_df['Avg Value Traded'].fillna(0) >= float(min_value_traded_bn) * 1_000_000_000
-        eligible_df = eligible_df[mask].copy()
-
-        eligible_df['Yield Score'] = eligible_df['yield'].rank(pct=True) * 100
-        eligible_df['Consistency Score'] = eligible_df['numDividendYear'].rank(pct=True) * 100
-        weight = float(yield_weight) / 100
-        eligible_df['Dividend Rank'] = (
-            eligible_df['Yield Score'] * weight + eligible_df['Consistency Score'] * (1 - weight)
+        final_df, eligible_count = dp.build_shortlist(
+            universe_df, dividend_events,
+            min_mcap_trill=min_mcap_trill, min_yield=min_yield, min_div_years=min_div_years,
+            max_stocks=max_stocks, yield_weight=yield_weight,
+            min_value_traded_bn=min_value_traded_bn, pin_blue_chips=include_blue_chips,
         )
-        filtered_df = eligible_df.sort_values(['Dividend Rank', 'yield'], ascending=False)
-        if include_blue_chips:
-            pinned = filtered_df[filtered_df['stock'].isin(BLUE_CHIPS)]
-            filtered_df = pd.concat([pinned, filtered_df[~filtered_df['stock'].isin(BLUE_CHIPS)]])
-        final_df = filtered_df.head(int(max_stocks))
 
         display_columns = [
             column for column in [
@@ -351,7 +285,7 @@ with st.container():
             hide_index=True,
             width='stretch',
         )
-        st.caption(f"{len(final_df)} of {len(eligible_df)} eligible dividend payers shown.")
+        st.caption(f"{len(final_df)} of {eligible_count} eligible dividend payers shown.")
 
 shortlist_tickers = final_df['stock'].tolist() if not final_df.empty else []
 
@@ -400,12 +334,8 @@ with st.expander("Advanced: trading costs and dividend tax"):
 search_space = SEARCH_PRESETS[search_depth]
 setups = dp.build_setup_grid(**search_space)
 total_runs = len(setups) * len(shortlist_tickers)
-split_date = pd.Timestamp(opt_start) + (pd.Timestamp(opt_end) - pd.Timestamp(opt_start)) * (1 - opt_validation_pct / 100)
-opt_costs = {
-    'buy_fee_pct': float(opt_buy_fee),
-    'sell_fee_pct': float(opt_sell_fee) + float(opt_sell_tax),
-    'dividend_tax_pct': float(opt_dividend_tax),
-}
+split_date = dp.holdout_split_date(opt_start, opt_end, opt_validation_pct)
+opt_costs = dp.trade_costs(opt_buy_fee, opt_sell_fee, opt_sell_tax, opt_dividend_tax)
 
 info_cols = st.columns(5)
 info_cols[0].metric("Setups", f"{len(setups):,}")
@@ -428,13 +358,7 @@ results_cache_key = hashlib.md5(
 
 def _play_data(symbol: str, prices: pd.DataFrame, start=None, end=None) -> dp.PlayData:
     """Build backtest arrays, keeping ex-dates within ``start``..``end``."""
-    divs = dividend_events.get(symbol, pd.DataFrame(columns=['date', 'dividend']))
-    if end is not None:
-        prices = prices[prices['date'] <= pd.Timestamp(end)]
-        divs = divs[divs['date'] <= pd.Timestamp(end)]
-    if start is not None:
-        divs = divs[divs['date'] >= pd.Timestamp(start)]
-    return dp.PlayData(prices, divs)
+    return dp.play_data(prices, dividend_events.get(symbol), start, end)
 
 
 if run_optimizer:
@@ -526,14 +450,7 @@ col_cfg = {
 if results_are_current:
     results_df = st.session_state['dp_optimizer_results'].copy()
     setup_df = dp.summarize_setups(results_df, setups, MIN_PROFIT_FACTOR, MIN_T_STAT)
-    tested_stocks = max(1, results_df['Symbol'].nunique())
-    min_validated_stocks = max(3, int(np.ceil(tested_stocks * 0.20)))
-    min_validation_trades = max(20, tested_stocks)
-    qualified_df = setup_df[
-        (setup_df['Stocks Validated'] >= min_validated_stocks)
-        & (setup_df['Validation Trades'] >= min_validation_trades)
-        & setup_df['Passes Gates']
-    ].copy()
+    qualified_df, min_validated_stocks, min_validation_trades = dp.qualify_setups(setup_df, results_df)
     gate_description = (
         f"a positive after-cost average trade in both train and holdout, holdout profit factor "
         f"≥ {MIN_PROFIT_FACTOR:.1f}, t-stat ≥ {MIN_T_STAT:.1f}, and at least {min_validation_trades} "
@@ -551,7 +468,7 @@ if results_are_current:
     best_stock_df = dp.best_stock_setups(results_df, setups, MIN_STOCK_VALIDATION_TRADES, MIN_STOCK_VALIDATION_WIN_RATE)
     stock_setup_map = {
         row['Symbol']: {
-            **_setup_from_row(row),
+            **dp.setup_from_row(row),
             'validation_avg_trade': float(row['Validation Avg Trade']),
             'validation_trades': int(row['Validation Trades']),
         }
@@ -564,7 +481,7 @@ if results_are_current:
     if not qualified_df.empty:
         recommended = qualified_df.iloc[0]
         recommended_setup = {
-            **_setup_from_row(recommended),
+            **dp.setup_from_row(recommended),
             'score': float(recommended['Setup Score']),
             'validation_avg_trade': float(recommended['Validation Avg Trade']),
         }
@@ -688,7 +605,7 @@ with main_col2:
 stock_specific_setup = stock_setup_map.get(stock)
 single_setup = stock_specific_setup or active_setup or BASELINE_SETUP
 single_setup_signature = (
-    stock, st.session_state.get('dp_applied_setup_signature'), tuple(sorted(_setup_from_row(single_setup).items())),
+    stock, st.session_state.get('dp_applied_setup_signature'), tuple(sorted(dp.setup_from_row(single_setup).items())),
 )
 if st.session_state.get('dp_single_setup_signature') != single_setup_signature:
     for key, value in {
@@ -1019,32 +936,17 @@ if scan_button:
             continue
         stock_setup = stock_setup_map.get(ticker)
         setup = stock_setup or active_setup or BASELINE_SETUP
-        upcoming = dp.estimate_next_ex_dates(divs, as_of=today)
-        # The first expected ex-date whose entry window has not yet closed.
-        upcoming = upcoming[
-            upcoming['expected_date'] - pd.Timedelta(days=setup['entry_end_days']) >= today
-        ]
-        if upcoming.empty:
+        nxt = dp.next_play_event(divs, setup, today)
+        if nxt is None:
             continue
-        nxt = upcoming.iloc[0]
         stats = dp.summarize_trades(dp.backtest_dividend_play(
-            _play_data(ticker, prices, opt_start, opt_end), **_setup_from_row(setup), **opt_costs,
+            _play_data(ticker, prices, opt_start, opt_end), **dp.setup_from_row(setup), **opt_costs,
         ))
         status = dp.entry_status(
             prices, nxt['expected_date'], setup['entry_start_days'], setup['entry_end_days'],
             setup['dip_ma_days'], setup['dip_pct'], as_of=today,
         )
-        in_window = status['status'] in ('In entry window', 'Buy zone - dip active')
-        if setup['entry_rule'] == dp.ENTRY_FIXED and in_window:
-            signal = 'Buy Zone'
-        elif status['status'] == 'Buy zone - dip active':
-            signal = 'Buy Zone'
-        elif in_window:
-            signal = 'In Window - Wait for Dip'
-        elif status['days_to_window'] <= int(opening_within):
-            signal = 'Opening Soon'
-        else:
-            signal = 'Later'
+        signal = dp.scan_signal(status, setup['entry_rule'], opening_within)
         scan_rows.append({
             'Symbol': ticker,
             'Signal': signal,
@@ -1073,8 +975,7 @@ if scan_button:
         st.warning("Could not evaluate any stock. Verify the price and dividend sources.")
     else:
         scan_df = pd.DataFrame(scan_rows)
-        signal_order = {'Buy Zone': 0, 'In Window - Wait for Dip': 1, 'Opening Soon': 2, 'Later': 3}
-        scan_df = scan_df.assign(order=scan_df['Signal'].map(signal_order)).sort_values(
+        scan_df = scan_df.assign(order=scan_df['Signal'].map(dp.SIGNAL_ORDER)).sort_values(
             ['order', 'Validated', 'Expected Trade', 'Days to Window'],
             ascending=[True, False, False, True], na_position='last',
         ).drop(columns='order')

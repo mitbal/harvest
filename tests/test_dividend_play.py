@@ -188,3 +188,77 @@ def test_summarize_and_best_stock_setups_rank_the_stronger_window_first():
     assert summary.iloc[0]['Setup'].startswith('Buy 90-60d before ex')
     assert set(best['Symbol']) == {'AAAA.JK', 'BBBB.JK'}
     assert (best['entry_start_days'] == 90).all()
+
+
+# ── Shortlist, selection and scanning helpers ──────────────────────────── #
+
+def _universe():
+    return pd.DataFrame({
+        'stock': ['HIGH.JK', 'LONG.JK', 'BBRI.JK', 'SMALL.JK', 'THIN.JK', 'NODIV.JK'],
+        'yield': [9.0, 3.0, 5.0, 8.0, 8.0, 8.0],
+        'numDividendYear': [4, 20, 10, 10, 10, 10],
+        'mktCap': [2e12, 2e12, 500e12, 0.1e12, 2e12, 2e12],
+        'price': [1000.0] * 6,
+        'volAvg': [5e6, 5e6, 5e6, 5e6, 1e3, 5e6],
+    })
+
+
+def test_build_shortlist_filters_ranks_and_pins_blue_chips():
+    symbols = {'HIGH.JK', 'LONG.JK', 'BBRI.JK', 'SMALL.JK', 'THIN.JK'}
+
+    shortlist, eligible = dp.build_shortlist(_universe(), symbols)
+
+    # SMALL fails market cap, THIN fails liquidity, NODIV has no dividend history.
+    assert eligible == 3
+    assert shortlist['stock'].tolist() == ['BBRI.JK', 'HIGH.JK', 'LONG.JK']
+    unpinned, _ = dp.build_shortlist(_universe(), symbols, pin_blue_chips=False, yield_weight=100)
+    assert unpinned['stock'].tolist() == ['HIGH.JK', 'BBRI.JK', 'LONG.JK']
+
+
+def test_holdout_split_and_costs():
+    assert dp.holdout_split_date('2015-01-01', '2025-01-01', 30) == pd.Timestamp('2015-01-01') + (
+        pd.Timestamp('2025-01-01') - pd.Timestamp('2015-01-01')) * 0.7
+    assert dp.trade_costs() == {'buy_fee_pct': 0.15, 'sell_fee_pct': 0.25, 'dividend_tax_pct': 10.0}
+
+
+def test_qualify_setups_scales_evidence_with_the_shortlist():
+    results = pd.DataFrame({'Symbol': [f'S{i}' for i in range(50)]})
+    setup_df = pd.DataFrame({
+        'Stocks Validated': [10, 9, 10], 'Validation Trades': [50, 50, 49], 'Passes Gates': [True, True, True],
+    })
+
+    qualified, min_stocks, min_trades = dp.qualify_setups(setup_df, results)
+
+    assert (min_stocks, min_trades) == (10, 50)
+    assert qualified.index.tolist() == [0]
+
+
+def test_next_play_event_prefers_announced_and_skips_closed_windows():
+    divs = pd.DataFrame({'date': pd.to_datetime(['2025-12-04', '2026-06-10', '2026-11-30']), 'dividend': 50.0})
+
+    event = dp.next_play_event(divs, dp.BASELINE_SETUP, '2026-10-05')
+
+    assert event['expected_date'] == pd.Timestamp('2026-11-30')
+    assert event['announced']
+    # By 1 Nov the 30 Nov window has closed (it ends 30 days before); next is June's estimate.
+    later = dp.next_play_event(divs, dp.BASELINE_SETUP, '2026-11-01')
+    assert later['expected_date'] == pd.Timestamp('2027-06-10')
+    assert not later['announced']
+
+
+def test_next_play_event_ignores_stopped_schedules():
+    divs = pd.DataFrame({'date': pd.to_datetime(['2023-06-10']), 'dividend': 50.0})
+
+    assert dp.next_play_event(divs, dp.BASELINE_SETUP, '2026-10-05') is None
+    assert dp.next_play_event(pd.DataFrame(columns=['date', 'dividend']), dp.BASELINE_SETUP, '2026-10-05') is None
+
+
+def test_scan_signal_maps_entry_status():
+    def status(name, days_to_window=0):
+        return {'status': name, 'days_to_window': days_to_window}
+
+    assert dp.scan_signal(status('In entry window'), dp.ENTRY_FIXED, 45) == dp.SIGNAL_BUY
+    assert dp.scan_signal(status('In entry window'), dp.ENTRY_DIP, 45) == dp.SIGNAL_WAIT
+    assert dp.scan_signal(status('Buy zone - dip active'), dp.ENTRY_DIP, 45) == dp.SIGNAL_BUY
+    assert dp.scan_signal(status('Waiting', 30), dp.ENTRY_DIP, 45) == dp.SIGNAL_SOON
+    assert dp.scan_signal(status('Waiting', 60), dp.ENTRY_DIP, 45) == dp.SIGNAL_LATER

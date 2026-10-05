@@ -30,6 +30,69 @@ EXIT_LABELS = {
     EXIT_AFTER: 'Hold through ex-date',
 }
 
+# Absolute holdout gates a setup must pass before it can be recommended.
+MIN_PROFIT_FACTOR = 1.3
+MIN_T_STAT = 2.0
+# Dividends are roughly annual, so a stock only has a handful of holdout trades.
+MIN_STOCK_VALIDATION_TRADES = 4
+MIN_STOCK_VALIDATION_WIN_RATE = 60.0
+PRICE_WARMUP_DAYS = 400
+
+DEFAULT_START = datetime.date(2015, 1, 1)
+DEFAULT_VALIDATION_PCT = 30
+DEFAULT_BUY_FEE = 0.15
+DEFAULT_SELL_FEE = 0.15
+DEFAULT_SELL_TAX = 0.1
+DEFAULT_DIVIDEND_TAX = 10.0
+DEFAULT_OPENING_WITHIN = 45
+# An estimated ex-date this close to an announced one is the same dividend.
+ANNOUNCED_MATCH_DAYS = 60
+# A schedule whose last ex-date is older than this has stopped; don't project it.
+MAX_SCHEDULE_AGE_DAYS = 550
+
+BASELINE_SETUP = {
+    'entry_start_days': 90, 'entry_end_days': 30,
+    'entry_rule': ENTRY_DIP, 'dip_ma_days': 50, 'dip_pct': 0.0,
+    'exit_rule': EXIT_CUM, 'hold_after_days': 5,
+    'take_profit_pct': 0.0, 'stop_loss_pct': 0.0,
+}
+
+SEARCH_PRESETS = {
+    'Quick': dict(
+        windows=[(90, 30), (150, 60)],
+        entries=[(ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 50, 0.0)],
+        exits=[(EXIT_CUM, 0), (EXIT_AFTER, 5)],
+        exit_limits=[(0.0, 0.0)],
+    ),
+    'Balanced': dict(
+        windows=[(60, 20), (90, 30), (120, 45), (150, 60), (180, 90)],
+        entries=[(ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 20, 0.0), (ENTRY_DIP, 50, 0.0), (ENTRY_DIP, 50, 3.0)],
+        exits=[(EXIT_CUM, 0), (EXIT_AFTER, 3), (EXIT_AFTER, 10)],
+        exit_limits=[(0.0, 0.0), (10.0, 0.0), (15.0, 8.0)],
+    ),
+    'Deep': dict(
+        windows=[(45, 10), (60, 20), (90, 30), (120, 30), (120, 45), (150, 60), (180, 90), (240, 120)],
+        entries=[
+            (ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 20, 0.0), (ENTRY_DIP, 20, 2.0),
+            (ENTRY_DIP, 50, 0.0), (ENTRY_DIP, 50, 3.0), (ENTRY_DIP, 100, 5.0),
+        ],
+        exits=[(EXIT_CUM, 0), (EXIT_AFTER, 3), (EXIT_AFTER, 10), (EXIT_AFTER, 20)],
+        exit_limits=[(0.0, 0.0), (8.0, 0.0), (10.0, 0.0), (15.0, 8.0), (20.0, 10.0)],
+    ),
+}
+
+BLUE_CHIPS = [
+    'BBCA.JK', 'BMRI.JK', 'BBRI.JK', 'BBNI.JK', 'INDF.JK', 'ICBP.JK', 'UNVR.JK',
+    'TLKM.JK', 'ASII.JK', 'UNTR.JK', 'ADRO.JK', 'PTBA.JK', 'ITMG.JK', 'KLBF.JK',
+]
+
+# Scanner signals, best first.
+SIGNAL_BUY = 'Buy Zone'
+SIGNAL_WAIT = 'In Window - Wait for Dip'
+SIGNAL_SOON = 'Opening Soon'
+SIGNAL_LATER = 'Later'
+SIGNAL_ORDER = {SIGNAL_BUY: 0, SIGNAL_WAIT: 1, SIGNAL_SOON: 2, SIGNAL_LATER: 3}
+
 EVENT_COLUMNS = [
     'ex_date', 'dividend', 'entry_date', 'entry_price', 'dip_triggered',
     'exit_date', 'exit_price', 'exit_reason', 'days_held', 'collected_dividend',
@@ -521,3 +584,152 @@ def best_stock_setups(
     best = best.join(setup_frame, on='Setup ID')
     best['Setup'] = [format_setup(setups[setup_id]) for setup_id in best['Setup ID']]
     return best.sort_values('Stock Setup Score', ascending=False).reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- #
+# Shortlist, setup selection and scanning (shared by the page and pipeline)    #
+# --------------------------------------------------------------------------- #
+def build_shortlist(
+    universe: pd.DataFrame,
+    dividend_symbols,
+    min_mcap_trill: float = 0.5,
+    min_yield: float = 1.0,
+    min_div_years: int = 3,
+    max_stocks: int = 200,
+    yield_weight: float = 50,
+    min_value_traded_bn: float = 0.5,
+    pin_blue_chips: bool = True,
+) -> tuple[pd.DataFrame, int]:
+    """Rank dividend payers by yield and paying record; returns the shortlist and the eligible count.
+
+    ``universe`` has one row per ``stock`` with ``yield``, ``numDividendYear``,
+    ``mktCap`` and, when available, ``volAvg`` and ``price`` for liquidity.
+    Only stocks in ``dividend_symbols`` (those with dividend history) qualify.
+    """
+    eligible = universe[universe['stock'].isin(set(dividend_symbols))].copy()
+    mask = pd.Series(True, index=eligible.index)
+    if 'mktCap' in eligible.columns:
+        mask &= eligible['mktCap'] >= min_mcap_trill * 1_000_000_000_000
+    if 'yield' in eligible.columns:
+        mask &= eligible['yield'] >= float(min_yield)
+    if 'numDividendYear' in eligible.columns:
+        mask &= eligible['numDividendYear'] >= int(min_div_years)
+    if {'volAvg', 'price'}.issubset(eligible.columns):
+        eligible['Avg Value Traded'] = eligible['volAvg'] * eligible['price']
+        mask &= eligible['Avg Value Traded'].fillna(0) >= float(min_value_traded_bn) * 1_000_000_000
+    eligible = eligible[mask].copy()
+
+    eligible['Yield Score'] = eligible['yield'].rank(pct=True) * 100
+    eligible['Consistency Score'] = eligible['numDividendYear'].rank(pct=True) * 100
+    weight = float(yield_weight) / 100
+    eligible['Dividend Rank'] = eligible['Yield Score'] * weight + eligible['Consistency Score'] * (1 - weight)
+    ranked = eligible.sort_values(['Dividend Rank', 'yield'], ascending=False)
+    if pin_blue_chips:
+        pinned = ranked[ranked['stock'].isin(BLUE_CHIPS)]
+        ranked = pd.concat([pinned, ranked[~ranked['stock'].isin(BLUE_CHIPS)]])
+    return ranked.head(int(max_stocks)), len(eligible)
+
+
+def holdout_split_date(start, end, validation_pct: float) -> pd.Timestamp:
+    """Ex-dates on or after this date are held out for validation."""
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    return start + (end - start) * (1 - validation_pct / 100)
+
+
+def trade_costs(
+    buy_fee: float = DEFAULT_BUY_FEE,
+    sell_fee: float = DEFAULT_SELL_FEE,
+    sell_tax: float = DEFAULT_SELL_TAX,
+    dividend_tax: float = DEFAULT_DIVIDEND_TAX,
+) -> dict:
+    """Cost keyword arguments for the backtest; the sell fee includes the sell tax."""
+    return {
+        'buy_fee_pct': float(buy_fee),
+        'sell_fee_pct': float(sell_fee) + float(sell_tax),
+        'dividend_tax_pct': float(dividend_tax),
+    }
+
+
+def play_data(prices: pd.DataFrame, divs: pd.DataFrame | None, start=None, end=None) -> PlayData:
+    """Build backtest arrays, keeping ex-dates within ``start``..``end``."""
+    divs = divs if divs is not None else pd.DataFrame(columns=['date', 'dividend'])
+    if end is not None:
+        prices = prices[prices['date'] <= pd.Timestamp(end)]
+        divs = divs[divs['date'] <= pd.Timestamp(end)]
+    if start is not None:
+        divs = divs[divs['date'] >= pd.Timestamp(start)]
+    return PlayData(prices, divs)
+
+
+def setup_from_row(row) -> dict:
+    """The nine setup fields of a summary or result row, with plain Python types."""
+    return {
+        'entry_start_days': int(row['entry_start_days']),
+        'entry_end_days': int(row['entry_end_days']),
+        'entry_rule': str(row['entry_rule']),
+        'dip_ma_days': int(row['dip_ma_days']),
+        'dip_pct': float(row['dip_pct']),
+        'exit_rule': str(row['exit_rule']),
+        'hold_after_days': int(row['hold_after_days']),
+        'take_profit_pct': float(row['take_profit_pct']),
+        'stop_loss_pct': float(row['stop_loss_pct']),
+    }
+
+
+def qualify_setups(setup_df: pd.DataFrame, results: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
+    """Setups that pass the gates with enough holdout evidence across the shortlist.
+
+    Returns the qualifying rows (best first) and the minimum validated stocks
+    and holdout trades that were required.
+    """
+    tested_stocks = max(1, results['Symbol'].nunique())
+    min_validated_stocks = max(3, int(np.ceil(tested_stocks * 0.20)))
+    min_validation_trades = max(20, tested_stocks)
+    qualified = setup_df[
+        (setup_df['Stocks Validated'] >= min_validated_stocks)
+        & (setup_df['Validation Trades'] >= min_validation_trades)
+        & setup_df['Passes Gates']
+    ].copy()
+    return qualified, min_validated_stocks, min_validation_trades
+
+
+def next_play_event(divs: pd.DataFrame, setup: dict, as_of) -> pd.Series | None:
+    """The first expected ex-date whose entry window has not closed yet.
+
+    None when the stock has no dividend within ``MAX_SCHEDULE_AGE_DAYS``.
+
+    Adds ``announced``: True when the date is a dividend already in the history
+    (declared), False when it was rolled forward from last year's schedule.
+    """
+    as_of = pd.Timestamp(as_of).normalize()
+    if divs is None or divs.empty or divs['date'].max() < as_of - pd.Timedelta(days=MAX_SCHEDULE_AGE_DAYS):
+        return None
+    upcoming = estimate_next_ex_dates(divs, as_of=as_of)
+    upcoming['announced'] = upcoming['expected_date'] == upcoming['based_on']
+    # Last year's dividend rolled forward duplicates one that is already announced
+    # for the same season; the announced date wins.
+    announced = upcoming.loc[upcoming['announced'], 'expected_date']
+    duplicate = pd.Series(False, index=upcoming.index)
+    for date in announced:
+        duplicate |= ~upcoming['announced'] & ((upcoming['expected_date'] - date).abs() <= pd.Timedelta(days=ANNOUNCED_MATCH_DAYS))
+    upcoming = upcoming[~duplicate]
+    upcoming = upcoming[upcoming['expected_date'] - pd.Timedelta(days=setup['entry_end_days']) >= as_of]
+    if upcoming.empty:
+        return None
+    event = upcoming.iloc[0].copy()
+    event['announced'] = bool(event['announced'])
+    return event
+
+
+def scan_signal(status: dict, entry_rule: str, opening_within: int) -> str:
+    """Scanner signal for an :func:`entry_status` result."""
+    in_window = status['status'] in ('In entry window', 'Buy zone - dip active')
+    if entry_rule == ENTRY_FIXED and in_window:
+        return SIGNAL_BUY
+    if status['status'] == 'Buy zone - dip active':
+        return SIGNAL_BUY
+    if in_window:
+        return SIGNAL_WAIT
+    if status['days_to_window'] <= int(opening_within):
+        return SIGNAL_SOON
+    return SIGNAL_LATER

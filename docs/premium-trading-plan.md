@@ -329,18 +329,18 @@ Read first: `apps/trading/dividend_play.py`, `harvest/dividend_play.py`, `tests/
 
 ### 1.1 Pipeline jobs
 
-- [ ] `pipeline/trading_optimize.py::dividend_play()`: default shortlist (same filters and defaults
+- [x] `pipeline/trading_optimize.py::dividend_play()`: default shortlist (same filters and defaults
       as the page), Balanced preset, existing holdout gates. Writes the global setup and
       per-stock setups to `trading_setups`, records a `trading_runs` row.
-- [ ] `pipeline/trading_scan.py::dividend_play()`: for each shortlist stock, use
+- [x] `pipeline/trading_scan.py::dividend_play()`: for each shortlist stock, use
       `estimate_next_ex_dates` and `entry_status` with the stored setup. Write `trading_signals`:
       `actionable` when inside the entry window (and dip rule satisfied if any), `opening_soon`
       when the window opens within 45 days. Fill `detail` with: company name, yield, setup
       description (`format_setup`), window day N of M, sessions left, holdout wins/trades and avg
       return after costs.
-- [ ] Announced vs estimated cum date: use announced dates from the existing dividend calendar
+- [x] Announced vs estimated cum date: use announced dates from the existing dividend calendar
       data (`div_cal_*`) when present, set `key_date_estimated` accordingly.
-- [ ] CLI entry points (`python -m pipeline.trading_scan --tool dividend_play`). Pipeline tests
+- [x] CLI entry points (`python -m pipeline.trading_scan --tool dividend_play`). Pipeline tests
       with fixture prices and a fake store.
 - [ ] Railway: propose cron config (daily scan after `daily_data`, weekly optimize on Sunday).
       [ASK USER] before changing any `railway*.toml`.
@@ -552,3 +552,30 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     identical single-ticker results for BBCA.JK (Regime RSI and Supertrend pullback). The
     optimizer could not run in the preview with either version: the shortlist needs the last 60
     sessions of prices and the local file ends 2026-04-08 (no FMP key locally to top it up).
+- 2026-10-05: Phase 1, task 1.1 implemented on branch `premium/phase-1-dividend-play`, stacked on
+  `premium/phase-0-swing-engine`. The R2 price files were uploaded the same day (jkse to
+  2026-10-05, sp500 to 2026-10-02).
+  - Shared logic moved from the page into `harvest/dividend_play.py` so the page and the jobs
+    cannot drift: gates and defaults, `SEARCH_PRESETS`, `build_shortlist`, `holdout_split_date`,
+    `trade_costs`, `play_data`, `setup_from_row`, `qualify_setups`, `next_play_event`,
+    `scan_signal`. The page calls them; results are unchanged except two scanner fixes that apply
+    to both: an estimated ex-date within 60 days of an announced one is dropped (the announced
+    one wins), and a stock whose last dividend is over 550 days old gets no projected ex-date.
+  - Announced vs estimated: taken from the dividend history itself (a future ex-date already in
+    the history is announced, a rolled-forward one is estimated). `div_cal_*` is built from the
+    same history, so reading it adds nothing.
+  - `pipeline/trading_data.py` (loaders: `div_score_jkse` from Redis plus FMP profiles for
+    company name and liquidity, dividend pickle from Supabase storage, prices strictly from R2),
+    `pipeline/trading_optimize.py`, `pipeline/trading_scan.py`. Scan `as_of` is the latest
+    price date. `actionable` = page "Buy Zone", `opening_soon` = window opens within 45 days;
+    "in window, waiting for the dip" is not published (counted in run stats). Dip-rule entry
+    price is the dip level (MA x (1 - dip%)). Key date is the cum date (last IDX session before
+    the ex-date); `exit_by` is the cum date or the first session `hold_after_days` after ex.
+  - Dry run on real data (in-memory store): optimize 16 s (129 stocks x 180 setups, global setup
+    "Buy 90-30d before ex, dip 0% < MA20; sell 10d after ex", 91 per-stock setups), scan 6 s
+    (14 actionable, 8 opening soon). The page's own optimizer and scanner gave the same global
+    setup and the same 14 / 8 counts.
+  - Added `holidays` to `requirements-pipeline.txt` (needed by `trading_store`).
+  - Open [ASK USER]: Railway schedule (proposal in the session summary); per-stock setups are
+    the best of 180 per stock on as few as 4 holdout trades, which flatters them (the page
+    already says so); consider stricter per-stock gates before launch.
