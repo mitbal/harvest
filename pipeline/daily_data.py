@@ -16,7 +16,8 @@ import redis
 from supabase import Client, create_client
 
 import harvest.data as hd
-from pipeline.historical_prices_core import run_historical_pipeline
+import harvest.prices as prices
+from pipeline.historical_prices_core import TARGETS as PRICE_TARGETS, run_historical_pipeline
 
 
 logger = logging.getLogger(__name__)
@@ -29,11 +30,20 @@ DEFAULT_MCAP_FILTERS = {
     "sp500": 10_000_000_000,
 }
 REQUIRED_ENVIRONMENT = ("FMP_API_KEY", "REDIS_URL", "SUPABASE_URL", "SUPABASE_KEY")
+R2_ENVIRONMENT = tuple(f"R2_{field.upper()}" for field in prices.R2_FIELDS)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+# Trading sessions back from the latest close, matching the old mat_view_latest_returns.
+RETURN_WINDOWS = {
+    "return_7d": 5,
+    "return_1m": 21,
+    "return_1y": 252,
+    "return_10y": 2520,
+}
 
 
-def validate_environment() -> None:
-    missing = [name for name in REQUIRED_ENVIRONMENT if not os.environ.get(name)]
+def validate_environment(price_target: str = "r2") -> None:
+    required = REQUIRED_ENVIRONMENT + (R2_ENVIRONMENT if price_target == "r2" else ())
+    missing = [name for name in required if not os.environ.get(name)]
     if missing:
         raise EnvironmentError(f"Missing required environment variables: {', '.join(missing)}")
 
@@ -79,8 +89,32 @@ def store_pickle_to_supabase_storage(
     )
 
 
+def compute_latest_returns(price_history: pd.DataFrame) -> pd.DataFrame:
+    """Returns over each window in ``RETURN_WINDOWS``, from every symbol's latest close.
+
+    A window counts trading sessions back from the latest row, so a symbol with
+    too little history gets NaN for that window. Indexed by symbol.
+    """
+    columns = list(RETURN_WINDOWS)
+    if price_history.empty:
+        return pd.DataFrame(columns=columns, index=pd.Index([], name="symbol"))
+    history = price_history[["symbol", "date", "close"]].sort_values(["symbol", "date"])
+    sessions_back = history.groupby("symbol").cumcount(ascending=False)
+    latest = history[sessions_back == 0].set_index("symbol")["close"]
+    returns = pd.DataFrame(index=latest.index)
+    for column, lag in RETURN_WINDOWS.items():
+        base = history[sessions_back == lag].set_index("symbol")["close"]
+        returns[column] = latest / base.reindex(latest.index) - 1
+    return returns
+
+
+def get_latest_returns_from_prices(exchange: str, symbols: list[str]) -> pd.DataFrame:
+    """Latest returns for ``symbols`` from the R2 price history."""
+    return compute_latest_returns(prices.read_prices(exchange, symbols=symbols))
+
+
 def refresh_returns_view(client: Optional[Client] = None) -> Optional[str]:
-    """Request a materialized-view refresh, tolerating remote timeout behavior."""
+    """Request a materialized-view refresh (Supabase rollback target only)."""
     try:
         (client or get_supabase_client()).rpc("refresh_latest_returns").execute()
         return None
@@ -94,7 +128,7 @@ def refresh_returns_view(client: Optional[Client] = None) -> Optional[str]:
 
 
 def get_latest_returns_from_db(client: Optional[Client] = None) -> pd.DataFrame:
-    """Fetch all precalculated returns from the materialized view."""
+    """Fetch all precalculated returns from the materialized view (Supabase rollback target only)."""
     supabase = client or get_supabase_client()
     records = []
     page_size = 1000
@@ -413,9 +447,10 @@ def run_daily(
     dividend_years=None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     use_local_price_cache: bool = False,
+    price_target: str = "r2",
 ) -> dict:
     """Run the complete daily data pipeline and return a serializable summary."""
-    validate_environment()
+    validate_environment(price_target)
     if exchange not in DEFAULT_MCAP_FILTERS:
         raise ValueError("exchange must be either 'jkse' or 'sp500'")
     if max_concurrency < 1:
@@ -448,17 +483,22 @@ def run_daily(
         max_concurrency=max_concurrency,
         use_local_cache=use_local_price_cache,
         symbols=active_stocks,
+        target=price_target,
     )
 
     supabase = get_supabase_client()
-    refresh_warning = refresh_returns_view(supabase)
+    refresh_warning = None
+    if price_target == "supabase":
+        refresh_warning = refresh_returns_view(supabase)
+        latest_returns = get_latest_returns_from_db(supabase)
+    else:
+        latest_returns = get_latest_returns_from_prices(exchange, active_stocks)
     if exchange == "jkse":
         profiles = _add_syariah_status(profiles)
 
-    latest_returns = get_latest_returns_from_db(supabase)
     latest_returns = latest_returns[latest_returns.index.astype(str).isin(active_stocks)]
     if latest_returns.empty:
-        raise RuntimeError("The latest-returns view returned no rows for active stocks")
+        raise RuntimeError("No latest returns found for active stocks")
     dividend_scores = compute_div_score(
         profiles,
         financials,
@@ -469,7 +509,10 @@ def run_daily(
     if dividend_scores.empty:
         raise RuntimeError(f"Dividend score calculation produced no rows for {exchange}")
 
-    redis_frames = {f"div_score_{exchange}": dividend_scores.reset_index()}
+    redis_frames = {
+        f"div_score_{exchange}": dividend_scores.reset_index(),
+        f"latest_returns_{exchange}": latest_returns.rename_axis("symbol").reset_index(),
+    }
     available_years = []
     for year in years:
         calendar = prepare_dividend_calendar(profiles, dividends, selected_mcap_filter, year)
@@ -518,6 +561,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-year", type=int, default=2020)
     parser.add_argument("--end-year", type=int, default=datetime.now().year)
     parser.add_argument("--max-concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
+    parser.add_argument(
+        "--price-target",
+        choices=PRICE_TARGETS,
+        default="r2",
+        help="Where daily prices are stored; 'supabase' is the pre-R2 path, kept for rollback",
+    )
     return parser
 
 
@@ -536,6 +585,7 @@ def main(argv=None) -> int:
             dividend_years=range(args.start_year, args.end_year + 1),
             max_concurrency=args.max_concurrency,
             use_local_price_cache=False,
+            price_target=args.price_target,
         )
         return 0
     except Exception:

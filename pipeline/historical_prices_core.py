@@ -1,8 +1,8 @@
+import argparse
 import datetime as dt
 import logging
 import os
-import pickle
-import tempfile
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -12,6 +12,7 @@ import pandas as pd
 from supabase import Client, create_client
 
 import harvest.data as hd
+import harvest.prices as prices
 
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ DEFAULT_RETRIES = 3
 DEFAULT_RETRY_DELAY = 10
 DEFAULT_MAX_CONCURRENCY = 10
 BACKFILL_START_DATE = "2010-01-01"
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+TARGETS = ("r2", "supabase")
 
 
 def get_supabase_client() -> Client:
@@ -34,7 +35,7 @@ def get_supabase_client() -> Client:
 
 def get_local_path(exchange: str) -> Path:
     """Return the repository-local historical-price cache path."""
-    return REPOSITORY_ROOT / "data" / exchange / "historical_prices.pkl"
+    return prices.local_path(exchange)
 
 
 def fetch_stock_price(symbol: str, start_date: str) -> Optional[pd.DataFrame]:
@@ -72,10 +73,7 @@ def _load_local_cache(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     try:
-        with path.open("rb") as cache_file:
-            frame = pickle.load(cache_file)
-        if not isinstance(frame, pd.DataFrame):
-            raise TypeError("Historical-price cache does not contain a DataFrame")
+        frame = prices.read_prices(path.parent.name, columns=None, path=path)
         logger.info("Loaded %s historical-price records from %s", len(frame), path)
         return frame
     except Exception as exc:
@@ -83,16 +81,22 @@ def _load_local_cache(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _write_local_cache(path: Path, frame: pd.DataFrame) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary_file:
-        temporary_path = Path(temporary_file.name)
-        pickle.dump(frame, temporary_file)
-    temporary_path.replace(path)
+def write_to_r2(exchange: str, new_frame: pd.DataFrame, mode: str) -> int:
+    """Merge new rows into the exchange's R2 price file; returns the stored row count."""
+    if mode == "backfill":
+        existing = pd.DataFrame()
+    else:
+        # A failed read must stop the run: writing new rows alone would wipe the history.
+        existing = prices.read_prices(exchange, columns=None)
+        if existing.empty:
+            raise RuntimeError(f"R2 price history for {exchange} is empty; run a backfill first")
+    merged = prices.merge_prices(existing, new_frame)
+    prices.write_prices(exchange, merged)
+    return len(merged)
 
 
 def upsert_to_db(frame: pd.DataFrame, client: Optional[Client] = None) -> None:
-    """Upsert one historical-price chunk into Supabase."""
+    """Upsert one historical-price chunk into Supabase (rollback target)."""
     if frame.empty:
         return
     supabase = client or get_supabase_client()
@@ -106,12 +110,20 @@ def run_historical_pipeline(
     use_local_cache: bool = False,
     cache_path: Optional[Path] = None,
     symbols: Optional[list[str]] = None,
+    target: str = "r2",
+    start_date: Optional[str] = None,
 ) -> dict:
-    """Fetch historical prices and persist new rows to Supabase."""
+    """Fetch historical prices and persist them to R2 (or Supabase, for rollback).
+
+    Incremental mode refetches the last 7 days (or from ``start_date``) and
+    merges them into the stored history; backfill rebuilds it from 2010.
+    """
     if exchange not in {"jkse", "sp500"}:
         raise ValueError("exchange must be either 'jkse' or 'sp500'")
     if mode not in {"incremental", "backfill"}:
         raise ValueError("mode must be either 'incremental' or 'backfill'")
+    if target not in TARGETS:
+        raise ValueError(f"target must be one of {', '.join(TARGETS)}")
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
 
@@ -126,11 +138,12 @@ def run_historical_pipeline(
     if not selected_symbols:
         raise RuntimeError(f"No stock symbols found for {exchange}")
 
-    start_date = (
-        BACKFILL_START_DATE
-        if mode == "backfill"
-        else (dt.datetime.now() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
-    )
+    if start_date is None:
+        start_date = (
+            BACKFILL_START_DATE
+            if mode == "backfill"
+            else (dt.datetime.now() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
+        )
 
     all_data = []
     failed_symbols = []
@@ -157,10 +170,14 @@ def run_historical_pipeline(
     new_frame = pd.concat(all_data, ignore_index=True).drop_duplicates(
         subset=["symbol", "date"], keep="last"
     )
-    client = get_supabase_client()
-    chunk_size = 1000
-    for offset in range(0, len(new_frame), chunk_size):
-        upsert_to_db(new_frame.iloc[offset : offset + chunk_size], client=client)
+    stored_rows = None
+    if target == "r2":
+        stored_rows = write_to_r2(exchange, new_frame, mode)
+    else:
+        client = get_supabase_client()
+        chunk_size = 1000
+        for offset in range(0, len(new_frame), chunk_size):
+            upsert_to_db(new_frame.iloc[offset : offset + chunk_size], client=client)
 
     if use_local_cache:
         local_path = cache_path or get_local_path(exchange)
@@ -169,15 +186,8 @@ def run_historical_pipeline(
             existing_frame = existing_frame[
                 existing_frame["symbol"].astype(str).isin(selected_symbols)
             ]
-        final_frame = (
-            pd.concat([existing_frame, new_frame], ignore_index=True)
-            if not existing_frame.empty
-            else new_frame
-        )
-        final_frame = final_frame.drop_duplicates(
-            subset=["symbol", "date"], keep="last"
-        ).reset_index(drop=True)
-        _write_local_cache(local_path, final_frame)
+        final_frame = prices.merge_prices(existing_frame, new_frame)
+        prices.write_prices(exchange, final_frame, path=local_path)
         logger.info("Wrote %s historical-price records to %s", len(final_frame), local_path)
 
     summary = {
@@ -189,7 +199,43 @@ def run_historical_pipeline(
         "symbols_failed": len(failed_symbols),
         "failed_symbols": sorted(failed_symbols),
         "rows_upserted": len(new_frame),
+        "target": target,
+        "rows_stored": stored_rows,
         "local_cache_enabled": use_local_cache,
     }
     logger.info("Historical-price summary: %s", summary)
     return summary
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Fetch daily prices into the price store")
+    parser.add_argument("--exchange", choices=["jkse", "sp500"], required=True)
+    parser.add_argument("--mode", choices=["incremental", "backfill"], default="incremental")
+    parser.add_argument("--target", choices=TARGETS, default="r2")
+    parser.add_argument("--start-date", help="Refetch from this date (YYYY-MM-DD) in incremental mode")
+    parser.add_argument("--max-concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        run_historical_pipeline(
+            exchange=args.exchange,
+            mode=args.mode,
+            max_concurrency=args.max_concurrency,
+            target=args.target,
+            start_date=args.start_date,
+        )
+        return 0
+    except Exception:
+        logger.exception("Historical-price pipeline failed")
+        return 1
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    sys.exit(main())

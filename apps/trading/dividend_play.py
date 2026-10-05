@@ -15,6 +15,7 @@ from st_supabase_connection import SupabaseConnection
 import harvest.data as hd
 import harvest.dividend_play as dp
 import harvest.plot as hp
+import harvest.prices as hprices
 from harvest import chart_style as cs
 
 
@@ -25,7 +26,6 @@ MIN_T_STAT = 2.0
 MIN_STOCK_VALIDATION_TRADES = 4
 MIN_STOCK_VALIDATION_WIN_RATE = 60.0
 FETCH_WORKERS = 8
-PRICE_PAGE_SIZE = 1000
 PRICE_WARMUP_DAYS = 400
 
 DEFAULT_BUY_FEE = 0.15
@@ -187,59 +187,43 @@ def load_dividend_events() -> dict[str, pd.DataFrame]:
     return events
 
 
-@st.cache_resource(show_spinner=False)
-def load_local_price_history() -> pd.DataFrame:
-    """Local daily closes, used when Supabase is unreachable during development."""
-    try:
-        prices = pd.read_pickle('data/jkse/historical_prices.pkl')[['symbol', 'date', 'close']].copy()
-        prices['date'] = pd.to_datetime(prices['date'], errors='coerce')
-        return prices.dropna()
-    except Exception:
-        return pd.DataFrame(columns=['symbol', 'date', 'close'])
+@st.cache_data(ttl=6 * 60 * 60, max_entries=32, show_spinner=False)
+def load_stored_prices(symbols: tuple[str, ...], start: str) -> pd.DataFrame:
+    """Daily closes for ``symbols`` since ``start`` from the Parquet price history."""
+    return hprices.load_prices('jkse', symbols=symbols, start=start)
 
 
-def fetch_price_history(symbol: str, start: str) -> pd.DataFrame:
-    """Daily closes from Supabase (paged), then the local cache, then the live API."""
-    rows = []
-    try:
-        offset = 0
-        while True:
-            page = (
-                conn.table("historical_prices")
-                .select("date,close")
-                .eq("symbol", symbol)
-                .gte("date", start)
-                .order("date")
-                .range(offset, offset + PRICE_PAGE_SIZE - 1)
-                .execute()
-                .data or []
-            )
-            rows.extend(page)
-            if len(page) < PRICE_PAGE_SIZE:
-                break
-            offset += PRICE_PAGE_SIZE
-    except Exception:
-        rows = []
-    prices = dp.prepare_prices(pd.DataFrame(rows))
-    if not prices.empty:
-        return prices
-
-    local = load_local_price_history()
-    local = local[(local['symbol'] == symbol) & (local['date'] >= pd.Timestamp(start))]
-    if not local.empty:
-        return dp.prepare_prices(local)
-
+def fetch_live_prices(symbol: str, start: str) -> pd.DataFrame:
+    """Daily closes from the live API, for stocks missing from the stored history."""
     try:
         return dp.prepare_prices(hd.get_daily_stock_price(symbol, start_from=start))
     except Exception:
         return pd.DataFrame(columns=['date', 'close'])
 
 
+def fetch_price_history(symbol: str, start: str) -> pd.DataFrame:
+    """Daily closes from the stored price history, then the live API."""
+    prices = dp.prepare_prices(load_stored_prices((symbol,), start))
+    if not prices.empty:
+        return prices
+    return fetch_live_prices(symbol, start)
+
+
 def fetch_price_histories(symbols: list[str], start: str, label: str) -> dict[str, pd.DataFrame]:
+    stored = load_stored_prices(tuple(sorted(set(symbols))), start)
+    stored_by_symbol = {symbol: dp.prepare_prices(group) for symbol, group in stored.groupby('symbol')}
+    histories = {
+        symbol: stored_by_symbol[symbol]
+        for symbol in symbols
+        if symbol in stored_by_symbol and not stored_by_symbol[symbol].empty
+    }
+    missing = [symbol for symbol in symbols if symbol not in histories]
+    if not missing:
+        return histories
+
     progress = st.progress(0.0, text=label)
-    histories = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as executor:
-        futures = {executor.submit(fetch_price_history, symbol, start): symbol for symbol in symbols}
+        futures = {executor.submit(fetch_live_prices, symbol, start): symbol for symbol in missing}
         for completed, future in enumerate(concurrent.futures.as_completed(futures), start=1):
             symbol = futures[future]
             try:
@@ -464,7 +448,7 @@ if run_optimizer:
         st.session_state['dp_price_cache_key'] = price_cache_key
 
     if not price_histories:
-        st.error("No price data returned. Make sure the shortlist is non-empty and Supabase is reachable.")
+        st.error("No price data returned. Make sure the shortlist is non-empty and price history is available.")
     else:
         ex_dates_in_range = sum(
             int(events['date'].between(pd.Timestamp(opt_start), pd.Timestamp(opt_end)).sum())

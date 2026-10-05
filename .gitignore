@@ -29,3 +29,6 @@ fil-result/
 porto_raw
 .claude/
 .agents/
+
+# Local price history fallback (see harvest/prices.py)
+data/*/historical_prices.parquet

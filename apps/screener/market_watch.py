@@ -12,10 +12,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit_echarts5 import st_echarts
-from supabase import create_client
 
 import harvest.plot as hp
 import harvest.data as hd
+import harvest.prices as hprices
 from harvest import chart_style as cs
 from harvest.utils import setup_logging
 from harvest.viewport import remaining_viewport_height
@@ -66,15 +66,6 @@ def connect_redis(url):
     )
 
 
-@st.cache_resource
-def get_supabase():
-    url = os.environ.get('SUPABASE_URL')
-    key = os.environ.get('SUPABASE_KEY')
-    if not url or not key:
-        return None
-    return create_client(url, key)
-
-
 logger = get_logger('market_watch')
 
 
@@ -121,7 +112,7 @@ def get_live_returns_from_profile(symbols: tuple) -> pd.DataFrame:
     """
     Fetches the latest price, absolute change, and % change for each symbol
     from the FMP ``/profile`` endpoint.  This is used as a real-time fallback
-    when today's Supabase prices are not yet available.
+    when today's stored prices are not yet available.
 
     Returns a DataFrame indexed by symbol with columns:
         [close, prev_close, return_1d_pct]
@@ -185,59 +176,24 @@ def get_stock_universe(key: str) -> pd.DataFrame:
     return df.set_index('stock')
 
 
-# ── Load historical prices for a date range from Supabase ────────────────── #
+# ── Load historical prices for a date range ──────────────────────────────── #
 
 @st.cache_data(max_entries=16, ttl=60 * 60, show_spinner='Fetching historical prices…')
 def get_prices_for_date_range(
+    exchange: str,
     symbols: tuple,       # tuple so it is hashable for caching
     date_from: str,
     date_to: str,
 ) -> pd.DataFrame:
     """
-    Fetches close prices for ``symbols`` between ``date_from`` and ``date_to``
-    from the Supabase ``historical_prices`` table.
-    Returns a DataFrame with columns [symbol, date, close].
+    Close prices for ``symbols`` between ``date_from`` and ``date_to`` (inclusive)
+    from the Parquet price history. Returns a DataFrame with columns [symbol, date, close].
     """
-    supabase = get_supabase()
-    if supabase is None:
+    try:
+        return hprices.load_prices(exchange, symbols=symbols, start=date_from, end=date_to)
+    except Exception as e:
+        logger.error(f'Price history error: {e}')
         return pd.DataFrame(columns=['symbol', 'date', 'close'])
-
-    all_rows = []
-    sym_list = list(symbols)
-    chunk_size = 50          # Supabase IN clause limit is generous, keep chunks small
-    limit = 10_000
-
-    for i in range(0, len(sym_list), chunk_size):
-        chunk = sym_list[i: i + chunk_size]
-        offset = 0
-        while True:
-            try:
-                resp = (
-                    supabase.table('historical_prices')
-                    .select('symbol,date,close')
-                    .in_('symbol', chunk)
-                    .gte('date', date_from)
-                    .lte('date', date_to)
-                    .range(offset, offset + limit - 1)
-                    .execute()
-                )
-                rows = resp.data
-                if not rows:
-                    break
-                all_rows.extend(rows)
-                if len(rows) < limit:
-                    break
-                offset += limit
-            except Exception as e:
-                logger.error(f'Supabase error: {e}')
-                break
-
-    if not all_rows:
-        return pd.DataFrame(columns=['symbol', 'date', 'close'])
-
-    df = pd.DataFrame(all_rows)
-    df['date'] = pd.to_datetime(df['date'])
-    return df
 
 
 # ── Fetch index prices from FMP ───────────────────────────────────────────── #
@@ -818,7 +774,7 @@ size_var = toolbar.selectbox(
 # Build color-by options based on available columns.
 # Sentinels starting with '__' are computed at render time, not from universe columns.
 _COLOR_OPTION_COL_MAP = {
-    '1D Return %':              None,               # % return (IDR) from Supabase / live data
+    '1D Return %':              None,               # % return (IDR) from stored / live data
     '7D Return %':              'return_7d',
     '7D USD Return %':          '__usd_return__',   # IDR return × FX factor, JKSE only
     '1M Return %':              'return_1m',
@@ -952,19 +908,19 @@ date_to_str   = selected_date_str
 date_from_str = (selected_date - timedelta(days=14)).strftime('%Y-%m-%d')
 
 with st.spinner(f'Fetching price data for {date_to_str}…'):
-    prices_df = get_prices_for_date_range(symbols_tuple, date_from_str, date_to_str)
+    prices_df = get_prices_for_date_range(sl.lower(), symbols_tuple, date_from_str, date_to_str)
 
 target_ts = pd.Timestamp(selected_date)
 returns_df = calc_daily_return_for_date(prices_df, target_ts)
 
-# ── Fallback logic: FMP live profile → then previous Supabase date ─────────── #
+# ── Fallback logic: FMP live profile → then previous stored date ──────────── #
 # Priority order:
-#   1. Supabase data for the selected date  (already computed above as returns_df)
+#   1. Stored prices for the selected date  (already computed above as returns_df)
 #   2. FMP company profile live data        (when selected date is the latest opened session)
-#   3. Most recent available Supabase date  (e.g. yesterday, for weekends / holidays)
+#   3. Most recent available stored date    (e.g. yesterday, for weekends / holidays)
 
 _effective_date = selected_date
-_data_source = 'Supabase historical prices'
+_data_source = 'Historical prices'
 _as_of_label = selected_date_str
 _price_notice = None
 
@@ -1112,7 +1068,7 @@ else:
     # ── Resolve color column ───────────────────────────────────────────────── #
     _color_src_col = _COLOR_OPTION_COL_MAP[color_var_label]
     if _color_src_col is None:
-        # '1D Return %' — IDR % change from live/Supabase data
+        # '1D Return %' — IDR % change from live/stored data
         color_col_data = df_tree['return_1d_pct']
     elif _color_src_col == '__usd_return__':
         # Multi-period USD return — apply FX factor to the stored IDR return column

@@ -1,6 +1,7 @@
 from datetime import datetime
 from unittest.mock import MagicMock, call, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -12,6 +13,10 @@ PIPELINE_ENV = {
     "REDIS_URL": "redis://test",
     "SUPABASE_URL": "https://supabase.test",
     "SUPABASE_KEY": "supabase-test",
+    "R2_ACCOUNT_ID": "account",
+    "R2_ACCESS_KEY_ID": "key",
+    "R2_SECRET_ACCESS_KEY": "secret",
+    "R2_BUCKET": "bucket",
 }
 
 
@@ -20,8 +25,46 @@ def test_validate_environment_reports_all_missing_variables():
         with pytest.raises(EnvironmentError) as error:
             daily_data.validate_environment()
 
-    for variable in daily_data.REQUIRED_ENVIRONMENT:
+    for variable in daily_data.REQUIRED_ENVIRONMENT + daily_data.R2_ENVIRONMENT:
         assert variable in str(error.value)
+
+
+def test_validate_environment_skips_r2_for_supabase_rollback():
+    env = {name: "x" for name in daily_data.REQUIRED_ENVIRONMENT}
+    with patch.dict("os.environ", env, clear=True):
+        daily_data.validate_environment("supabase")
+        with pytest.raises(EnvironmentError, match="R2_BUCKET"):
+            daily_data.validate_environment("r2")
+
+
+def _history(symbol, closes):
+    return pd.DataFrame(
+        {
+            "symbol": symbol,
+            "date": pd.bdate_range("2015-01-01", periods=len(closes)),
+            "close": closes,
+        }
+    )
+
+
+def test_compute_latest_returns_counts_sessions_back_from_latest_close():
+    long = _history("LONG", np.arange(1.0, 2522.0))  # 2521 sessions, enough for 10 years
+    short = _history("SHORT", [100.0] * 5 + [110.0])  # exactly one 7-day window
+    returns = daily_data.compute_latest_returns(pd.concat([short, long]).sample(frac=1, random_state=0))
+
+    assert returns.loc["LONG", "return_7d"] == pytest.approx(2521 / 2516 - 1)
+    assert returns.loc["LONG", "return_1m"] == pytest.approx(2521 / 2500 - 1)
+    assert returns.loc["LONG", "return_1y"] == pytest.approx(2521 / 2269 - 1)
+    assert returns.loc["LONG", "return_10y"] == pytest.approx(2521 / 1 - 1)
+    assert returns.loc["SHORT", "return_7d"] == pytest.approx(0.1)
+    assert returns.loc["SHORT", ["return_1m", "return_1y", "return_10y"]].isna().all()
+
+
+def test_compute_latest_returns_handles_empty_history():
+    returns = daily_data.compute_latest_returns(pd.DataFrame())
+
+    assert returns.empty
+    assert list(returns.columns) == list(daily_data.RETURN_WINDOWS)
 
 
 def test_parser_uses_current_year_and_exchange_defaults():
@@ -30,6 +73,7 @@ def test_parser_uses_current_year_and_exchange_defaults():
     assert args.start_year == 2020
     assert args.end_year == datetime.now().year
     assert args.mcap_filter is None
+    assert args.price_target == "r2"
 
 
 def test_main_returns_nonzero_when_pipeline_fails():
@@ -150,12 +194,12 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
     ) as run_historical, patch.object(
         daily_data, "get_supabase_client", return_value=supabase
     ), patch.object(
-        daily_data, "refresh_returns_view", return_value=None
-    ), patch.object(
+        daily_data, "refresh_returns_view"
+    ) as refresh_view, patch.object(
         daily_data, "_add_syariah_status", side_effect=lambda frame: frame.assign(is_syariah=True)
     ), patch.object(
         daily_data,
-        "get_latest_returns_from_db",
+        "get_latest_returns_from_prices",
         return_value=pd.DataFrame(
             {
                 "return_7d": [0.01, 0.02],
@@ -165,7 +209,7 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
             },
             index=pd.Index(["TEST.JK", "INACTIVE.JK"], name="symbol"),
         ),
-    ), patch.object(
+    ) as get_returns, patch.object(
         daily_data, "compute_div_score", return_value=score
     ) as compute_score, patch.object(
         daily_data, "prepare_dividend_calendar", return_value=calendar
@@ -190,10 +234,16 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         max_concurrency=daily_data.DEFAULT_MAX_CONCURRENCY,
         use_local_cache=False,
         symbols=["TEST.JK"],
+        target="r2",
     )
+    get_returns.assert_called_once_with("jkse", ["TEST.JK"])
+    refresh_view.assert_not_called()
     assert compute_score.call_args.kwargs["latest_returns"].index.tolist() == ["TEST.JK"]
     assert summary["returns_rows"] == 1
-    assert f"div_cal_jkse_{years[-1]}" in store_redis.call_args.args[0]
+    redis_frames = store_redis.call_args.args[0]
+    assert f"div_cal_jkse_{years[-1]}" in redis_frames
+    assert redis_frames["latest_returns_jkse"]["symbol"].tolist() == ["TEST.JK"]
+    assert redis_frames["latest_returns_jkse"]["return_1y"].tolist() == [0.1]
     assert store_storage.call_count == 2
 
 

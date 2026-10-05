@@ -11,6 +11,7 @@ from st_supabase_connection import SupabaseConnection
 
 import harvest.data as hd
 import harvest.plot as hp
+import harvest.prices as hprices
 
 STRATEGY_ENGINE_VERSION = 10
 DEFAULT_PROFIT_TARGET = 5.0
@@ -90,16 +91,17 @@ def df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 
-@st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
+@st.cache_data(ttl=6 * 60 * 60, max_entries=16, show_spinner=False)
 def load_price_volatility(symbols: tuple[str, ...], lookback: int = 60) -> pd.DataFrame:
-    """Calculate recent daily volatility from adjusted-quality local close history."""
+    """Calculate recent daily volatility from stored close history."""
     columns = ['stock', 'Daily Volatility', 'Volatility Observations']
     try:
-        prices = pd.read_pickle('data/jkse/historical_prices.pkl')
-        prices = prices[prices['symbol'].isin(symbols)][['symbol', 'date', 'close']].copy()
-        prices['date'] = pd.to_datetime(prices['date'], errors='coerce')
-        prices['close'] = pd.to_numeric(prices['close'], errors='coerce')
-        prices = prices.dropna().sort_values(['symbol', 'date'])
+        # Two calendar days per session leaves room for weekends and IDX holidays.
+        start = (datetime.date.today() - datetime.timedelta(days=int(lookback) * 2 + 14)).isoformat()
+        prices = fetch_close_history(tuple(symbols), start)
+        if prices.empty:
+            return pd.DataFrame(columns=columns)
+        prices = prices.sort_values(['symbol', 'date'])
         prices = prices.groupby('symbol', group_keys=False).tail(int(lookback) + 1)
         prices['return'] = prices.groupby('symbol')['close'].pct_change()
 
@@ -164,6 +166,12 @@ def get_db_connection() -> SupabaseConnection:
 conn = get_db_connection()
 
 
+@st.cache_data(ttl=6 * 60 * 60, max_entries=32, show_spinner=False)
+def fetch_close_history(symbols: tuple[str, ...], start: str) -> pd.DataFrame:
+    """Daily closes for ``symbols`` since ``start`` from the Parquet price history."""
+    return hprices.load_prices('jkse', symbols=symbols, start=start)
+
+
 @st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
 def load_dividend_events() -> dict[str, pd.DataFrame]:
     """Load ex-dividend dates and amounts per symbol for price adjustment.
@@ -200,15 +208,11 @@ def load_dividend_events() -> dict[str, pd.DataFrame]:
     return events
 
 
-@st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
-def load_local_close_history(symbols: tuple[str, ...]) -> pd.DataFrame:
-    """Local daily closes, used for market breadth when no fetched prices exist."""
+@st.cache_data(ttl=6 * 60 * 60, max_entries=8, show_spinner=False)
+def load_close_history(symbols: tuple[str, ...], start: str) -> pd.DataFrame:
+    """Stored daily closes, used for market breadth when no fetched prices exist."""
     try:
-        prices = pd.read_pickle('data/jkse/historical_prices.pkl')
-        prices = prices[prices['symbol'].isin(symbols)][['symbol', 'date', 'close']].copy()
-        prices['date'] = pd.to_datetime(prices['date'], errors='coerce')
-        prices['close'] = pd.to_numeric(prices['close'], errors='coerce')
-        return prices.dropna()
+        return fetch_close_history(symbols, start)
     except Exception:
         return pd.DataFrame(columns=['symbol', 'date', 'close'])
 
@@ -1434,34 +1438,11 @@ if run_optimizer:
         all_prices_df = st.session_state['dt_prices']
         st.info(f"Using cached price data ({len(all_prices_df):,} rows). Only grid params changed.")
     else:
-        fetch_progress = st.progress(0, text="Fetching price data from Supabase...")
-        all_rows = []
         try:
             start_str = opt_start.strftime('%Y-%m-%d')
-
-            for i, ticker in enumerate(shortlist_tickers):
-                fetch_progress.progress(
-                    (i + 1) / len(shortlist_tickers),
-                    text=f"Fetching {ticker}  ({i+1}/{len(shortlist_tickers)})..."
-                )
-                try:
-                    res = (
-                        conn.table("historical_prices")
-                            .select("symbol,date,close")
-                            .eq("symbol", ticker)
-                            .gte("date", start_str)
-                            .execute()
-                    )
-                    all_rows.extend(res.data or [])
-                except Exception:
-                    pass
-
-            fetch_progress.empty()
-
-            all_prices_df = pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+            with st.spinner("Loading price history..."):
+                all_prices_df = fetch_close_history(tuple(sorted(shortlist_tickers)), start_str)
             if not all_prices_df.empty:
-                all_prices_df['date']  = pd.to_datetime(all_prices_df['date'])
-                all_prices_df['close'] = pd.to_numeric(all_prices_df['close'], errors='coerce')
                 all_prices_df = all_prices_df[all_prices_df['date'] <= pd.to_datetime(opt_end)]
                 all_prices_df = all_prices_df.sort_values(['symbol', 'date'])
 
@@ -1469,12 +1450,11 @@ if run_optimizer:
             st.session_state['dt_price_cache_key'] = price_cache_key
 
         except Exception as e:
-            fetch_progress.empty()
             st.error(f"Failed to fetch price data: {e}")
             all_prices_df = pd.DataFrame()
 
     if all_prices_df.empty:
-        st.error("No price data returned. Make sure the shortlist is non-empty and Supabase is reachable.")
+        st.error("No price data returned. Make sure the shortlist is non-empty and price history is available.")
     else:
         fetch_cols = st.columns(3)
         fetch_cols[0].metric("Rows Fetched", f"{len(all_prices_df):,}")
@@ -1921,12 +1901,11 @@ st.divider()
 
 if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
     regime_series = compute_regime_series(jkse_df, fast_sma=int(regime_fast), slow_sma=int(regime_slow))
-    with st.spinner("Fetching data from Supabase..."):
+    with st.spinner("Loading price history..."):
         try:
-            res = conn.table("historical_prices").select("date,close").eq("symbol", stock).gte("date", start_date.strftime('%Y-%m-%d')).execute()
-            price_df = pd.DataFrame(res.data or [])
+            price_df = fetch_close_history((stock,), start_date.strftime('%Y-%m-%d'))[['date', 'close']]
         except Exception as e:
-            st.error(f"Error fetching data from Supabase: {e}")
+            st.error(f"Error loading price history: {e}")
             price_df = pd.DataFrame()
 
     if price_df.empty:
@@ -1949,10 +1928,12 @@ if st.button('Run Short-Term Swing Backtest', key="dt_run_single") and stock:
                 momentum_percentile = frame[stock]
         if bt_strategy_type == STRATEGY_BREADTH_RSI2:
             # Breadth needs the whole universe: prefer the optimizer's fetched
-            # prices, otherwise fall back to the local price history.
+            # prices, otherwise load the shortlist's stored history.
             universe_prices = cached_prices
             if universe_prices.empty and shortlist_tickers:
-                universe_prices = load_local_close_history(tuple(shortlist_tickers))
+                universe_prices = load_close_history(
+                    tuple(sorted(shortlist_tickers)), start_date.strftime('%Y-%m-%d'),
+                )
             if not universe_prices.empty:
                 single_breadth = _build_market_breadth({
                     symbol: group.assign(date=pd.to_datetime(group['date'])).set_index('date')['close']
@@ -2120,6 +2101,10 @@ if scan_button:
         return len(series) >= required_rows and series.index[-1].date() >= datetime.date.today() - datetime.timedelta(days=7)
 
     scan_progress = st.progress(0, text="Loading current daily histories...")
+    stored_prices = fetch_close_history(tuple(sorted(shortlist_tickers)), alert_start)
+    grouped_stored = {
+        symbol: group.set_index('date')['close'] for symbol, group in stored_prices.groupby('symbol')
+    }
     current_series = {}
     price_sources = {}
     stale_skipped = 0
@@ -2128,15 +2113,9 @@ if scan_button:
         series = _clean_price_series(grouped_alert.get(ticker))
         source = "Optimizer cache"
         if not _series_is_current(series):
-            try:
-                rows = conn.table("historical_prices").select("symbol,date,close").eq("symbol", ticker).order("date", desc=True).limit(required_rows + 50).execute().data or []
-                if rows:
-                    frame = pd.DataFrame(rows)
-                    frame['date'] = pd.to_datetime(frame['date'], errors='coerce')
-                    series = _clean_price_series(frame.sort_values('date').set_index('date')['close'])
-            except Exception:
-                pass
-            source = "Supabase"
+            if ticker in grouped_stored:
+                series = _clean_price_series(grouped_stored[ticker])
+            source = "Stored history"
         if not _series_is_current(series):
             live_history = load_live_daily_prices(ticker, alert_start)
             if not live_history.empty:
