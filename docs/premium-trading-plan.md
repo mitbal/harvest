@@ -347,9 +347,9 @@ Read first: `apps/trading/dividend_play.py`, `harvest/dividend_play.py`, `tests/
 
 ### 1.2 Page restructure
 
-- [ ] View switch with `st.segmented_control` (Today, Evidence, Lab), persisted in
+- [x] View switch with `st.segmented_control` (Today, Evidence, Lab), persisted in
       `st.query_params["view"]`; `?stock=SYMBOL` opens Evidence for that stock.
-- [ ] **Today** (no inputs):
+- [x] **Today** (no inputs):
   - Status line: "Updated <weekday date>, <time> WIB after close", next update; stale warning via
     `is_stale`.
   - Summary metrics: entry windows open, opening in 14 days, your positions (with "N exits <day>").
@@ -362,16 +362,16 @@ Read first: `apps/trading/dividend_play.py`, `harvest/dividend_play.py`, `tests/
     (Phase 2, hidden until then).
   - Footer: "Historical backtest of past dividend events. Check the announced cum date with IDX
     before trading. Not financial advice."
-- [ ] **Evidence**: existing single-ticker section, prefilled from `trading_setups` (per-stock
+- [x] **Evidence**: existing single-ticker section, prefilled from `trading_setups` (per-stock
       setup if present, else global), runs automatically on load. Keep the existing tabs
       (price and trades, typical run-up, trade log).
-- [ ] **Lab**: existing shortlist, optimizer and manual parameters, with a caption that results
+- [x] **Lab**: existing shortlist, optimizer and manual parameters, with a caption that results
       here are research only and do not change the published signals.
-- [ ] Free tier via `harvest/premium.py`: Today shows the first card in full and the remaining
+- [x] Free tier via `harvest/premium.py`: Today shows the first card in full and the remaining
       tickers as names only; Evidence allowed only for the sample ticker (config, default `BBRI.JK`);
       Lab gated.
-- [ ] AppTest coverage for the three views in logged out, free and premium states.
-- [ ] Verify in the local preview at desktop and mobile widths; Today must render in under 3
+- [x] AppTest coverage for the three views in logged out, free and premium states.
+- [x] Verify in the local preview at desktop and mobile widths; Today must render in under 3
       seconds with data present.
 
 Done when: the page opens on Today with stored signals and no button press; Evidence and Lab
@@ -579,3 +579,28 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - Open [ASK USER]: Railway schedule (proposal in the session summary); per-stock setups are
     the best of 180 per stock on as few as 4 holdout trades, which flatters them (the page
     already says so); consider stricter per-stock gates before launch.
+- 2026-10-05: Phase 1, task 1.2 implemented on the same branch.
+  - Page opens on Today. `st.segmented_control(key='view', bind='query-params')`; the Evidence
+    stock picker is bound to `?stock=` (full symbol, e.g. `BBRI.JK`; no `format_func`, because
+    the bound URL value is the displayed label). Initial values go through session state, not
+    `default`, so the in-page buttons don't trigger Streamlit's default-vs-session-state warning.
+  - Today reads only the store (no prices or dividends): about 1 s on reload, 2.6 s cold. Cards
+    sorted by holdout average; entry level rounded down to the IDX tick; "Window opens" shows the
+    first trading day (windows are counted in calendar days). Dip copy follows the engine:
+    "Dip rule active, X% below its N-day average" (the plan's "10-day high" doesn't match the
+    rule). "Your positions" shows the open Dividend Play positions when logged in ("-" otherwise);
+    Track this trade and Alert me stay hidden until Phase 2.
+  - Evidence runs on load with the published per-stock setup, else the global one, else the
+    baseline (with a note). `render_backtest` is shared with the Lab's manual backtest.
+  - Lab = previous page, behind `require_premium()`, with the research-only caption.
+  - Tiers: `harvest.premium.has_access()` / `current_email()`; `get_connection` is now public.
+    Free: first card in full, the rest and the opening-soon list as names, an unlock prompt that
+    opens the Lab paywall; Evidence only for `FREE_EVIDENCE_TICKER` (BBRI.JK).
+  - AppTest suite in `apptests/` (14 tests: three views x premium/free/logged out, ?stock link,
+    See evidence click, unlock click, store outage). It needs real Streamlit, so it runs in a
+    subprocess from `tests/test_apptests.py`; plain `pytest` covers it.
+  - Verified in the preview against the real-data dry-run signals (desktop and mobile, full and
+    free tiers) and inside the real app navigation with no tables (graceful messages).
+  - Known gap: after "See evidence" the URL shows `?view=Evidence` without `&stock=`; Streamlit
+    doesn't push a bound value set before the widget exists. Inbound `?stock=` links work, and the
+    URL updates once the user picks a stock.

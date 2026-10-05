@@ -138,3 +138,21 @@ def test_require_premium_blocks_expired_supporters(enforced):
             premium.require_premium()
 
     st.title.assert_called_once_with('Unlock the trading lab')
+
+
+def test_has_access_without_enforcement(monkeypatch):
+    monkeypatch.delenv('PREMIUM_ENFORCED', raising=False)
+    with patch.object(premium, 'st', _st()), patch.object(premium, 'is_premium') as is_premium:
+        assert premium.has_access()
+    is_premium.assert_not_called()
+
+
+def test_has_access_follows_premium_status_when_enforced(enforced):
+    with patch.object(premium, 'st', _st(logged_in=True, email='free@example.com')), \
+            patch.object(premium, '_premium_rows', return_value=[]):
+        assert not premium.has_access()
+    with patch.object(premium, 'st', _st(logged_in=True, email='fan@example.com')), \
+            patch.object(premium, '_premium_rows', return_value=[{'expires_at': None}]):
+        assert premium.has_access()
+    with patch.object(premium, 'st', _st(logged_in=False)):
+        assert not premium.has_access()

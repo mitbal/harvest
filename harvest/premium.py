@@ -50,7 +50,8 @@ def is_active(expires_at, now: Optional[datetime.datetime] = None) -> bool:
 
 
 @st.cache_resource(show_spinner=False)
-def _get_connection():
+def get_connection():
+    """The app's signed-in Supabase connection, for premium and trading tables."""
     from st_supabase_connection import SupabaseConnection
 
     conn = st.connection('supabase', type=SupabaseConnection)
@@ -63,7 +64,7 @@ def _get_connection():
 
 @st.cache_data(ttl=PREMIUM_CACHE_TTL, show_spinner=False)
 def _premium_rows(email: str, _client=None) -> list[dict]:
-    client = _client or _get_connection()
+    client = _client or get_connection()
     return client.table('premium_users').select('expires_at').eq('email', email).execute().data or []
 
 
@@ -80,6 +81,16 @@ def is_premium(email: Optional[str], client=None) -> bool:
         logger.exception('Premium lookup failed')
         return False
     return any(is_active(row.get('expires_at')) for row in rows)
+
+
+def current_email() -> Optional[str]:
+    """The logged-in visitor's email, or None."""
+    return st.user.email if st.user.is_logged_in else None
+
+
+def has_access() -> bool:
+    """Whether the visitor gets the full trading tools (always, while the gate is off)."""
+    return not is_enforced() or is_premium(current_email())
 
 
 def _render_paywall(email: Optional[str]) -> None:
@@ -125,7 +136,7 @@ def require_premium(teaser: Optional[Callable[[], None]] = None) -> None:
     """
     if not is_enforced():
         return
-    email = st.user.email if st.user.is_logged_in else None
+    email = current_email()
     if email and is_premium(email):
         return
 
