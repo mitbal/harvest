@@ -12,7 +12,7 @@ from starlette.middleware import Middleware
 from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from harvest import seo
+from harvest import seo, webhooks
 
 
 logger = logging.getLogger('seo')
@@ -102,6 +102,9 @@ app = st.App(
         # Old static sitemap URL, possibly already submitted to Search Console.
         Route('/sitemap_full.xml', sitemap_stocks_xml),
         Route('/stock_picker/{ticker}', stock_page),
+        Route('/webhooks/bmc', webhooks.bmc_webhook, methods=['POST']),
+        Route('/webhooks/trakteer', webhooks.trakteer_webhook, methods=['POST']),
+        Route('/webhooks/telegram', webhooks.telegram_webhook, methods=['POST']),
     ],
     middleware=[Middleware(StockCanonicalMiddleware)],
 )

@@ -447,6 +447,11 @@ def load_open_positions(email: str) -> pd.DataFrame:
     return positions[positions['tool'] == 'dividend_play']
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def load_settings(email: str) -> dict:
+    return store.get_settings(get_connection(), email)
+
+
 def _short(symbol: str) -> str:
     return symbol.removesuffix('.JK')
 
@@ -501,7 +506,53 @@ def _holdout_text(holdout: dict) -> str:
     )
 
 
-def render_signal_card(signal: pd.Series) -> None:
+@st.dialog('Track this trade')
+def track_dialog(signal: pd.Series) -> None:
+    detail = signal['detail']
+    estimated = bool(signal['key_date_estimated'])
+    st.markdown(
+        f"**{_short(signal['symbol'])}** · sell by {_day(signal['exit_by'], estimated)}, "
+        f"cum date {_day(signal['key_date'], estimated)}"
+    )
+    level = _entry_level(signal['entry_price'])
+    tick = float(sw.idx_tick_size([level])[0])
+    entry_price = st.number_input('Entry price (Rp)', min_value=tick, value=level, step=tick, format='%.0f')
+    lots = st.number_input('Lots', min_value=1, value=1, step=1, help='1 lot is 100 shares')
+    entry_date = st.date_input('Bought on', value=datetime.date.today(), max_value=datetime.date.today())
+    st.caption(f'About {_idr(entry_price * lots * 100)} before fees. My Trades counts down to the sell-by date.')
+    if st.button('Track', type='primary', icon=':material/bookmark_add:'):
+        store.create_position(get_connection(), current_email(), {
+            'tool': 'dividend_play',
+            'symbol': signal['symbol'],
+            'entry_date': entry_date,
+            'entry_price': float(entry_price),
+            'lots': int(lots),
+            'exit_by': signal['exit_by'],
+            # The rule as published today, so later setup changes don't move this trade's exit.
+            'exit_rule': {
+                'setup': detail.get('params'),
+                'setup_text': detail.get('setup'),
+                'key_date': signal['key_date'],
+                'key_date_estimated': estimated,
+                'expected_ex_date': detail.get('expected_ex_date'),
+                'next_dividend': detail.get('next_dividend'),
+                'signal_as_of': signal['as_of'],
+            },
+        })
+        load_open_positions.clear()
+        # A toast raised right before a rerun is lost, so show it on the next run.
+        st.session_state['dp_toast'] = f"Tracking {_short(signal['symbol'])}. See My Trades."
+        st.rerun()
+
+
+def _track(signal: pd.Series) -> None:
+    if current_email() is None:
+        st.login('google')
+    else:
+        track_dialog(signal)
+
+
+def render_signal_card(signal: pd.Series, can_track: bool = False) -> None:
     detail = signal['detail']
     estimated = bool(signal['key_date_estimated'])
     with st.container(border=True):
@@ -533,10 +584,16 @@ def render_signal_card(signal: pd.Series) -> None:
         if dip.get('rule') and dip.get('active') and dip.get('vs_ma_pct') is not None:
             st.caption(f"Dip rule active, {abs(dip['vs_ma_pct']):.1f}% below its {dip['ma_days']}-day average")
         st.caption(f"{detail.get('setup', '')}; {_holdout_text(detail.get('holdout') or {})}")
-        st.button(
-            'See evidence', key=f"evidence_{signal['symbol']}", icon=':material/query_stats:',
-            on_click=_open_view, args=(VIEW_EVIDENCE, signal['symbol']),
-        )
+        with st.container(horizontal=True):
+            if can_track and st.button(
+                'Track this trade', key=f"track_{signal['symbol']}", type='primary', icon=':material/bookmark_add:',
+                help=None if current_email() else 'Log in with Google to track trades',
+            ):
+                _track(signal)
+            st.button(
+                'See evidence', key=f"evidence_{signal['symbol']}", icon=':material/query_stats:',
+                on_click=_open_view, args=(VIEW_EVIDENCE, signal['symbol']),
+            )
 
 
 def render_unlock_prompt(hidden: int) -> None:
@@ -551,7 +608,40 @@ def render_unlock_prompt(hidden: int) -> None:
         )
 
 
+def _save_watchlist(email: str, options: list[str], key: str) -> None:
+    settings = load_settings(email)
+    prefs = dict(settings['alert_prefs'])
+    # Keep watched stocks that are not in today's list (for example, already in their window).
+    kept = [symbol for symbol in prefs.get('watch', []) if symbol not in options]
+    prefs['watch'] = kept + list(st.session_state[key] or [])
+    store.save_settings(get_connection(), email, {'alert_prefs': prefs})
+    load_settings.clear()
+
+
+def render_alert_picker(symbols: list[str]) -> None:
+    """'Alert me' pills: a Telegram message when the stock's entry window opens."""
+    email = current_email()
+    if email is None:
+        st.button('Log in to get alerts', icon=':material/notifications:', on_click=st.login, args=('google',),
+                  key='alerts_login')
+        return
+    try:
+        settings = load_settings(email)
+    except Exception:
+        logger.exception('Could not load settings')
+        return
+    watched = [symbol for symbol in settings['alert_prefs'].get('watch', []) if symbol in symbols]
+    st.pills(
+        'Alert me when the window opens', symbols, selection_mode='multi', default=watched,
+        format_func=_short, key='alert_watch', on_change=_save_watchlist, args=(email, symbols, 'alert_watch'),
+    )
+    if not settings.get('telegram_chat_id'):
+        st.caption('Alerts arrive on Telegram. Link it under Settings in My Trades.')
+
+
 def render_today(access: bool) -> None:
+    if 'dp_toast' in st.session_state:
+        st.toast(st.session_state.pop('dp_toast'), icon=':material/bookmark_added:')
     published = load_published()
     if published is None:
         st.warning('Signals are unavailable right now. Please try again in a few minutes.')
@@ -599,7 +689,7 @@ def render_today(access: bool) -> None:
         for start in range(0, len(shown), 2):
             for column, (_, signal) in zip(st.columns(2), shown.iloc[start:start + 2].iterrows()):
                 with column:
-                    render_signal_card(signal)
+                    render_signal_card(signal, can_track=access)
         if not access and len(actionable) > 1:
             st.markdown('Also open: ' + ', '.join(_short(s) for s in actionable['symbol'].iloc[1:]))
             render_unlock_prompt(len(actionable) - 1)
@@ -628,6 +718,7 @@ def render_today(access: bool) -> None:
                 'Won': st.column_config.NumberColumn(format='%.0f%%', help='Share of those trades that made money'),
             },
         )
+        render_alert_picker(soon['symbol'].tolist())
     st.caption(
         'Historical backtest of past dividend events. Check the announced cum date with IDX before trading. '
         'Not financial advice.'

@@ -289,3 +289,64 @@ def test_positions_are_validated(client):
         ts.update_position(client, 'me@example.com', position['id'], {'email': 'other@example.com'})
     with pytest.raises(ValueError, match='nothing'):
         ts.update_position(client, 'me@example.com', position['id'], {})
+
+
+# ── Settings, alert log and results ─────────────────────────────────────── #
+
+def test_settings_default_then_saved(client):
+    assert ts.get_settings(client, 'Me@Example.com')['buy_fee_pct'] == 0.15
+
+    ts.save_settings(client, 'me@example.com', {'sell_fee_pct': 0.3, 'alert_prefs': {'watch': ['BBRI.JK']}})
+
+    settings = ts.get_settings(client, 'me@example.com')
+    assert settings['sell_fee_pct'] == 0.3 and settings['buy_fee_pct'] == 0.15
+    assert settings['alert_prefs'] == {'watch': ['BBRI.JK']}
+    with pytest.raises(ValueError, match='cannot update email'):
+        ts.save_settings(client, 'me@example.com', {'email': 'x@example.com'})
+
+
+def test_alert_log_records_each_event_once(client):
+    assert ts.log_alert(client, 'me@example.com', 'exit', '1:2026-10-06')
+    assert not ts.log_alert(client, 'me@example.com', 'exit', '1:2026-10-06')
+    ts.forget_alert(client, 'me@example.com', 'exit', '1:2026-10-06')
+    assert ts.log_alert(client, 'me@example.com', 'exit', '1:2026-10-06')
+
+
+def test_link_token_and_subscriber_lookups(client):
+    ts.save_settings(client, 'a@example.com', {'telegram_link_token': 'tok'})
+    ts.save_settings(client, 'b@example.com', {'telegram_chat_id': '42'})
+
+    assert ts.settings_for_link_token(client, 'tok')['email'] == 'a@example.com'
+    assert ts.settings_for_link_token(client, '') is None
+    assert [row['email'] for row in ts.alert_subscribers(client)] == ['b@example.com']
+    assert ts.settings_for_chat(client, 42)[0]['email'] == 'b@example.com'
+
+
+def test_open_positions_all_spans_users(client):
+    ts.create_position(client, 'a@example.com', _position())
+    closed = ts.create_position(client, 'b@example.com', _position())
+    ts.close_position(client, 'b@example.com', closed['id'], '2026-10-10', 4100)
+    ts.create_position(client, 'c@example.com', _position(tool='swing'))
+
+    assert ts.open_positions_all(client, 'dividend_play')['email'].tolist() == ['a@example.com']
+
+
+def test_position_result_with_fees_and_dividend():
+    base = {'entry_price': 1000.0, 'lots': 2, 'closed_at': datetime.date(2026, 12, 1), 'exit_price': 1100.0,
+            'exit_rule': {'key_date': '2026-11-20', 'next_dividend': 50.0}}
+
+    result = ts.position_result(pd.Series(base), buy_fee_pct=0.15, sell_fee_pct=0.25, dividend_tax_pct=10)
+
+    cost, proceeds = 1000 * 1.0015, 1100 * 0.9975 + 45
+    assert result['return_pct'] == pytest.approx((proceeds / cost - 1) * 100)
+    assert result['profit'] == pytest.approx((proceeds - cost) * 200)
+    assert result['dividend'] == pytest.approx(45 * 200)
+    before_cum = ts.position_result(pd.Series({**base, 'closed_at': datetime.date(2026, 11, 20)}), 0.15, 0.25)
+    assert before_cum['dividend'] == 0.0
+    assert np.isnan(ts.position_result(pd.Series({**base, 'closed_at': None}), 0.15, 0.25)['return_pct'])
+
+
+def test_sessions_until_counts_trading_days():
+    assert ts.sessions_until('2026-10-09', today='2026-10-05') == 5
+    assert ts.sessions_until('2026-10-05', today='2026-10-05') == 1
+    assert ts.sessions_until('2026-10-02', today='2026-10-05') == 0

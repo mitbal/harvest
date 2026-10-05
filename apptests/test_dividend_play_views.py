@@ -102,11 +102,12 @@ def run_page(monkeypatch, client):
         active.clear()
         st.cache_data.clear()
         st.cache_resource.clear()
-        if tier == "premium":
+        # "open": the gate is off and nobody is logged in.
+        if tier in ("premium", "open"):
             monkeypatch.delenv("PREMIUM_ENFORCED", raising=False)
         else:
             monkeypatch.setenv("PREMIUM_ENFORCED", "true")
-        email = {"premium": "fan@example.com", "free": "free@example.com", "logged_out": None}[tier]
+        email = {"premium": "fan@example.com", "free": "free@example.com", "logged_out": None, "open": None}[tier]
         active.extend([
             patch.object(premium, "current_email", return_value=email),
             patch.object(premium, "is_premium", side_effect=lambda e: e == "fan@example.com"),

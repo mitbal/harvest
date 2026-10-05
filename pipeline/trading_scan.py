@@ -18,6 +18,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+import harvest.alerts as alerts
 import harvest.dividend_play as dp
 import harvest.trading_store as store
 from pipeline import trading_data
@@ -203,6 +204,12 @@ def dividend_play(client, as_of=None, opening_within: int = dp.DEFAULT_OPENING_W
                 signals.append(signal)
 
         store.write_signals(client, "dividend_play", as_of, signals)
+        try:
+            alert_stats = alerts.send_dividend_play_alerts(client, as_of, signals)
+        except Exception as exc:
+            # Signals are published; a Telegram problem must not fail the run.
+            logger.exception("Dividend Play alerts failed")
+            alert_stats = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         stats = {
             "as_of": as_of.date().isoformat(),
             "setups": len(setups),
@@ -211,6 +218,7 @@ def dividend_play(client, as_of=None, opening_within: int = dp.DEFAULT_OPENING_W
             "actionable": sum(s["status"] == "actionable" for s in signals),
             "opening_soon": sum(s["status"] == "opening_soon" for s in signals),
             **counts,
+            "alerts": alert_stats,
             "duration_seconds": round(time.monotonic() - started, 1),
         }
         store.finish_run(client, run_id, "ok", stats)

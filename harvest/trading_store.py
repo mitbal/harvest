@@ -328,3 +328,108 @@ def delete_position(client, email: str, position_id: int) -> bool:
         .execute().data
     )
     return bool(rows)
+
+
+# ── User settings and alerts ──────────────────────────────────────────────── #
+
+SETTINGS_DEFAULTS = {
+    'buy_fee_pct': 0.15,
+    'sell_fee_pct': 0.25,
+    'telegram_chat_id': None,
+    'telegram_link_token': None,
+    'alert_prefs': {},
+}
+SETTINGS_UPDATABLE = set(SETTINGS_DEFAULTS)
+
+
+def get_settings(client, email: str) -> dict:
+    """The user's settings, with defaults for anything not saved yet."""
+    rows = client.table('user_settings').select('*').eq('email', _email(email)).execute().data
+    saved = rows[0] if rows else {}
+    settings = {**SETTINGS_DEFAULTS, **{k: v for k, v in saved.items() if v is not None}}
+    settings['alert_prefs'] = dict(settings.get('alert_prefs') or {})
+    settings['email'] = _email(email)
+    return settings
+
+
+def save_settings(client, email: str, changes: dict) -> dict:
+    """Upsert some of the user's settings; returns the stored row."""
+    unknown = set(changes) - SETTINGS_UPDATABLE
+    if unknown:
+        raise ValueError(f"cannot update {', '.join(sorted(unknown))}")
+    row = {key: _jsonable(value) for key, value in changes.items()}
+    row['email'] = _email(email)
+    return client.table('user_settings').upsert(row, on_conflict='email').execute().data[0]
+
+
+def settings_for_link_token(client, token: str) -> Optional[dict]:
+    """The settings row waiting to be linked to Telegram with this token."""
+    if not token:
+        return None
+    rows = client.table('user_settings').select('*').eq('telegram_link_token', token).execute().data
+    return rows[0] if rows else None
+
+
+def settings_for_chat(client, chat_id: str) -> list[dict]:
+    return client.table('user_settings').select('*').eq('telegram_chat_id', str(chat_id)).execute().data or []
+
+
+def alert_subscribers(client) -> list[dict]:
+    """Every user with a linked Telegram chat (server side only)."""
+    rows = client.table('user_settings').select('*').execute().data or []
+    return [row for row in rows if row.get('telegram_chat_id')]
+
+
+def open_positions_all(client, tool: str) -> pd.DataFrame:
+    """Open positions of every user for one tool (server side only)."""
+    rows = (
+        client.table('positions').select('*').eq('tool', tool).is_('closed_at', 'null')
+        .execute().data or []
+    )
+    return _frame(rows, POSITION_COLUMNS, POSITION_DATE_COLUMNS)
+
+
+def log_alert(client, email: str, kind: str, ref: str) -> bool:
+    """Record an alert; False when the same alert was already sent (one alert per event)."""
+    inserted = client.table('alert_log').upsert(
+        {'email': _email(email), 'kind': kind, 'ref': ref},
+        on_conflict='email,kind,ref', ignore_duplicates=True,
+    ).execute().data
+    return bool(inserted)
+
+
+def forget_alert(client, email: str, kind: str, ref: str) -> None:
+    """Undo ``log_alert`` when sending failed, so the next run retries."""
+    client.table('alert_log').delete().eq('email', _email(email)).eq('kind', kind).eq('ref', ref).execute()
+
+
+def position_result(position, buy_fee_pct: float, sell_fee_pct: float, dividend_tax_pct: float = 10.0) -> dict:
+    """Return after fees of a closed position, adding the dividend when it was held past the cum date.
+
+    ``position`` is a row of :func:`list_positions`. Returns ``return_pct`` and
+    ``profit`` (IDR, 100 shares per lot); NaN for open positions.
+    """
+    if position['closed_at'] is None or pd.isna(position['closed_at']) or position['exit_price'] is None:
+        return {'return_pct': np.nan, 'profit': np.nan, 'dividend': 0.0}
+    rule = position['exit_rule'] or {}
+    dividend = 0.0
+    key_date = _to_date(rule.get('key_date'))
+    if rule.get('next_dividend') and key_date and _to_date(position['closed_at']) > key_date:
+        dividend = float(rule['next_dividend']) * (1 - dividend_tax_pct / 100)
+    cost = float(position['entry_price']) * (1 + buy_fee_pct / 100)
+    proceeds = float(position['exit_price']) * (1 - sell_fee_pct / 100) + dividend
+    shares = int(position['lots']) * 100
+    return {
+        'return_pct': (proceeds / cost - 1) * 100,
+        'profit': (proceeds - cost) * shares,
+        'dividend': dividend * shares,
+    }
+
+
+def sessions_until(exit_by, today=None) -> int:
+    """IDX trading sessions from today through ``exit_by`` (0 once it has passed)."""
+    today = _to_date(today) or datetime.date.today()
+    exit_by = _to_date(exit_by)
+    if exit_by is None or exit_by < today:
+        return 0
+    return len(idx_trading_days(today, exit_by))

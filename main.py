@@ -39,6 +39,7 @@ page_backtester = st.Page('apps/trading/backtester.py', title='Long Term Positio
 # Keeps the old URL so existing links and bookmarks still work.
 page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Short Term Swing Trading', icon='⚡', url_path='day_trading')
 page_dividend_play = st.Page('apps/trading/dividend_play.py', title='Dividend Play', icon='🎣')
+page_my_trades = st.Page('apps/trading/my_trades.py', title='My Trades', icon='📒')
 
 
 pages = st.navigation(
@@ -62,6 +63,7 @@ pages = st.navigation(
                 page_backtester,
                 page_swing_trading,
                 page_dividend_play,
+                page_my_trades,
         ]
     }
 )

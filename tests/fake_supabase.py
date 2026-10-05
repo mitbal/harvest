@@ -1,7 +1,7 @@
 """In-memory stand-in for the Supabase query builder used by harvest.trading_store.
 
 Supports the subset of the postgrest API the store uses: select, insert,
-upsert(on_conflict=...), update, delete, eq, neq, in_, is_, gte, lte,
+upsert(on_conflict=..., ignore_duplicates=...), update, delete, eq, neq, in_, is_, gte, lte,
 not_.<filter>, order and limit. Rows are copied in and out like over HTTP.
 """
 import copy
@@ -52,8 +52,9 @@ class Query:
         self.action, self.payload = 'insert', rows
         return self
 
-    def upsert(self, rows, on_conflict=None):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
         self.action, self.payload, self.on_conflict = 'upsert', rows, on_conflict
+        self.ignore_duplicates = ignore_duplicates
         return self
 
     def update(self, values):
@@ -145,7 +146,8 @@ class Query:
                 row = self.db.with_serial(self.table, row)
                 self.db.rows(self.table).append(row)
                 stored.append(row)
-            else:
+            elif not getattr(self, 'ignore_duplicates', False):
+                # Like PostgREST, ignored duplicates are left out of the returned rows.
                 existing.update(row)
                 stored.append(existing)
         return stored

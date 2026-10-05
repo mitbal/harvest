@@ -388,9 +388,9 @@ work; the gate behaves per tier with the flag on.
 
 Read first: `server.py` (Starlette routes and middleware), `harvest/trading_store.py`.
 
-- [ ] "Track this trade" `st.dialog`: entry price (default from signal), lots, writes `positions`
+- [x] "Track this trade" `st.dialog`: entry price (default from signal), lots, writes `positions`
       with the exit rule and `exit_by` copied from the signal.
-- [ ] `apps/trading/my_trades.py`: open positions sorted by `exit_by` with countdown in sessions
+- [x] `apps/trading/my_trades.py`: open positions sorted by `exit_by` with countdown in sessions
       (use IDX trading days; `holidays` is already a dependency), closed positions with results,
       settings form (fees, Telegram link, alert preferences). Register in `main.py`.
 - [ ] Telegram:
@@ -400,14 +400,14 @@ Read first: `server.py` (Starlette routes and middleware), `harvest/trading_stor
   - `harvest/alerts.py` sends, called from the daily scan: new actionable signal (if opted in),
     "Alert me" window opening, exit reminder one trading session before `exit_by`. Dedupe with
     `alert_log`.
-- [ ] Donation webhooks in `server.py`:
+- [x] Donation webhooks in `server.py`:
   - `POST /webhooks/bmc`: verify signature header with `BMC_WEBHOOK_SECRET`, insert `donations`
     (ignore duplicates), upsert `premium_users` with duration from a config mapping amount to days.
   - `POST /webhooks/trakteer`: verify token `TRAKTEER_WEBHOOK_TOKEN`, same flow. If the payload has
     no email, try to read one from the supporter message; otherwise store with `email` null for
     manual matching.
   - Return 2xx quickly; never log full payloads containing personal data to stdout.
-- [ ] Tests: bad signature, duplicate transaction, unknown email, expiry extension (a new donation
+- [x] Tests: bad signature, duplicate transaction, unknown email, expiry extension (a new donation
       extends from the later of now and current expiry).
 
 Done when: a test webhook unlocks access without manual steps, and a tracked position triggers an
@@ -610,3 +610,38 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   weekly optimize, Sunday 10:00 WIB (`0 3 * * 0`), 3h timeout. The user creates the optimize
   service in Railway with the same environment as the jkse pipeline and runs it once by hand
   before the first scan.
+- 2026-10-05: Phase 2 built on branch `premium/phase-2-positions-alerts` (stacked on the Phase 1
+  branch). Telegram is code-complete but unchecked above until the bot exists [ASK USER].
+  - Trakteer webhooks carry no supporter email (fields: created_at, transaction_id, type,
+    supporter_name, supporter_avatar, supporter_message, media, unit, unit_icon, quantity,
+    price, net_amount; token in `X-Webhook-Token`). The email is read from the supporter
+    message; otherwise the donation is stored with `email` null. The paywall now asks Trakteer
+    donors to write their email in the message. BMC: hex HMAC-SHA256 of the raw body in
+    `x-signature-sha256`; `data.supporter_email`, `data.amount`, `data.currency`.
+  - `harvest/donations.py`: verification, parsing, `TIERS` (now also used by the paywall, with
+    `min_idr` and `days`), `IDR_PER_UNIT` for BMC's USD (placeholder 16,000), idempotent
+    `record_donation` (duplicate delivery changes nothing; extension from the later of now and
+    the current expiry; lifetime stays lifetime). `is_enforced` / `is_active` moved here
+    (Streamlit-free) and re-exported by `harvest/premium.py`.
+  - `harvest/webhooks.py` + three POST routes in `server.py`. They use a service-role client from
+    `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` (new app secret). Store errors return 500 so the
+    provider retries; logs carry provider, transaction id and outcome only.
+  - `harvest/alerts.py`: signal alerts (watched stock or "every new entry window" opt-in, only
+    for users with access) and exit reminders (one session before `exit_by`, for anyone who
+    tracked the trade), each once via `alert_log`; a failed send is un-logged so the next run
+    retries. Called from the nightly scan; failures are recorded in run stats, never fail it.
+    `/start <token>` links a chat, `/stop` unlinks. `pipeline/telegram_setup.py` registers the
+    webhook (run by the user).
+  - Today: "Track this trade" dialog (prefilled tick-rounded entry, lots, date; copies the
+    published rule, cum date and dividend into `exit_rule`) and "Alert me" pills under the
+    opening-soon table. My Trades: open positions with session countdown, close/remove dialogs,
+    closed results after the user's fees (plus the dividend when held past the cum date),
+    settings form and Telegram linking. Registered in `main.py`.
+  - Tests: donations/webhooks/alerts (29), store additions, AppTests for My Trades and the Today
+    controls (23 AppTests in total). AppTest can't replay clicks inside a dialog; the Track save
+    was checked in the browser.
+  - Open [ASK USER]: create the bot (BotFather) and set `TELEGRAM_BOT_TOKEN`,
+    `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`; set `SUPABASE_SERVICE_KEY`,
+    `BMC_WEBHOOK_SECRET`, `TRAKTEER_WEBHOOK_TOKEN` in the app; register the BMC and Trakteer
+    webhook URLs; run `pipeline/telegram_setup.py`; confirm tier prices, durations and the USD
+    rate. "Done when" needs these.

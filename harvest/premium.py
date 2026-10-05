@@ -5,13 +5,12 @@ row in ``premium_users`` once ``PREMIUM_ENFORCED`` is on. The check runs on the
 server and ends the script with ``st.stop()``, so nothing below it is computed
 or sent to the browser.
 """
-import datetime
 import logging
-import os
 from typing import Callable, Optional
 
-import pandas as pd
 import streamlit as st
+
+from harvest.donations import TIERS, is_active, is_enforced  # noqa: F401  (re-exported)
 
 
 logger = logging.getLogger(__name__)
@@ -21,32 +20,11 @@ TRAKTEER_URL = 'https://trakteer.id/mitbal'
 BMC_URL = 'https://buymeacoffee.com/mitbal'
 COMMUNITY_URL = 'https://reddit.com/r/panendividen'
 
-# Placeholder prices and durations, not final.
-TIERS = [
-    {'name': 'Monthly', 'price': 'Rp 25rb', 'duration': '1 month'},
-    {'name': 'Quarterly', 'price': 'Rp 60rb', 'duration': '3 months'},
-    {'name': 'Yearly', 'price': 'Rp 200rb', 'duration': '12 months'},
-]
 BENEFITS = [
     'Full scanner with every stock that has a setup today',
     'Backtest any ticker with your own parameters',
     'Swing trading and long-term position labs',
 ]
-
-
-def is_enforced() -> bool:
-    """True when env ``PREMIUM_ENFORCED`` is set to a truthy value (default off)."""
-    return os.environ.get('PREMIUM_ENFORCED', '').strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
-def is_active(expires_at, now: Optional[datetime.datetime] = None) -> bool:
-    """A supporter is active with no expiry (lifetime) or an expiry in the future."""
-    if expires_at is None or pd.isna(expires_at):
-        return True
-    expiry = pd.Timestamp(expires_at)
-    if expiry.tzinfo is None:
-        expiry = expiry.tz_localize('UTC')
-    return expiry > pd.Timestamp(now or datetime.datetime.now(datetime.timezone.utc))
 
 
 @st.cache_resource(show_spinner=False)
@@ -110,7 +88,8 @@ def _render_paywall(email: Optional[str]) -> None:
     st.markdown('#### How to unlock')
     st.markdown(
         '1. Log in with Google.\n'
-        '2. Donate on Trakteer or Buy Me a Coffee using the same email.\n'
+        '2. Donate on Trakteer or Buy Me a Coffee using the same email. On Trakteer, '
+        'write that email in your support message.\n'
         '3. Access unlocks within minutes.'
     )
     if email:
