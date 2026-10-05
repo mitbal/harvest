@@ -7,11 +7,14 @@ exit or the maximum hold, all checked on closes.
 
 Nothing here depends on Streamlit.
 """
+import datetime
+from statistics import NormalDist
+
 import numpy as np
 import pandas as pd
 
 
-STRATEGY_ENGINE_VERSION = 10
+STRATEGY_ENGINE_VERSION = 11
 DEFAULT_PROFIT_TARGET = 5.0
 DEFAULT_STOP_LOSS = 2.0
 DEFAULT_MAX_HOLD = 5
@@ -435,6 +438,140 @@ def strategy_warmup(
     return max(int(param_a), int(param_b), int(param_c), 50) + 5
 
 
+TRADE_COLUMNS = [
+    'entry_date', 'entry_price', 'exit_date', 'exit_price', 'exit_reason', 'sessions',
+    'return_pct', 'regime',
+]
+
+
+def ohlc_frame(prices: pd.Series | pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Clean ``open, high, low, close`` by date, and whether real OHLC data was given.
+
+    A close series (or a frame without opens) becomes a frame whose open, high
+    and low equal the close, which keeps the original close-only rules.
+    """
+    if isinstance(prices, pd.Series):
+        close = pd.to_numeric(prices, errors='coerce')
+        frame = pd.DataFrame({'close': close})
+    else:
+        frame = prices.copy()
+        if 'date' in frame.columns:
+            frame = frame.set_index('date')
+        frame = frame.apply(pd.to_numeric, errors='coerce')
+    frame = frame[frame['close'].notna()].sort_index()
+    frame = frame[~frame.index.duplicated(keep='last')]
+    has_ohlc = 'open' in frame.columns and frame['open'].notna().any()
+    for column in ('open', 'high', 'low'):
+        if column not in frame.columns:
+            frame[column] = np.nan
+        frame[column] = frame[column].fillna(frame['close'])
+    # A few vendor bars have a high/low that doesn't bracket the open and close.
+    bars = frame[['open', 'high', 'low', 'close']]
+    frame['high'], frame['low'] = bars.max(axis=1), bars.min(axis=1)
+    return frame[['open', 'high', 'low', 'close']], bool(has_ohlc)
+
+
+def simulate_trades(
+    frame: pd.DataFrame,
+    setup: pd.Series,
+    strategy_exit: pd.Series,
+    max_hold: int,
+    profit_target_pct: float,
+    stop_loss_pct: float,
+    trade_start: pd.Timestamp | None = None,
+    has_ohlc: bool = True,
+) -> list[dict]:
+    """Walk the bars and return each trade's entry and exit bar, prices and reason.
+
+    A setup at close *t* enters at the open of *t+1*. With OHLC data a stop or
+    target fills at its level, or at the open when the price gaps through it;
+    the stop wins when both are touched in one bar, and only the stop is
+    checked on the entry day. A strategy exit signalled at a close fills at the
+    next open. The position is closed at the close ``max_hold`` sessions after
+    the entry day at the latest.
+
+    With close-only data every fill uses the close, as before OHLC existed.
+    """
+    entry_candidates = np.array(setup.shift(1, fill_value=False), dtype=bool)
+    exit_signal = np.array(strategy_exit.shift(1, fill_value=False), dtype=bool)
+    if trade_start is not None:
+        entry_candidates &= (frame.index >= pd.Timestamp(trade_start))
+    opens, highs, lows, closes = (frame[c].to_numpy(dtype=float) for c in ('open', 'high', 'low', 'close'))
+    trades = []
+    in_pos = False
+    entry_i, entry_price, stop, target, held = 0, 0.0, None, None, 0
+
+    def close_trade(i, price, reason):
+        trades.append({'entry_i': entry_i, 'exit_i': i, 'entry_price': entry_price,
+                       'exit_price': float(price), 'exit_reason': reason})
+
+    for i in range(len(frame)):
+        if in_pos:
+            held += 1
+            exit_price = reason = None
+            if has_ohlc:
+                if stop is not None and opens[i] <= stop:
+                    exit_price, reason = opens[i], 'Stop (gap)'
+                elif target is not None and opens[i] >= target:
+                    exit_price, reason = opens[i], 'Target (gap)'
+                elif exit_signal[i]:
+                    exit_price, reason = opens[i], 'Strategy exit'
+                elif stop is not None and lows[i] <= stop:
+                    exit_price, reason = stop, 'Stop'
+                elif target is not None and highs[i] >= target:
+                    exit_price, reason = target, 'Target'
+                elif held >= max_hold:
+                    exit_price, reason = closes[i], 'Max hold'
+            else:
+                if target is not None and closes[i] >= target:
+                    reason = 'Target'
+                elif stop is not None and closes[i] <= stop:
+                    reason = 'Stop'
+                elif exit_signal[i]:
+                    reason = 'Strategy exit'
+                elif held >= max_hold:
+                    reason = 'Max hold'
+                exit_price = closes[i] if reason else None
+            if reason:
+                close_trade(i, exit_price, reason)
+                in_pos = False
+                continue
+
+        if not in_pos and entry_candidates[i]:
+            entry_i, held, in_pos = i, 0, True
+            entry_price = float(opens[i] if has_ohlc else closes[i])
+            stop = entry_price * (1 - stop_loss_pct / 100) if stop_loss_pct > 0 else None
+            target = entry_price * (1 + profit_target_pct / 100) if profit_target_pct > 0 else None
+            if has_ohlc and stop is not None and lows[i] <= stop:
+                close_trade(i, stop, 'Stop')
+                in_pos = False
+
+    # Realize the last open position so every backtest trade is measurable; one
+    # opened on the final bar has no result yet and is left out.
+    if in_pos and entry_i < len(frame) - 1:
+        close_trade(len(frame) - 1, closes[-1], 'End of data')
+    return trades
+
+
+def _signal_inputs(
+    prices, regime_series, strategy_type, param_a, param_b, param_c, param_d,
+    benchmark_close=None, momentum_percentile=None, breadth=None,
+):
+    """Clean bars, aligned regime, setup and strategy exit; None when history is too short."""
+    frame, has_ohlc = ohlc_frame(prices)
+    if len(frame) < strategy_warmup(strategy_type, param_a, param_b, param_c, param_d):
+        return None
+    if regime_series.empty:
+        regime_aligned = pd.Series('bear', index=frame.index, dtype=str)
+    else:
+        regime_aligned = regime_series.reindex(frame.index, method='ffill').fillna('bear')
+    setup, strategy_exit, _ = strategy_components(
+        frame['close'], regime_aligned, benchmark_close, momentum_percentile,
+        strategy_type, param_a, param_b, param_c, param_d, breadth=breadth,
+    )
+    return frame, has_ohlc, regime_aligned, setup, strategy_exit
+
+
 def build_regime_signals(
     price_series: pd.Series,
     regime_series: pd.Series,
@@ -451,66 +588,129 @@ def build_regime_signals(
     momentum_percentile: pd.Series | None = None,
     breadth: pd.Series | None = None,
 ):
-    """Build next-session entries and close-based exits from daily closing setups."""
-    price_series = pd.to_numeric(price_series, errors='coerce').dropna().sort_index()
-    price_series = price_series[~price_series.index.duplicated(keep='last')]
-    min_len = strategy_warmup(
-        strategy_type, param_a, param_b, param_c, param_d,
+    """Next-session entries and exits as boolean series (close-based view of the trades)."""
+    inputs = _signal_inputs(
+        price_series, regime_series, strategy_type, param_a, param_b, param_c, param_d,
+        benchmark_close, momentum_percentile, breadth,
     )
-    if len(price_series) < min_len:
+    if inputs is None:
         return None
-
-    if regime_series.empty:
-        regime_aligned = pd.Series('bear', index=price_series.index, dtype=str)
-    else:
-        regime_aligned = regime_series.reindex(price_series.index, method='ffill').fillna('bear')
-
-    setup, strategy_exit, _ = strategy_components(
-        price_series, regime_aligned, benchmark_close, momentum_percentile,
-        strategy_type, param_a, param_b, param_c, param_d, breadth=breadth,
+    frame, has_ohlc, regime_aligned, setup, strategy_exit = inputs
+    trades = simulate_trades(
+        frame, setup, strategy_exit, max_hold, profit_target_pct, stop_loss_pct, trade_start, has_ohlc,
     )
-    entry_candidates = setup.shift(1, fill_value=False)
-    strategy_exit = strategy_exit.shift(1, fill_value=False)
-    if trade_start is not None:
-        entry_candidates.loc[entry_candidates.index < pd.Timestamp(trade_start)] = False
-    n = len(price_series)
-    clean_entries = np.zeros(n, dtype=bool)
-    clean_exits = np.zeros(n, dtype=bool)
-    close_arr = price_series.to_numpy(dtype=float)
-    in_pos = False
-    entry_price = 0.0
-    days_held = 0
-
-    for i in range(n):
-        if in_pos:
-            days_held += 1
-            hit_target = profit_target_pct > 0 and close_arr[i] >= entry_price * (1 + profit_target_pct / 100)
-            hit_stop = stop_loss_pct > 0 and close_arr[i] <= entry_price * (1 - stop_loss_pct / 100)
-            if hit_target or hit_stop or strategy_exit.iloc[i] or days_held >= max_hold:
-                clean_exits[i] = True
-                in_pos = False
-                continue
-
-        if not in_pos and entry_candidates.iloc[i]:
-            clean_entries[i] = True
-            in_pos = True
-            entry_price = close_arr[i]
-            days_held = 0
-
-    # Realize the last open position so every backtest trade is measurable.
-    if in_pos:
-        clean_exits[-1] = True
-
+    entries = np.zeros(len(frame), dtype=bool)
+    exits = np.zeros(len(frame), dtype=bool)
+    for trade in trades:
+        entries[trade['entry_i']] = True
+        exits[trade['exit_i']] = True
     return (
-        price_series,
-        pd.Series(clean_entries, index=price_series.index),
-        pd.Series(clean_exits, index=price_series.index),
+        frame['close'],
+        pd.Series(entries, index=frame.index),
+        pd.Series(exits, index=frame.index),
         regime_aligned,
     )
 
 
+def backtest_trades(
+    prices: pd.Series | pd.DataFrame,
+    regime_series: pd.Series,
+    strategy_type: str,
+    param_a: float,
+    param_b: float,
+    param_c: float,
+    param_d: float,
+    max_hold: int,
+    profit_target_pct: float,
+    stop_loss_pct: float,
+    buy_fee: float,
+    sell_fee: float,
+    sell_tax: float,
+    trade_start: pd.Timestamp | None = None,
+    benchmark_close: pd.Series | None = None,
+    momentum_percentile: pd.Series | None = None,
+    breadth: pd.Series | None = None,
+    slippage_ticks: float = 0.0,
+) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """Trades of one strategy after fees, tax and tick slippage, plus the clean bars.
+
+    Each fill pays its side's fee plus ``slippage_ticks`` IDX ticks at the fill
+    price. ``return_pct`` is the profit after costs over the entry value. None when history is
+    too short for the indicators.
+    """
+    inputs = _signal_inputs(
+        prices, regime_series, strategy_type, param_a, param_b, param_c, param_d,
+        benchmark_close, momentum_percentile, breadth,
+    )
+    if inputs is None:
+        return None
+    frame, has_ohlc, regime_aligned, setup, strategy_exit = inputs
+    raw = simulate_trades(
+        frame, setup, strategy_exit, max_hold, profit_target_pct, stop_loss_pct, trade_start, has_ohlc,
+    )
+    if not raw:
+        return pd.DataFrame(columns=TRADE_COLUMNS), frame
+    trades = pd.DataFrame(raw)
+    entry_cost = buy_fee / 100 + slippage_fraction(trades['entry_price'], slippage_ticks)
+    exit_cost = (sell_fee + sell_tax) / 100 + slippage_fraction(trades['exit_price'], slippage_ticks)
+    trades['entry_cost'] = entry_cost.to_numpy()
+    trades['exit_cost'] = exit_cost.to_numpy()
+    # Profit after both sides' costs over the entry value before costs (vectorbt's trade return).
+    trades['return_pct'] = (
+        trades['exit_price'] * (1 - trades['exit_cost']) / trades['entry_price'] - (1 + trades['entry_cost'])
+    ) * 100
+    trades['entry_date'] = frame.index[trades['entry_i']]
+    trades['exit_date'] = frame.index[trades['exit_i']]
+    trades['sessions'] = trades['exit_i'] - trades['entry_i']
+    trades['regime'] = regime_aligned.to_numpy()[trades['entry_i']]
+    return trades, frame
+
+
+def equity_curve(trades: pd.DataFrame, frame: pd.DataFrame, start: float = 100.0) -> pd.Series:
+    """Account value at each close when every trade uses the whole account.
+
+    Marked to the close while in a position (exit costs are paid at the exit),
+    the same convention as a vectorbt signal portfolio.
+    """
+    closes = frame['close'].to_numpy(dtype=float)
+    value = np.full(len(frame), np.nan)
+    cash = start
+    last = 0
+    for trade in trades.itertuples():
+        value[last:trade.entry_i] = cash
+        shares = cash / (trade.entry_price * (1 + trade.entry_cost))
+        value[trade.entry_i:trade.exit_i] = shares * closes[trade.entry_i:trade.exit_i]
+        cash = shares * trade.exit_price * (1 - trade.exit_cost)
+        value[trade.exit_i] = cash
+        last = trade.exit_i + 1
+    value[last:] = cash
+    return pd.Series(value, index=frame.index)
+
+
+def trade_metrics(trades: pd.DataFrame, frame: pd.DataFrame) -> dict | None:
+    """Headline metrics of a backtest; None without trades."""
+    if trades.empty:
+        return None
+    returns = trades['return_pct'].to_numpy(dtype=float)
+    equity = equity_curve(trades, frame)
+    drawdown = equity / equity.cummax() - 1
+    return {
+        'total_return': float((equity.iloc[-1] / 100 - 1) * 100),
+        'win_rate': float((returns > 0).mean() * 100),
+        'max_drawdown': float(drawdown.min() * 100),
+        'trades': int(len(returns)),
+        'avg_trade': float(returns.mean()),
+        # Sums let trade statistics be pooled across stocks later.
+        'gross_win': float(returns[returns > 0].sum()),
+        'gross_loss': float(-returns[returns < 0].sum()),
+        'sum_sq': float((returns ** 2).sum()),
+        'bear_entries': int((trades['regime'] == 'bear').sum()),
+        'bull_entries': int((trades['regime'] == 'bull').sum()),
+    }
+
+
 def run_regime_backtest(
-    price_series: pd.Series,
+    price_series: pd.Series | pd.DataFrame,
     regime_series: pd.Series,
     strategy_type: str,
     param_a: float,
@@ -529,48 +729,18 @@ def run_regime_backtest(
     breadth: pd.Series | None = None,
     slippage_ticks: float = 0.0,
 ):
-    """Run one short-term swing strategy with close-based risk controls.
+    """Run one short-term swing strategy; returns performance metrics, or None without trades.
 
-    Returns a dict of performance metrics, or None when no trade happened.
+    ``price_series`` is a close series or an OHLC frame (see :func:`simulate_trades`).
     """
-    signals = build_regime_signals(
-        price_series, regime_series, strategy_type, param_a, param_b, param_c,
-        param_d, max_hold, profit_target_pct, stop_loss_pct, trade_start,
-        benchmark_close, momentum_percentile, breadth,
+    result = backtest_trades(
+        price_series, regime_series, strategy_type, param_a, param_b, param_c, param_d,
+        max_hold, profit_target_pct, stop_loss_pct, buy_fee, sell_fee, sell_tax, trade_start,
+        benchmark_close, momentum_percentile, breadth, slippage_ticks,
     )
-    if signals is None:
+    if result is None:
         return None
-    price_series, entries, exits, regime_aligned = signals
-
-    if not entries.any():
-        return None
-
-    fees = build_trade_fees(
-        price_series, entries, exits, buy_fee, sell_fee, sell_tax, slippage_ticks,
-    )
-
-    try:
-        vbt = load_vectorbt()
-        pf = vbt.Portfolio.from_signals(price_series, entries, exits, freq='1D', fees=fees)
-        num_trades = len(pf.trades)
-        if num_trades == 0:
-            return None
-        trade_returns = np.asarray(pf.trades.returns.values, dtype=float) * 100
-        return {
-            'total_return': float(pf.total_return() * 100),
-            'win_rate': float(pf.trades.win_rate() * 100),
-            'max_drawdown': float(pf.max_drawdown() * 100),
-            'trades': num_trades,
-            'avg_trade': float(trade_returns.mean()),
-            # Sums let trade statistics be pooled across stocks later.
-            'gross_win': float(trade_returns[trade_returns > 0].sum()),
-            'gross_loss': float(-trade_returns[trade_returns < 0].sum()),
-            'sum_sq': float((trade_returns ** 2).sum()),
-            'bear_entries': int((entries & (regime_aligned == 'bear')).sum()),
-            'bull_entries': int((entries & (regime_aligned == 'bull')).sum()),
-        }
-    except Exception:
-        return None
+    return trade_metrics(*result)
 
 
 SEARCH_PRESETS = {
@@ -835,11 +1005,26 @@ def eligible_stock_candidates(group: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
+def stock_holdout_t_stat(frame: pd.DataFrame) -> pd.Series:
+    """Holdout t-stat of each per-stock result row, from its pooled trade sums."""
+    column = lambda name: pd.to_numeric(frame[name], errors='coerce').astype(float)
+    n = column('Validation Trades')
+    mean = (column('Validation Gross Win') - column('Validation Gross Loss')) / n.where(n > 0)
+    variance = (column('Validation Sum Sq') - n * mean ** 2) / (n - 1).where(n > 1)
+    return mean / np.sqrt(variance.where(variance > 0) / n)
+
+
 def select_stock_strategies(
     results_df: pd.DataFrame,
     global_strategy: dict,
+    min_t_stat: float = 0.0,
 ) -> dict[str, dict]:
-    """Select stock overrides only when holdout return beats the global strategy."""
+    """Select stock overrides only when holdout return beats the global strategy.
+
+    ``min_t_stat`` adds a significance bar on the stock's own holdout trades;
+    use :func:`required_t_stat` with the number of combinations each stock
+    chose from, since the best of many is flattered by luck.
+    """
     selections = {}
     for symbol, group in results_df.groupby('Symbol'):
         global_rows = group[
@@ -861,6 +1046,8 @@ def select_stock_strategies(
 
         candidates = eligible_stock_candidates(group)
         candidates = candidates[candidates['Validation Return'] > global_return + 1e-9].copy()
+        if min_t_stat > 0:
+            candidates = candidates[stock_holdout_t_stat(candidates) >= min_t_stat]
         if candidates.empty:
             continue
 
@@ -884,6 +1071,8 @@ def select_stock_strategies(
             'validation_return': float(best['Validation Return']),
             'global_validation_return': global_return,
             'return_uplift': float(best['Validation Return'] - global_return),
+            'validation_win_rate': float(best['Validation Win Rate']),
+            'validation_t_stat': float(stock_holdout_t_stat(best.to_frame().T).iloc[0]),
         }
     return selections
 
@@ -917,12 +1106,24 @@ def best_stock_strategy_rows(results_df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def holdout_split_date(start, end, validation_pct: float) -> pd.Timestamp:
+    """Trades entered on or after this date are the holdout; the same date for every stock."""
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    return (start + (end - start) * (1 - validation_pct / 100)).normalize()
+
+
+_EMPTY_METRICS = {
+    'total_return': np.nan, 'win_rate': np.nan, 'max_drawdown': np.nan, 'trades': 0, 'avg_trade': np.nan,
+    'gross_win': 0.0, 'gross_loss': 0.0, 'sum_sq': 0.0, 'bear_entries': 0, 'bull_entries': 0,
+}
+
+
 def evaluate_stock_strategies(
     ticker: str,
-    price_series: pd.Series | None,
+    prices: pd.Series | pd.DataFrame | None,
     regime_series: pd.Series,
     param_combos: list[tuple],
-    validation_pct: int,
+    split_date,
     buy_fee: float,
     sell_fee: float,
     sell_tax: float,
@@ -930,49 +1131,44 @@ def evaluate_stock_strategies(
     momentum_percentiles: dict[int, pd.Series],
     breadth: pd.Series | None = None,
     slippage_ticks: float = 0.0,
+    trades_out: list | None = None,
 ) -> tuple[list[dict], str]:
-    """Test every strategy for one stock; safe to execute in a worker thread."""
-    if price_series is None or price_series.empty:
+    """Test every strategy for one stock; safe to execute in a worker thread.
+
+    Each combination is simulated once over the whole history; trades entered
+    before ``split_date`` are training, the rest the holdout. ``trades_out``,
+    when given, collects every trade (``combo`` is its index in
+    ``param_combos``) for :func:`walk_forward`.
+    """
+    if prices is None or len(prices) == 0:
         return [], 'missing_data'
-
-    price_series = price_series[~price_series.index.duplicated(keep='last')].sort_index()
-    split_idx = int(len(price_series) * (1 - validation_pct / 100))
-    indicator_warmup = max(
-        strategy_warmup(combo[0], *combo[1:5]) for combo in param_combos
-    )
-    if split_idx < indicator_warmup or len(price_series) - split_idx < indicator_warmup:
+    frame, _ = ohlc_frame(prices)
+    split = pd.Timestamp(split_date)
+    warmup = max(strategy_warmup(combo[0], *combo[1:5]) for combo in param_combos)
+    if (frame.index < split).sum() < warmup or (frame.index >= split).sum() < warmup:
         return [], 'insufficient_history'
-
-    train_prices = price_series.iloc[:split_idx]
-    validation_start = price_series.index[split_idx]
-    validation_prices = price_series.iloc[max(0, split_idx - indicator_warmup):]
     rows = []
 
-    for strategy_type, param_a, param_b, param_c, param_d, hold_d, profit_target, stop_loss in param_combos:
-        backtest_kwargs = dict(
-            strategy_type=strategy_type,
-            param_a=param_a, param_b=param_b, param_c=param_c, param_d=param_d,
-            max_hold=int(hold_d),
-            profit_target_pct=float(profit_target), stop_loss_pct=float(stop_loss),
-            buy_fee=buy_fee, sell_fee=sell_fee, sell_tax=sell_tax,
-            benchmark_close=benchmark_close,
-            momentum_percentile=momentum_percentiles.get(int(param_a)),
-            breadth=breadth,
-            slippage_ticks=slippage_ticks,
+    for combo_id, (strategy_type, param_a, param_b, param_c, param_d, hold_d, profit_target, stop_loss) in enumerate(param_combos):
+        result = backtest_trades(
+            frame, regime_series, strategy_type, param_a, param_b, param_c, param_d,
+            int(hold_d), float(profit_target), float(stop_loss), buy_fee, sell_fee, sell_tax,
+            benchmark_close=benchmark_close, momentum_percentile=momentum_percentiles.get(int(param_a)),
+            breadth=breadth, slippage_ticks=slippage_ticks,
         )
-        train = run_regime_backtest(train_prices, regime_series, **backtest_kwargs)
+        if result is None:
+            continue
+        trades, bars = result
+        in_holdout = trades['entry_date'] >= split
+        train = trade_metrics(trades[~in_holdout], bars)
         if train is None:
             continue
-
-        validation = run_regime_backtest(
-            validation_prices, regime_series, trade_start=validation_start, **backtest_kwargs,
-        )
-        if validation is None:
-            validation = {
-                'total_return': np.nan, 'win_rate': np.nan, 'max_drawdown': np.nan,
-                'trades': 0, 'avg_trade': np.nan,
-                'gross_win': 0.0, 'gross_loss': 0.0, 'sum_sq': 0.0,
-            }
+        validation = trade_metrics(trades[in_holdout], bars) or _EMPTY_METRICS
+        if trades_out is not None:
+            trades_out.extend(
+                {'symbol': ticker, 'combo': combo_id, 'entry_date': entry, 'return_pct': value}
+                for entry, value in zip(trades['entry_date'], trades['return_pct'])
+            )
 
         rows.append({
             'Symbol': ticker,
@@ -1002,6 +1198,154 @@ def evaluate_stock_strategies(
         })
 
     return rows, 'ok' if rows else 'no_signals'
+
+
+# ── Walk-forward selection and stricter gates ────────────────────────────── #
+
+WALK_FORWARD_TRAIN_YEARS = 3
+WALK_FORWARD_FOLD_MONTHS = 6
+MIN_WALK_FORWARD_TRAIN_TRADES = 30
+MIN_WALK_FORWARD_TRADES = 30
+# One-sided significance level, shared by all the combinations tried (Bonferroni).
+FAMILY_ALPHA = 0.05
+
+
+def trade_stats(returns) -> dict:
+    """Pooled statistics of trade returns in percent."""
+    returns = np.asarray(returns, dtype=float)
+    n = len(returns)
+    if n == 0:
+        return {'trades': 0, 'win_rate': np.nan, 'avg_trade': np.nan, 'profit_factor': np.nan, 't_stat': np.nan}
+    gains, losses = returns[returns > 0].sum(), -returns[returns < 0].sum()
+    std = returns.std(ddof=1) if n > 1 else np.nan
+    return {
+        'trades': n,
+        'win_rate': float((returns > 0).mean() * 100),
+        'avg_trade': float(returns.mean()),
+        'profit_factor': float(gains / losses) if losses > 0 else (np.inf if gains > 0 else np.nan),
+        't_stat': float(returns.mean() / (std / np.sqrt(n))) if n > 1 and std > 0 else np.nan,
+    }
+
+
+def required_t_stat(tests: int, alpha: float = FAMILY_ALPHA) -> float:
+    """t-stat a result needs when it is the best of ``tests`` tries (one-sided Bonferroni, at least MIN_T_STAT)."""
+    return max(MIN_T_STAT, NormalDist().inv_cdf(1 - alpha / max(int(tests), 1)))
+
+
+def _pick_combo(trades: pd.DataFrame, min_trades: int):
+    """The combination with the highest pooled t-stat among those with enough trades."""
+    if trades.empty:
+        return None
+    grouped = trades.groupby('combo')['return_pct']
+    stats = pd.DataFrame({
+        'n': grouped.size(),
+        'mean': grouped.mean(),
+        'std': grouped.std(ddof=1),
+    })
+    stats = stats[(stats['n'] >= min_trades) & (stats['std'] > 0)]
+    if stats.empty:
+        return None
+    stats['t'] = stats['mean'] / (stats['std'] / np.sqrt(stats['n']))
+    stats = stats[stats['mean'] > 0]
+    if stats.empty:
+        return None
+    return int(stats.sort_values(['t', 'mean'], ascending=False).index[0])
+
+
+def walk_forward(
+    trades: pd.DataFrame,
+    start,
+    end,
+    train_years: int = WALK_FORWARD_TRAIN_YEARS,
+    fold_months: int = WALK_FORWARD_FOLD_MONTHS,
+    min_train_trades: int = MIN_WALK_FORWARD_TRAIN_TRADES,
+) -> dict:
+    """Walk-forward record of "pick the best combination on the last few years".
+
+    From ``start`` to ``end`` in ``fold_months`` steps, the combination with
+    the best pooled t-stat on the previous ``train_years`` (across all stocks)
+    is chosen and its trades in the next fold are recorded. The record is the
+    honest estimate of the published setup's edge; ``final_combo`` is the
+    choice on the latest ``train_years``, the one to publish.
+    """
+    trades = trades.copy()
+    trades['entry_date'] = pd.to_datetime(trades['entry_date'])
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    window = pd.DateOffset(years=train_years)
+    folds, tested = [], []
+    fold_start = start
+    while fold_start < end:
+        fold_end = min(fold_start + pd.DateOffset(months=fold_months), end + pd.Timedelta(days=1))
+        train = trades[(trades['entry_date'] >= fold_start - window) & (trades['entry_date'] < fold_start)]
+        combo = _pick_combo(train, min_train_trades)
+        test = trades[(trades['entry_date'] >= fold_start) & (trades['entry_date'] < fold_end)]
+        test = test[test['combo'] == combo] if combo is not None else test.iloc[0:0]
+        folds.append({
+            'start': fold_start.date().isoformat(), 'end': (fold_end - pd.Timedelta(days=1)).date().isoformat(),
+            'combo': combo, **trade_stats(test['return_pct']),
+        })
+        tested.append(test)
+        fold_start = fold_end
+    record = pd.concat(tested) if tested else trades.iloc[0:0]
+    final = trades[(trades['entry_date'] >= end - window) & (trades['entry_date'] <= end)]
+    return {
+        'folds': folds,
+        'record': trade_stats(record['return_pct']),
+        'final_combo': _pick_combo(final, min_train_trades),
+    }
+
+
+def passes_walk_forward_gates(record: dict) -> bool:
+    """Absolute requirements on the walk-forward record before a setup is published."""
+    return bool(
+        record['trades'] >= MIN_WALK_FORWARD_TRADES
+        and record['avg_trade'] > 0
+        and record['profit_factor'] >= MIN_PROFIT_FACTOR
+        and record['t_stat'] >= MIN_T_STAT
+    )
+
+
+# ── IDX trading rules for position sizing ────────────────────────────────── #
+
+# ARB is a flat 15% until the end of 2026, then symmetric with ARA (IDX, Sep 2026).
+SYMMETRIC_ARB_FROM = datetime.date(2027, 1, 1)
+FLAT_ARB = 0.15
+LOT_SIZE = 100
+
+
+def round_to_tick(price: float, direction: str = 'down') -> float:
+    """Round a price to a valid IDX tick, ``down``, ``up`` or ``nearest``."""
+    tick = float(idx_tick_size([price])[0])
+    rounder = {'down': np.floor, 'up': np.ceil, 'nearest': np.round}[direction]
+    return float(rounder(price / tick) * tick)
+
+
+def price_limits(previous_close: float, on_date=None) -> tuple[float, float]:
+    """Next session's auto-reject band (ARB floor, ARA ceiling) around ``previous_close``."""
+    on_date = pd.Timestamp(on_date or datetime.date.today()).date()
+    if previous_close <= 10:
+        return max(previous_close - 1, 1.0), previous_close + 1
+    ara = 0.35 if previous_close <= 200 else 0.25 if previous_close <= 5000 else 0.20
+    arb = ara if on_date >= SYMMETRIC_ARB_FROM else FLAT_ARB
+    return (
+        max(round_to_tick(previous_close * (1 - arb), 'up'), 1.0),
+        round_to_tick(previous_close * (1 + ara), 'down'),
+    )
+
+
+def position_size(capital: float, risk_pct: float, entry: float, stop: float) -> dict:
+    """Whole lots so a stop-out loses at most ``risk_pct`` of ``capital``, and never more than the capital buys."""
+    per_share_risk = entry - stop
+    if capital <= 0 or risk_pct <= 0 or entry <= 0 or per_share_risk <= 0:
+        return {'lots': 0, 'risk_idr': 0.0, 'cost_idr': 0.0}
+    by_risk = capital * risk_pct / 100 / (per_share_risk * LOT_SIZE)
+    by_cash = capital / (entry * LOT_SIZE)
+    lots = int(np.floor(min(by_risk, by_cash)))
+    return {
+        'lots': lots,
+        'risk_idr': float(lots * LOT_SIZE * per_share_risk),
+        'cost_idr': float(lots * LOT_SIZE * entry),
+    }
 
 
 def clean_price_series(series: pd.Series | None) -> pd.Series:

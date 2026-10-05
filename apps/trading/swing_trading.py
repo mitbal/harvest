@@ -516,7 +516,7 @@ if run_optimizer:
                     grouped.get(ticker),
                     regime_series,
                     param_combos,
-                    int(opt_validation_pct),
+                    sw.holdout_split_date(opt_start, opt_end, opt_validation_pct),
                     float(opt_buy_fee),
                     float(opt_sell_fee),
                     float(opt_sell_tax),

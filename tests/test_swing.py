@@ -186,14 +186,18 @@ def test_evaluate_stock_strategies_splits_train_and_holdout():
     regime = pd.Series("bull", index=close.index)
     combos = [(sw.STRATEGY_REGIME_RSI, 7, 40, 5, 45, 5, 5.0, 2.0)]
 
+    split = sw.holdout_split_date(close.index[0], close.index[-1], 30)
+    trades = []
     rows, status = sw.evaluate_stock_strategies(
-        "TEST.JK", close, regime, combos, 30, 0.15, 0.15, 0.1, None, {}, slippage_ticks=0.5,
+        "TEST.JK", close, regime, combos, split, 0.15, 0.15, 0.1, None, {}, slippage_ticks=0.5, trades_out=trades,
     )
 
     assert status == "ok"
     assert rows[0]["Symbol"] == "TEST.JK"
     assert rows[0]["# Trades"] > 0
     assert rows[0]["Validation Trades"] > 0
+    assert len(trades) == rows[0]["# Trades"] + rows[0]["Validation Trades"]
+    assert {t["combo"] for t in trades} == {0}
 
 
 @pytest.mark.parametrize("series, status", [(None, "missing_data"), (_closes([100.0] * 30), "insufficient_history")])
@@ -201,7 +205,7 @@ def test_evaluate_stock_strategies_reports_unusable_data(series, status):
     combos = [(sw.STRATEGY_REGIME_RSI, 14, 30, 50, 45, 5, 5.0, 2.0)]
 
     assert sw.evaluate_stock_strategies(
-        "TEST.JK", series, pd.Series(dtype=str), combos, 30, 0.15, 0.15, 0.1, None, {},
+        "TEST.JK", series, pd.Series(dtype=str), combos, "2024-01-20", 0.15, 0.15, 0.1, None, {},
     ) == ([], status)
 
 
@@ -221,3 +225,195 @@ def test_regime_rsi_watch_uses_bear_threshold_outside_bull_regime():
     assert sw.is_near_setup(sw.STRATEGY_REGIME_RSI, 33.0, params, 5.0, trend_ok=False, regime="bear")
     assert not sw.is_near_setup(sw.STRATEGY_REGIME_RSI, 40.0, params, 5.0, regime="bear")
     assert not sw.is_near_setup(sw.STRATEGY_REGIME_RSI, np.nan, params, 5.0, regime="bull")
+
+
+# ── OHLC fills ──────────────────────────────────────────────────────────── #
+
+def _bars(rows, start="2024-01-01"):
+    """OHLC frame from (open, high, low, close) tuples on business days."""
+    return pd.DataFrame(rows, columns=["open", "high", "low", "close"],
+                        index=pd.bdate_range(start, periods=len(rows)))
+
+
+def _simulate(rows, setup_on=0, exit_on=None, max_hold=5, target=5.0, stop=2.0):
+    frame = _bars(rows)
+    setup = pd.Series(False, index=frame.index)
+    setup.iloc[setup_on] = True
+    strategy_exit = pd.Series(False, index=frame.index)
+    if exit_on is not None:
+        strategy_exit.iloc[exit_on] = True
+    return sw.simulate_trades(frame, setup, strategy_exit, max_hold, target, stop, has_ohlc=True)
+
+
+def test_entry_is_the_next_open():
+    trades = _simulate([(100, 101, 99, 100), (102, 103, 101.5, 102), (102, 103, 101.5, 102)], max_hold=1)
+
+    assert trades[0]["entry_i"] == 1 and trades[0]["entry_price"] == 102
+    assert trades[0]["exit_reason"] == "Max hold" and trades[0]["exit_i"] == 2
+
+
+def test_stop_fills_at_the_stop_or_the_gap_open():
+    intrabar = _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100), (100, 100.5, 97.0, 99)])
+    gap = _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100), (95, 96, 94, 95)])
+
+    assert intrabar[0]["exit_reason"] == "Stop" and intrabar[0]["exit_price"] == pytest.approx(98.0)
+    assert gap[0]["exit_reason"] == "Stop (gap)" and gap[0]["exit_price"] == 95
+
+
+def test_target_fills_at_the_target_or_the_gap_open():
+    intrabar = _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100), (101, 106, 100.5, 104)])
+    gap = _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100), (108, 109, 107, 108)])
+
+    assert intrabar[0]["exit_reason"] == "Target" and intrabar[0]["exit_price"] == pytest.approx(105.0)
+    assert gap[0]["exit_reason"] == "Target (gap)" and gap[0]["exit_price"] == 108
+
+
+def test_stop_wins_when_both_levels_are_touched():
+    trades = _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100), (100, 106, 97, 103)])
+
+    assert trades[0]["exit_reason"] == "Stop"
+
+
+def test_entry_day_checks_only_the_stop():
+    stopped = _simulate([(100, 100, 100, 100), (100, 101, 97.5, 99)])
+    no_target = _simulate([(100, 100, 100, 100), (100, 106, 99.5, 105), (104, 104.5, 103, 104)], max_hold=1)
+
+    assert stopped[0]["entry_i"] == stopped[0]["exit_i"] == 1
+    assert no_target[0]["exit_reason"] == "Max hold"
+
+
+def test_strategy_exit_fills_at_the_next_open():
+    trades = _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100), (100, 101, 99.5, 100.5), (101, 102, 100, 101)],
+                       exit_on=2)
+
+    assert trades[0]["exit_reason"] == "Strategy exit"
+    assert trades[0]["exit_i"] == 3 and trades[0]["exit_price"] == 101
+
+
+def test_entry_on_the_last_bar_is_left_out():
+    assert _simulate([(100, 100, 100, 100), (100, 101, 99.5, 100)], setup_on=1) == []
+
+
+def test_ohlc_frame_falls_back_to_closes_and_clamps_bad_bars():
+    frame, has_ohlc = sw.ohlc_frame(pd.Series([1.0, 2.0], index=pd.bdate_range("2024-01-01", periods=2)))
+    assert not has_ohlc and frame["open"].tolist() == [1.0, 2.0]
+
+    bad = _bars([(100, 99, 101, 100)])
+    clean, has_ohlc = sw.ohlc_frame(bad)
+    assert has_ohlc and clean.iloc[0]["high"] == 101 and clean.iloc[0]["low"] == 99
+
+
+def test_backtest_costs_follow_the_vectorbt_trade_return():
+    rows = [(100, 100, 100, 100)] * 60 + [(100, 101, 99.5, 100), (101, 106, 100.5, 104)]
+    frame = _bars(rows)
+    regime = pd.Series("bull", index=frame.index)
+    with patch_components(frame, setup_at=59):
+        trades, _ = sw.backtest_trades(frame, regime, sw.STRATEGY_REGIME_RSI, 14, 30, 50, 45, 5, 5.0, 2.0,
+                                       buy_fee=0.15, sell_fee=0.15, sell_tax=0.1)
+
+    trade = trades.iloc[0]
+    assert trade["exit_price"] == pytest.approx(105.0)
+    assert trade["return_pct"] == pytest.approx((105 * (1 - 0.0025) / 100 - 1.0015) * 100)
+
+
+from contextlib import contextmanager
+from unittest.mock import patch
+
+
+@contextmanager
+def patch_components(frame, setup_at):
+    setup = pd.Series(False, index=frame.index)
+    setup.iloc[setup_at] = True
+    blank = pd.Series(False, index=frame.index)
+    with patch.object(sw, "strategy_components", return_value=(setup, blank, pd.Series(0.0, index=frame.index))):
+        yield
+
+
+# ── Walk-forward and gates ──────────────────────────────────────────────── #
+
+def _trades(combo, start, end, mean, seed, per_month=8):
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range(start, end, freq=f"{30 // per_month}D")
+    return pd.DataFrame({"combo": combo, "symbol": "X", "entry_date": dates,
+                         "return_pct": mean + rng.normal(0, 1.0, len(dates))})
+
+
+def test_walk_forward_records_the_choice_made_on_past_data():
+    # Combo 0 shines until 2022 and then stops working; combo 1 is steadily positive.
+    trades = pd.concat([
+        _trades(0, "2016-01-01", "2021-12-31", 2.0, 1), _trades(0, "2022-01-01", "2025-12-31", -1.0, 2),
+        _trades(1, "2016-01-01", "2025-12-31", 0.6, 3),
+    ])
+
+    result = sw.walk_forward(trades, "2022-01-01", "2025-12-31")
+
+    picks = [fold["combo"] for fold in result["folds"]]
+    assert picks[0] == 0          # chosen on 2019-2021, when combo 0 looked best
+    assert picks[-1] == 1         # the walk-forward notices and switches
+    assert result["final_combo"] == 1
+    # The record includes the losing fold(s) of combo 0: below combo 1's own mean.
+    assert result["record"]["avg_trade"] < 0.6
+    assert result["record"]["trades"] == sum(fold["trades"] for fold in result["folds"])
+
+
+def test_walk_forward_needs_enough_training_trades():
+    trades = _trades(0, "2024-01-01", "2025-12-31", 1.0, 4, per_month=1)
+
+    result = sw.walk_forward(trades, "2025-01-01", "2025-12-31")
+
+    assert result["final_combo"] is None
+    assert result["record"]["trades"] == 0
+
+
+def test_walk_forward_gates():
+    good = {"trades": 40, "avg_trade": 0.5, "profit_factor": 1.5, "t_stat": 2.5}
+    assert sw.passes_walk_forward_gates(good)
+    for key, value in [("trades", 20), ("avg_trade", -0.1), ("profit_factor", 1.1), ("t_stat", 1.5)]:
+        assert not sw.passes_walk_forward_gates({**good, key: value})
+
+
+def test_required_t_stat_grows_with_the_number_of_tries():
+    assert sw.required_t_stat(1) == sw.MIN_T_STAT
+    assert sw.required_t_stat(22) == pytest.approx(2.84, abs=0.01)
+    assert sw.required_t_stat(200) > sw.required_t_stat(22)
+
+
+def test_select_stock_strategies_applies_the_t_stat_bar():
+    global_strategy = {
+        "strategy_type": sw.STRATEGY_REGIME_RSI, "param_a": 14.0, "param_b": 30.0, "param_c": 50.0,
+        "param_d": 45.0, "max_hold": 5, "profit_target": 5.0, "stop_loss": 2.0,
+    }
+    results = pd.DataFrame([
+        _result("A.JK"),
+        _result("A.JK", param_a=7.0, **{"Validation Return": 9.0}),
+    ])
+    t = sw.stock_holdout_t_stat(results.iloc[[1]]).iloc[0]
+
+    assert "A.JK" in sw.select_stock_strategies(results, global_strategy, min_t_stat=t - 0.01)
+    assert sw.select_stock_strategies(results, global_strategy, min_t_stat=t + 0.01) == {}
+
+
+# ── IDX price rules and sizing ──────────────────────────────────────────── #
+
+@pytest.mark.parametrize("price, direction, expected", [
+    (1234.0, "down", 1230.0), (1234.0, "up", 1235.0), (6012.0, "down", 6000.0), (199.4, "nearest", 199.0),
+])
+def test_round_to_tick(price, direction, expected):
+    assert sw.round_to_tick(price, direction) == expected
+
+
+def test_price_limits_follow_the_2026_and_2027_rules():
+    assert sw.price_limits(1000, "2026-10-05") == (850.0, 1250.0)      # ARB 15%, ARA 25%
+    assert sw.price_limits(1000, "2027-01-04") == (750.0, 1250.0)      # symmetric from 2027
+    assert sw.price_limits(8000, "2026-10-05") == (6800.0, 9600.0)     # ARA 20% above Rp 5,000
+    assert sw.price_limits(150, "2027-01-04") == (98.0, 202.0)         # 35% up to Rp 200
+    assert sw.price_limits(8, "2026-10-05") == (7.0, 9.0)              # Rp 1 band for Rp 1-10
+
+
+def test_position_size_by_risk_and_cash():
+    sized = sw.position_size(capital=100_000_000, risk_pct=1.0, entry=1000, stop=980)
+    # Rp 1,000,000 at risk / (Rp 20 x 100 shares) = 500 lots, but the capital buys only 1,000 lots.
+    assert sized == {"lots": 500, "risk_idr": 1_000_000.0, "cost_idr": 50_000_000.0}
+    capped = sw.position_size(capital=10_000_000, risk_pct=5.0, entry=1000, stop=999)
+    assert capped["lots"] == 100  # the cash limit binds
+    assert sw.position_size(10_000_000, 1.0, 1000, 1000)["lots"] == 0

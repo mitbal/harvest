@@ -417,7 +417,7 @@ exit reminder in Telegram (verified with a test chat).
 
 - [x] OHLCV: extend `historical_prices_core.py` and the Parquet schema with `open, high, low,
       volume`; backfill script. [ASK USER] to confirm FMP plan limits before the backfill.
-- [ ] `harvest/swing.py`:
+- [x] `harvest/swing.py`:
   - Stop and target fills using daily high and low, gaps fill at the open.
   - Walk-forward validation (rolling train/test windows) replacing the single holdout split.
   - Stricter gate accounting for the number of parameter combinations tried.
@@ -655,3 +655,24 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     overlapping closes are identical; 13 symbols changed by 80-96% (consistent split adjustment,
     e.g. MLPT, DSSA). 219 rows (0.009%) have a high/low that doesn't bracket open/close; the
     engine clamps them. 11.6% of rows have zero volume.
+  - Engine (`harvest/swing.py`, `STRATEGY_ENGINE_VERSION` 11): own NumPy simulation replaces
+    vectorbt in the backtest (vectorbt is not in the pipeline image). With OHLC data a setup at
+    close t enters at the next open; stop/target fill at their level or at the open on a gap;
+    the stop wins when both are touched; only the stop is checked on the entry day; a strategy
+    exit signalled at a close fills at the next open; max hold exits at the close
+    `max_hold` sessions after the entry day. Close-only data keeps the old rules. A/B against
+    the previous vectorbt engine on close-only data: 3,960 backtests, 0 mismatches in returns,
+    win rate, drawdown and trade sums (worst relative diff 1.4e-13). Trade return keeps
+    vectorbt's definition (profit after both sides' costs over entry value). Two behaviour
+    notes: an entry on the last bar is not counted (vectorbt also dropped it, but the old
+    bear/bull entry counts included it).
+  - `evaluate_stock_strategies` simulates each combination once and splits trades by one
+    `split_date` for all stocks (was a per-stock row split); `trades_out` collects trades.
+  - `walk_forward`: 6-month folds from the holdout start, each choosing the combination with the
+    best pooled t-stat on the previous 3 years (min 30 trades, positive mean); the record is the
+    concatenated fold trades; `final_combo` is the choice on the latest 3 years.
+    `passes_walk_forward_gates`: >= 30 trades, positive average, PF >= 1.2, t >= 2.
+  - Stricter per-stock gate: `select_stock_strategies(min_t_stat=required_t_stat(n_combos))`,
+    one-sided Bonferroni at 5% (2.84 for the 22 Balanced combinations).
+  - IDX rules: `round_to_tick`, `price_limits` (ARA 35/25/20% by price, ARB flat 15% until
+    2026-12-31 then symmetric, Rp 1 band for Rp 1-10 stocks), `position_size`.
