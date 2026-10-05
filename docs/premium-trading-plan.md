@@ -284,8 +284,8 @@ pages load prices from Parquet; tests pass.
 
 Read first: `main.py`, `apps/porto/porto_overview.py` (login pattern).
 
-- [ ] Write `pipeline/premium_trading.sql` with the DDL above. [ASK USER] to run it.
-- [ ] `harvest/premium.py`:
+- [x] Write `pipeline/premium_trading.sql` with the DDL above. [ASK USER] to run it.
+- [x] `harvest/premium.py`:
   - `is_enforced()` reads env `PREMIUM_ENFORCED` (default false).
   - `is_premium(email)` checks `premium_users` (`expires_at` null or in the future), cached 10 minutes.
   - `require_premium(teaser=None)`: if not enforced, return. If logged out, render the paywall
@@ -297,7 +297,7 @@ Read first: `main.py`, `apps/porto/porto_overview.py` (login pattern).
     donate on Trakteer or Buy Me a Coffee with the same email, access unlocks within minutes);
     buttons for login, Trakteer, Buy Me a Coffee; footnote for help via r/panendividen.
     When logged in, show "Logged in as <email>" so the user knows which email to donate with.
-- [ ] Tests with mocked `st.user`: enforced off, logged out, logged in free, premium, expired.
+- [x] Tests with mocked `st.user`: enforced off, logged out, logged in free, premium, expired.
 
 Done when: with `PREMIUM_ENFORCED=true` locally, the three trading pages are blocked for
 non-premium users (call `require_premium()` at the top of each page for now).
@@ -496,3 +496,22 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     --fill-gap --upload` (same for sp500). The pickle caches end 2026-04-08/06, so `--fill-gap`
     refetches from FMP. Deploy the pipeline only after the upload, because incremental runs
     refuse to start without a stored history. Then run the cleanup SQL.
+- 2026-10-05: Phase 0, task 0.2 implemented on branch `premium/phase-0-premium-gate`, stacked on
+  `premium/phase-0-price-storage` (0.1).
+  - `pipeline/premium_trading.sql`: the DDL above, plus row level security on every table. The
+    app reads with the public key and signs in as the app account, so only that account (via the
+    `app_server()` function, whose email must be filled in before running) and the service-role
+    key get access. Without RLS anyone with the public key could insert themselves into
+    `premium_users`.
+  - `harvest/premium.py`: `is_enforced`, `is_premium` (10-minute cache; lookup errors count as
+    not premium and are not cached), `require_premium(teaser=None)` with the paywall. Tier
+    prices and durations are the placeholders in `TIERS`.
+  - `require_premium()` called right after `st.set_page_config` in `backtester.py`,
+    `day_trading.py`, `dividend_play.py`.
+  - Verified locally with `PREMIUM_ENFORCED=true` (logged out): all three trading pages show only
+    the paywall, Market Heatmap is unaffected, layout checked at desktop and mobile width. The
+    logged-in free and supporter states are covered by unit tests only (no Google login in the
+    preview).
+  - Open [ASK USER]: replace the email in `app_server()` and run the SQL; confirm whether the
+    pipeline's `SUPABASE_KEY` is the service-role key (needed for Phase 1 writes under RLS);
+    final tier prices and durations.

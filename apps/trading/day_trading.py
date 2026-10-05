@@ -12,6 +12,7 @@ from st_supabase_connection import SupabaseConnection
 import harvest.data as hd
 import harvest.plot as hp
 import harvest.prices as hprices
+from harvest.premium import require_premium
 
 STRATEGY_ENGINE_VERSION = 10
 DEFAULT_PROFIT_TARGET = 5.0
@@ -83,6 +84,7 @@ def _load_vectorbt():
     return vectorbt
 
 st.set_page_config(page_title='Short-Term Swing Trading - Panen Dividen')
+require_premium()
 hp.enable_chart_theme()
 st.title('Short-Term Swing Trading Strategy Lab')
 

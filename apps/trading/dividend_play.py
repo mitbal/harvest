@@ -17,6 +17,7 @@ import harvest.dividend_play as dp
 import harvest.plot as hp
 import harvest.prices as hprices
 from harvest import chart_style as cs
+from harvest.premium import require_premium
 
 
 # Absolute holdout gates a setup must pass before it can be recommended.
@@ -70,6 +71,7 @@ BLUE_CHIPS = [
 ]
 
 st.set_page_config(page_title='Dividend Play - Panen Dividen')
+require_premium()
 hp.enable_chart_theme()
 st.title('Dividend Play Strategy Lab')
 

@@ -10,6 +10,7 @@ import streamlit as st
 import harvest.data as hd
 import harvest.plot as hp
 from harvest import chart_style as cs
+from harvest.premium import require_premium
 
 
 hp.enable_chart_theme()
@@ -55,6 +56,7 @@ RESULT_COLUMNS = [
 
 
 st.set_page_config(page_title='Position Trading - Panen Dividen')
+require_premium()
 st.title("Growth at a Discount")
 st.caption(
     "Find profitable IDX businesses whose earnings and revenue multiples are below "
