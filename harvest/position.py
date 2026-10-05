@@ -179,6 +179,11 @@ def format_idr(value: float) -> str:
     return f"IDR {value:,.0f}"
 
 
+def as_dates(values) -> pd.Series:
+    """Dates in one resolution: ``merge_asof`` refuses to join R2's and FMP's different units."""
+    return pd.to_datetime(values, errors="coerce").astype("datetime64[us]")
+
+
 def is_bank(profile: dict) -> bool:
     """Banks are valued on book value, not sales (FMP industry "Banks - ...")."""
     return str(profile.get("industry") or "").startswith("Banks")
@@ -259,7 +264,7 @@ def prepare_financials(financials: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     frame = financials.copy()
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["date"] = as_dates(frame["date"])
     for column in ("revenue", "netIncome"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
     frame = frame.dropna(subset=["date", "revenue", "netIncome"])
@@ -366,7 +371,7 @@ def prepare_statements(income: pd.DataFrame, balance: pd.DataFrame, cash_flow: p
         part = frame.reindex(columns=["date", *fields]).copy()
         if statement == "cash-flow-statement":
             part = part.rename(columns={"netIncome": "cashFlowNetIncome"})
-        part["date"] = pd.to_datetime(part["date"], errors="coerce")
+        part["date"] = as_dates(part["date"])
         part = part.dropna(subset=["date"]).drop_duplicates("date")
         merged = part if merged is None else merged.merge(part, on="date", how="outer")
     for column in merged.columns.drop("date"):
@@ -405,7 +410,7 @@ def book_ratio_summary(
         return pd.DataFrame(columns=["date", "ratio"]), {}
     book = book.assign(bvps=book["totalStockholdersEquity"] / shares).sort_values("date")
     daily = prices[["date", "close"]].copy()
-    daily["date"] = pd.to_datetime(daily["date"])
+    daily["date"] = as_dates(daily["date"])
     daily = pd.merge_asof(daily.sort_values("date"), book[["date", "bvps"]], on="date", direction="backward")
     history = pd.DataFrame({"date": daily["date"], "ratio": daily["close"] / daily["bvps"]})
     history = history.replace([np.inf, -np.inf], np.nan).dropna()
@@ -514,6 +519,7 @@ def analyze_frames(
     financials = prepare_financials(financials)
     if prices is None or prices.empty:
         raise SkipStock("no prices")
+    prices = prices.assign(date=as_dates(prices["date"]))
     if len(financials) < 8:
         raise SkipStock("fewer than 8 quarterly statements")
 

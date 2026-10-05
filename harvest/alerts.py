@@ -1,10 +1,12 @@
 """Telegram alerts sent by the nightly scan.
 
-Three alerts, each sent at most once per event (``alert_log``):
+Alerts, each sent at most once per event (``alert_log``):
 
 - ``signal``: an entry window opened for a stock the user watches ("Alert me")
   or, when they opted into new signals, any stock.
-- ``exit``: a tracked position must be sold by the next trading session.
+- ``exit``: a tracked position must be sold by the next trading session, or
+  a Long Term position's reason to hold is gone (P/E back at its historical
+  mean, or a new quarter turned trailing growth negative).
 
 Streamlit-free; the bot token comes from ``TELEGRAM_BOT_TOKEN``.
 """
@@ -138,6 +140,78 @@ def send_dividend_play_alerts(
         if pd.Timestamp(position['exit_by']).date() <= next_session:
             ref = f"{position['id']}:{pd.Timestamp(position['exit_by']).date().isoformat()}"
             deliver(subscriber, 'exit', ref, exit_message(position, next_session))
+    return stats
+
+
+def long_term_exit_reasons(position: pd.Series, row: dict) -> list[tuple[str, str]]:
+    """(alert ref, message line) for each exit condition a Long Term position meets today."""
+    reasons = []
+    symbol = _short(position['symbol'])
+    pe, pe_mean = row.get('Current PE'), row.get('PE Mean')
+    if pe is not None and pe_mean is not None and pd.notna(pe) and pd.notna(pe_mean) and pe >= pe_mean:
+        reasons.append((
+            f"{position['id']}:pe_mean",
+            f"Long Term: {symbol}'s P/E is back at its historical mean ({pe:.1f} vs a mean of {pe_mean:.1f}). "
+            "The discount you bought has closed.",
+        ))
+    statement = row.get('Statement Date')
+    entry = position.get('entry_date')
+    if statement is not None and pd.notna(statement) and entry is not None and pd.notna(entry) \
+            and pd.Timestamp(statement).date() > pd.Timestamp(entry).date():
+        falling = [
+            f"{label} {row[column]:+.1f}%"
+            for label, column in (('earnings', 'Earnings Growth TTM'), ('revenue', 'Revenue Growth TTM'))
+            if pd.notna(row.get(column)) and row[column] < 0
+        ]
+        if falling:
+            reasons.append((
+                f"{position['id']}:growth:{pd.Timestamp(statement).date().isoformat()}",
+                f"Long Term: {symbol}'s latest quarter ({_day(statement)} {pd.Timestamp(statement).year}) turned "
+                f"trailing twelve-month growth negative ({', '.join(falling)}).",
+            ))
+    return reasons
+
+
+def long_term_exit_message(position: pd.Series, line: str) -> str:
+    return '\n'.join([
+        line,
+        f"You tracked {int(position['lots'])} lots bought at Rp {float(position['entry_price']):,.0f}. "
+        "Review whether the reason you bought still holds.",
+        f"{SITE_URL}/my_trades",
+        'Screen result, not financial advice.',
+    ])
+
+
+def send_long_term_exit_alerts(
+    client,
+    as_of,
+    rows: dict[str, dict],
+    positions: pd.DataFrame,
+    token: Optional[str] = None,
+    send: Callable[[str, str, Optional[str]], None] = send_message,
+) -> dict:
+    """Exit alerts for open Long Term positions from tonight's screen rows (keyed by symbol)."""
+    token = token or bot_token()
+    if not token:
+        return {'skipped': 'TELEGRAM_BOT_TOKEN is not set'}
+    stats = {'exit': 0, 'already_sent': 0, 'failed': 0}
+    subscribers = {row['email']: row for row in store.alert_subscribers(client)}
+    for _, position in positions.iterrows():
+        subscriber = subscribers.get(position['email'])
+        row = rows.get(position['symbol'])
+        if subscriber is None or row is None:
+            continue
+        for ref, line in long_term_exit_reasons(position, row):
+            if not store.log_alert(client, position['email'], 'exit', ref):
+                stats['already_sent'] += 1
+                continue
+            try:
+                send(subscriber['telegram_chat_id'], long_term_exit_message(position, line), token)
+                stats['exit'] += 1
+            except Exception:
+                logger.exception('Telegram Long Term exit alert failed for one subscriber')
+                store.forget_alert(client, position['email'], 'exit', ref)
+                stats['failed'] += 1
     return stats
 
 

@@ -1,4 +1,5 @@
 import datetime
+import pandas as pd
 import hashlib
 import hmac
 import json
@@ -337,3 +338,66 @@ def test_alerts_skip_without_a_bot_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
 
     assert "skipped" in alerts.send_dividend_play_alerts(FakeSupabase(), AS_OF, [_signal()])
+
+
+def _long_term_rows(**overrides):
+    row = {"Current PE": 9.0, "PE Mean": 12.0, "Statement Date": pd.Timestamp("2026-06-30"),
+           "Earnings Growth TTM": 6.0, "Revenue Growth TTM": 4.0}
+    return {"ASII.JK": {**row, **overrides}}
+
+
+def _long_term_positions(client, entry_date="2026-05-04"):
+    store.create_position(client, "quiet@example.com", {
+        "tool": "long_term", "symbol": "ASII.JK", "entry_date": entry_date,
+        "entry_price": 4700, "lots": 20, "exit_rule": {"pe_mean": 12.0},
+    })
+    return store.open_positions_all(client, "long_term")
+
+
+def test_long_term_exit_alert_when_p_e_reaches_its_mean():
+    client, sent = _alert_client(), []
+    positions = _long_term_positions(client)
+    send = lambda chat, text, token=None: sent.append((chat, text))
+
+    quiet = alerts.send_long_term_exit_alerts(client, AS_OF, _long_term_rows(), positions, token="t", send=send)
+    assert quiet["exit"] == 0 and sent == []
+
+    stats = alerts.send_long_term_exit_alerts(
+        client, AS_OF, _long_term_rows(**{"Current PE": 12.4}), positions, token="t", send=send,
+    )
+    assert stats["exit"] == 1
+    assert sent[0][0] == "3"
+    assert "ASII's P/E is back at its historical mean (12.4 vs a mean of 12.0)" in sent[0][1]
+    assert "20 lots bought at Rp 4,700" in sent[0][1]
+    again = alerts.send_long_term_exit_alerts(
+        client, AS_OF, _long_term_rows(**{"Current PE": 13.0}), positions, token="t", send=send,
+    )
+    assert again["already_sent"] == 1 and len(sent) == 1
+
+
+def test_long_term_exit_alert_once_per_quarter_that_turns_growth_negative():
+    client, sent = _alert_client(), []
+    positions = _long_term_positions(client)
+    send = lambda chat, text, token=None: sent.append(text)
+    falling = _long_term_rows(**{"Earnings Growth TTM": -3.5})
+
+    alerts.send_long_term_exit_alerts(client, AS_OF, falling, positions, token="t", send=send)
+    alerts.send_long_term_exit_alerts(client, AS_OF, falling, positions, token="t", send=send)
+    assert len(sent) == 1
+    assert "latest quarter (Tue 30 Jun 2026) turned trailing twelve-month growth negative (earnings -3.5%)" in sent[0]
+
+    next_quarter = _long_term_rows(**{"Earnings Growth TTM": -1.0, "Statement Date": pd.Timestamp("2026-09-30")})
+    alerts.send_long_term_exit_alerts(client, AS_OF, next_quarter, positions, token="t", send=send)
+    assert len(sent) == 2
+
+
+def test_long_term_growth_alert_ignores_quarters_reported_before_entry():
+    client, sent = _alert_client(), []
+    positions = _long_term_positions(client, entry_date="2026-08-03")
+
+    stats = alerts.send_long_term_exit_alerts(
+        client, AS_OF, _long_term_rows(**{"Revenue Growth TTM": -2.0}), positions, token="t",
+        send=lambda chat, text, token=None: sent.append(text),
+    )
+
+    assert stats["exit"] == 0 and sent == []

@@ -404,3 +404,157 @@ def test_swing_scan_publishes_from_stored_setups():
     signals = store.read_signals(client, "swing")
     assert signals["symbol"].tolist() == ["FALL.JK"]
     assert stats["actionable"] == 1 and stats["as_of"] == AS_OF.date().isoformat()
+
+
+# ── Long Term ───────────────────────────────────────────────────────────── #
+
+import requests  # noqa: E402
+
+import harvest.position as pos  # noqa: E402
+from tests.test_position import make_financials, make_prices, make_statements  # noqa: E402
+
+
+def _lt_profiles(symbols, industry="Conglomerates"):
+    return pd.DataFrame(
+        {"price": 100.0, "mktCap": 100.0 * 100, "companyName": [f"PT {s} Tbk" for s in symbols],
+         "sector": "Industrials", "industry": industry},
+        index=pd.Index(symbols, name="symbol"),
+    )
+
+
+# The fixtures' statements fit 100 shares at Rp 100 (P/E about 14), a Rp 10,000 company.
+TINY_FLOOR = 1e-8
+
+
+def _lt_inputs(fundamentals, histories, universe):
+    def fetch(symbol):
+        value = fundamentals[symbol]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    return (
+        patch.object(trading_data, "load_long_term_universe", return_value=universe),
+        patch.object(trading_data, "load_price_histories", return_value=histories),
+        patch.object(trading_data, "load_long_term_fundamentals", side_effect=fetch),
+    )
+
+
+def _lt_prices(**kwargs):
+    frame = make_prices(end="2026-10-05", price=100.0, **kwargs)
+    return frame.assign(date=pd.to_datetime(frame["date"])).sort_values("date").reset_index(drop=True)
+
+
+def _growing():
+    return make_financials(), pos.prepare_statements(*make_statements(ocf=200.0))
+
+
+def test_long_term_scan_publishes_ranked_candidates_with_coverage(monkeypatch):
+    monkeypatch.setattr(trading_scan, "LONG_TERM_DEFAULTS", {**trading_scan.LONG_TERM_DEFAULTS, "min_market_cap": TINY_FLOOR})
+    client = FakeSupabase()
+    symbols = ["GOOD.JK", "SHRINK.JK", "THIN.JK", "DOWN.JK", "NOPRICE.JK"]
+    universe = _lt_profiles(symbols)
+    fundamentals = {
+        "GOOD.JK": _growing(),
+        "SHRINK.JK": (make_financials(growth=-0.10), pos.prepare_statements(*make_statements(ocf=200.0))),
+        "THIN.JK": (make_financials(quarters=6), pos.prepare_statements(*make_statements())),
+        "DOWN.JK": requests.HTTPError("403 Forbidden"),
+    }
+    histories = {s: _lt_prices() for s in symbols if s != "NOPRICE.JK"}
+
+    a, b, c = _lt_inputs(fundamentals, histories, universe)
+    with a, b, c:
+        stats = trading_scan.long_term(client)
+
+    signals = store.read_signals(client, "long_term")
+    assert signals["symbol"].tolist() == ["GOOD.JK"]
+    good = signals.iloc[0]
+    assert good["status"] == "candidate"
+    assert good["as_of"] == datetime.date(2026, 10, 5)
+    assert good["entry_price"] == pytest.approx(100.0)
+    assert good["target_price"] > good["entry_price"]
+    assert good["key_date"] == datetime.date(2026, 6, 30)
+    assert good["detail"]["rank"] == 1 and good["detail"]["basis"] == "P/S"
+    assert good["detail"]["quality"]["complete"] is True
+    assert stats["requested"] == 5 and stats["analyzed"] == 2 and stats["candidates"] == 1
+    assert stats["skipped"] == 2
+    assert stats["skipped_by_reason"] == {"fewer than 8 quarterly statements": 1, "no prices": 1}
+    assert stats["failed"] == 1 and "HTTPError" in stats["failed_symbols"]["DOWN.JK"]
+    assert stats["failed_rules"]["Revenue TTM falling"] == 1
+    assert store.latest_run(client, "long_term", "scan")["stats"]["analyzed"] == 2
+
+
+def test_long_term_scan_uses_the_published_screen(monkeypatch):
+    client = FakeSupabase()
+    store.write_setups(client, "long_term", [{
+        "scope": "global", "params": {**pos.DEFAULT_FILTERS, "min_market_cap": TINY_FLOOR, "max_pe": 5.0},
+        "holdout": {"years": 8, "cagr": 12.0},
+    }])
+    a, b, c = _lt_inputs({"GOOD.JK": _growing()}, {"GOOD.JK": _lt_prices()}, _lt_profiles(["GOOD.JK"]))
+    with a, b, c:
+        stats = trading_scan.long_term(client)
+
+    assert stats["candidates"] == 0 and stats["failed_rules"] == {"P/E > 5": 1}
+    assert stats["published_screen"] is True
+
+
+def test_long_term_scan_checks_tracked_positions_outside_the_screen(monkeypatch):
+    monkeypatch.setattr(trading_scan, "LONG_TERM_DEFAULTS", {**trading_scan.LONG_TERM_DEFAULTS, "min_market_cap": TINY_FLOOR})
+    client = FakeSupabase()
+    store.create_position(client, "fan@example.com", {
+        "tool": "long_term", "symbol": "SMALL.JK", "entry_date": "2026-01-05", "entry_price": 900,
+        "lots": 5, "exit_rule": {},
+    })
+    universe = pd.concat([_lt_profiles(["GOOD.JK"]), _lt_profiles(["SMALL.JK"]).assign(mktCap=5e3)])
+    received = {}
+
+    def fake_alerts(client, as_of, rows, positions):
+        received.update(rows=set(rows), positions=positions["symbol"].tolist())
+        return {"exit": 0}
+
+    a, b, c = _lt_inputs({"GOOD.JK": _growing(), "SMALL.JK": _growing()},
+                         {"GOOD.JK": _lt_prices(), "SMALL.JK": _lt_prices()}, universe)
+    with a, b, c, patch.object(trading_scan.alerts, "send_long_term_exit_alerts", side_effect=fake_alerts):
+        stats = trading_scan.long_term(client)
+
+    assert received == {"rows": {"GOOD.JK", "SMALL.JK"}, "positions": ["SMALL.JK"]}
+    assert store.read_signals(client, "long_term")["symbol"].tolist() == ["GOOD.JK"]
+    assert stats["positions_checked"] == 1 and stats["requested"] == 2
+
+
+def test_long_term_scan_failure_is_recorded(monkeypatch):
+    monkeypatch.setattr(trading_scan, "LONG_TERM_DEFAULTS", {**trading_scan.LONG_TERM_DEFAULTS, "min_market_cap": TINY_FLOOR})
+    client = FakeSupabase()
+    a, b, c = _lt_inputs({"GOOD.JK": _growing()}, {"GOOD.JK": _lt_prices()}, _lt_profiles(["GOOD.JK"]))
+    with a, b, c, patch.object(trading_scan.pos, "score_results", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError, match="boom"):
+            trading_scan.long_term(client)
+
+    assert "boom" in store.latest_run(client, "long_term", "scan", status="failed")["stats"]["error"]
+
+
+def test_with_retries_backs_off_on_rate_limits(monkeypatch):
+    monkeypatch.setattr(trading_data.time, "sleep", lambda seconds: None)
+    response = requests.Response()
+    response.status_code = 429
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise requests.HTTPError(response=response)
+        return "ok"
+
+    assert trading_data.with_retries(flaky) == "ok" and len(calls) == 3
+
+    forbidden = requests.Response()
+    forbidden.status_code = 403
+    calls.clear()
+
+    def denied():
+        calls.append(1)
+        raise requests.HTTPError(response=forbidden)
+
+    with pytest.raises(requests.HTTPError):
+        trading_data.with_retries(denied)
+    assert len(calls) == 1

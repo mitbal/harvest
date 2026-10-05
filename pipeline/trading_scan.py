@@ -7,6 +7,7 @@ for the latest session in the price history and are never overwritten on
 later days, so they form the public track record.
 """
 import argparse
+import concurrent.futures
 import datetime
 import json
 import logging
@@ -20,6 +21,7 @@ import pandas as pd
 
 import harvest.alerts as alerts
 import harvest.dividend_play as dp
+import harvest.position as pos
 import harvest.swing as sw
 import harvest.trading_store as store
 from pipeline import trading_data
@@ -384,7 +386,200 @@ def swing(client, as_of=None) -> dict:
         raise
 
 
-TOOLS = {"dividend_play": dividend_play, "swing": swing}
+# ── Long Term ───────────────────────────────────────────────────────────── #
+
+# The published screen analyzes more companies than the page's default form.
+LONG_TERM_MAX_COMPANIES = 200
+LONG_TERM_DEFAULTS = {**pos.DEFAULT_FILTERS, "max_companies": LONG_TERM_MAX_COMPANIES}
+MAX_FAILURES_LISTED = 20
+
+
+def long_term_screen(setups: dict) -> dict:
+    """The published screen's filters (global setup), else the defaults."""
+    return {**LONG_TERM_DEFAULTS, **((setups.get("global") or {}).get("params") or {})}
+
+
+def analyze_long_term(
+    profiles: pd.DataFrame,
+    histories: dict[str, pd.DataFrame],
+    history_years: int,
+) -> tuple[dict[str, dict], dict]:
+    """Screen rows by symbol plus coverage: skipped by reason and failed symbols with the error.
+
+    A stock is *skipped* when its data is insufficient (no prices, too few
+    statements, too short a valuation history) and *failed* when fetching or
+    analyzing it raised.
+    """
+    def analyze(symbol: str, profile: dict) -> dict:
+        prices = histories.get(symbol)
+        if prices is None or prices.empty:
+            raise pos.SkipStock("no prices")
+        financials, statements = trading_data.load_long_term_fundamentals(symbol)
+        return pos.analyze_frames(symbol, profile, prices, financials, history_years, statements=statements)
+
+    rows, skipped, failed = {}, {}, {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=pos.SCAN_WORKERS) as executor:
+        futures = {
+            executor.submit(analyze, str(symbol), dict(profile)): str(symbol)
+            for symbol, profile in profiles.iterrows()
+        }
+        for future in concurrent.futures.as_completed(futures):
+            symbol = futures[future]
+            try:
+                rows[symbol] = future.result()
+            except pos.SkipStock as exc:
+                skipped.setdefault(str(exc), []).append(symbol)
+            except Exception as exc:
+                failed[symbol] = f"{type(exc).__name__}: {exc}"[:200]
+    coverage = {
+        "requested": len(profiles),
+        "analyzed": len(rows),
+        "skipped": sum(len(symbols) for symbols in skipped.values()),
+        "skipped_by_reason": {reason: len(symbols) for reason, symbols in sorted(skipped.items())},
+        "failed": len(failed),
+        "failed_symbols": dict(sorted(failed.items())[:MAX_FAILURES_LISTED]),
+    }
+    return rows, coverage
+
+
+def _quality_detail(row: dict) -> dict:
+    coverage = row.get("Interest Coverage", np.nan)
+    return {
+        "debt_to_equity": row.get("Debt to Equity"),
+        "interest_coverage": coverage,
+        "no_interest_expense": bool(coverage == np.inf),
+        "cash_conversion": row.get("Cash Conversion"),
+        "roe": row.get("ROE"),
+        "share_change": row.get("Share Change 1Y"),
+        "complete": bool(row.get("Quality Data")),
+    }
+
+
+def long_term_signal(row: pd.Series, rank: int, close: float, price_date, holdout: dict) -> dict:
+    """A ranked candidate: entry at today's close, target at the historical mean valuation."""
+    basis = row["Value Basis"]
+    second = "PB" if basis == "P/B" else "PS"
+    detail = {
+        "company": row["Company"],
+        "sector": row["Sector"],
+        "rank": rank,
+        "close": close,
+        "price_date": pd.Timestamp(price_date).date().isoformat(),
+        "market_cap": row["Market Cap"],
+        "basis": basis,
+        "scores": {
+            "score": row["Score"], "valuation": row["Valuation Score"],
+            "growth": row["Growth Score"], "quality": row["Quality Score"],
+        },
+        "pe": {
+            "current": row["Current PE"], "mean": row["PE Mean"], "median": row["PE Median"],
+            "discount": row["PE Discount"], "percentile": row["PE Percentile"],
+        },
+        "second": {
+            "label": basis, "current": row[f"Current {second}"], "mean": row[f"{second} Mean"],
+            "median": row[f"{second} Median"], "discount": row[f"{second} Discount"],
+            "percentile": row[f"{second} Percentile"],
+        },
+        "growth": {
+            "revenue_5y": row["Revenue Growth 5Y"], "revenue_ttm": row["Revenue Growth TTM"],
+            "earnings_5y": row["Earnings Growth 5Y"], "earnings_ttm": row["Earnings Growth TTM"],
+            "margin_ttm": row["Margin TTM"],
+        },
+        "quality": _quality_detail(row),
+        "upside": {
+            "to_mean": row["Upside to Mean"], "potential_1y": row["Potential Upside 1Y"],
+            "potential_5y": row["Potential Upside 5Y"],
+            "implied_1y": row["Implied Price 1Y"], "implied_5y": row["Implied Price 5Y"],
+        },
+        "backtest": holdout or None,
+    }
+    return {
+        "symbol": row["Symbol"],
+        "status": "candidate",
+        "entry_price": close,
+        "stop_price": None,
+        "target_price": close * (1 + row["Upside to Mean"] / 100),
+        "exit_by": None,
+        "key_date": row["Statement Date"],
+        "key_date_estimated": False,
+        "setup_scope": "global",
+        "detail": detail,
+    }
+
+
+def long_term(client, as_of=None) -> dict:
+    """Publish today's ranked Long Term candidates and send exit alerts for tracked positions."""
+    started = time.monotonic()
+    setups = store.read_setups(client, "long_term")
+    screen = long_term_screen(setups)
+    history_years = int(screen["history_years"])
+    universe = trading_data.load_long_term_universe()
+    selected = pos.select_universe(universe, screen["min_market_cap"], screen["max_companies"])
+    positions = store.open_positions_all(client, "long_term")
+    extra = sorted(set(positions["symbol"]) - set(selected.index))
+    profiles = pd.concat([selected, universe.loc[universe.index.intersection(extra)]])
+    histories = trading_data.load_price_histories(
+        profiles.index.tolist(), pos.price_start(history_years),
+    )
+    if not histories:
+        raise RuntimeError("No price history for the Long Term universe")
+    if as_of is None:
+        as_of = max(frame["date"].max() for frame in histories.values())
+    as_of = pd.Timestamp(as_of).normalize()
+    histories = {symbol: frame[frame["date"] <= as_of] for symbol, frame in histories.items()}
+
+    run_id = store.start_run(client, "long_term", "scan", as_of)
+    try:
+        rows, coverage = analyze_long_term(profiles, histories, history_years)
+        stale = [
+            symbol for symbol, frame in histories.items()
+            if symbol in rows and frame["date"].max() < as_of - pd.Timedelta(days=MAX_PRICE_AGE_DAYS)
+        ]
+        for symbol in stale:
+            rows.pop(symbol)
+        # Position-only symbols are analyzed for exit alerts but not ranked.
+        scored = pos.score_results([row for symbol, row in rows.items() if symbol in selected.index])
+        screened = (
+            scored.assign(**{"Passes All": False, "Failed Rules": ""}) if scored.empty
+            else pos.apply_screen(scored, screen)
+        )
+        candidates = pos.ranked(screened[screened["Passes All"]])
+        holdout = (setups.get("global") or {}).get("holdout") or {}
+        signals = [
+            long_term_signal(
+                row, int(rank), float(histories[row["Symbol"]]["close"].iloc[-1]),
+                histories[row["Symbol"]]["date"].iloc[-1], holdout,
+            )
+            for rank, row in candidates.iterrows()
+        ]
+        store.write_signals(client, "long_term", as_of, signals)
+        try:
+            alert_stats = alerts.send_long_term_exit_alerts(client, as_of, rows, positions)
+        except Exception as exc:
+            logger.exception("Long Term alerts failed")
+            alert_stats = {"error": f"{type(exc).__name__}: {exc}"[:300]}
+        failed_rules = screened.loc[~screened["Passes All"], "Failed Rules"].str.split(", ").explode().value_counts()
+        stats = {
+            "as_of": as_of.date().isoformat(),
+            "screen": screen,
+            "published_screen": "global" in setups,
+            "universe": len(universe),
+            **coverage,
+            "stale_prices": len(stale),
+            "candidates": len(signals),
+            "failed_rules": {str(rule): int(count) for rule, count in failed_rules.items()},
+            "positions_checked": int(positions["symbol"].isin(list(rows)).sum()),
+            "alerts": alert_stats,
+            "duration_seconds": round(time.monotonic() - started, 1),
+        }
+        store.finish_run(client, run_id, "ok", stats)
+        return stats
+    except Exception as exc:
+        store.finish_run(client, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"[:500]})
+        raise
+
+
+TOOLS = {"dividend_play": dividend_play, "swing": swing, "long_term": long_term}
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -1,3 +1,4 @@
+import json
 import datetime
 
 import numpy as np
@@ -67,6 +68,19 @@ def test_run_lifecycle(client):
     assert run['status'] == 'ok'
     assert run['stats'] == {'analyzed': 42, 'coverage': None}
     assert run['finished_at'] is not None
+
+
+def test_finish_run_redacts_credentials_in_errors(client):
+    run_id = ts.start_run(client, 'long_term', 'scan', '2026-10-05')
+    error = "HTTPError: 429 for url: https://financialmodelingprep.com/api/v3/x/ASII.JK?period=quarter&apikey=abc123"
+
+    ts.finish_run(client, run_id, 'failed', {'error': error, 'failed_symbols': {'ASII.JK': error}, 'n': 1})
+    stats = ts.latest_run(client, 'long_term', 'scan', status='failed')['stats']
+
+    assert 'abc123' not in json.dumps(stats)
+    assert stats['error'].endswith('period=quarter&apikey=REDACTED')
+    assert ts.redact_secrets('bot?token=xyz&a=1') == 'bot?token=REDACTED&a=1'
+    assert stats['n'] == 1
 
 
 def test_latest_run_prefers_newest_as_of_then_id(client):

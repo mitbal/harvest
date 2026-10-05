@@ -10,6 +10,7 @@ Table definitions live in ``pipeline/premium_trading.sql``.
 import datetime
 import json
 import math
+import re
 from typing import Iterable, Optional
 
 import holidays
@@ -123,12 +124,27 @@ def start_run(client, tool: str, kind: str, as_of) -> int:
     return int(data[0]['id'])
 
 
+# Error messages can quote request URLs ("...?apikey=..."); run stats are readable by the app.
+_SECRET_PARAM = re.compile(r'((?:api_?key|token|secret)=)[^&\s\'"]+', re.IGNORECASE)
+
+
+def redact_secrets(value):
+    """``value`` with credentials in URL query parameters replaced by ``REDACTED``."""
+    if isinstance(value, str):
+        return _SECRET_PARAM.sub(r'\1REDACTED', value)
+    if isinstance(value, dict):
+        return {key: redact_secrets(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_secrets(item) for item in value]
+    return value
+
+
 def finish_run(client, run_id: int, status: str = 'ok', stats: Optional[dict] = None) -> None:
-    """Mark a run ``ok`` or ``failed`` with optional coverage stats."""
+    """Mark a run ``ok`` or ``failed`` with optional coverage stats (credentials redacted)."""
     _check(status, ('ok', 'failed'), 'status')
     (
         client.table('trading_runs')
-        .update({'status': status, 'stats': _jsonable(stats or {}), 'finished_at': _now()})
+        .update({'status': status, 'stats': redact_secrets(_jsonable(stats or {})), 'finished_at': _now()})
         .eq('id', run_id)
         .execute()
     )
