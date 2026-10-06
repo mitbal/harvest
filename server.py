@@ -13,9 +13,11 @@ from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Re
 from starlette.routing import Route
 
 from harvest import seo, webhooks
+from harvest.utils import setup_logging
 
 
 logger = logging.getLogger('seo')
+visit_logger = setup_logging('tracking')
 STATIC_DIR = Path(__file__).resolve().parent / 'static'
 
 # Pages the edge/browser may cache briefly; data only changes daily.
@@ -59,6 +61,13 @@ async def stock_page(request):
 
     if html is None:
         return HTMLResponse(seo.render_not_found(slug), status_code=404)
+
+    # Same shape as main.py's VISIT log; no session here, so log the user agent to tell crawlers apart.
+    log_msg = f'VISIT | page=stock_page/{symbol}'
+    if request.url.query:
+        log_msg += f' | {request.url.query.replace("&", " | ")}'
+    log_msg += f" | ua={request.headers.get('user-agent', '')}"
+    visit_logger.info(log_msg)
     return HTMLResponse(html, headers=_CACHE_HEADERS)
 
 
