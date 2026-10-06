@@ -100,7 +100,7 @@ def test_my_trades_lists_only_the_users_positions(trades):
 
     assert not app.exception
     text = _texts(app)
-    assert "**BBRI** · Dividend Play · 5 lots at Rp 1,000" in text
+    assert "BBRI Dividend Play · bought" in text and "Bought at Rp 1,000 per share Size 5 lots" in text
     assert "sessions left, sell by" in text
     assert "ASII" not in text
     closed = app.dataframe[0].value
@@ -179,7 +179,8 @@ def test_swing_positions_show_levels_and_sizing_settings_save(trades, trades_cli
     ))
     app = trades()
 
-    assert "Stop Rp 98 · target Rp 105" in _texts(app)
+    text = _texts(app)
+    assert "Stop Rp 98" in text and "Target Rp 105" in text
     capital = next(n for n in app.number_input if n.label == "Trading capital (Rp)")
     capital.set_value(50_000_000)
     app = next(b for b in app.button if b.label == "Save settings").click().run()

@@ -49,7 +49,10 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='Swing Trading - Panen Dividen')
 hp.enable_chart_theme()
-st.title('Swing Trading')
+ui.inject_styles()
+ui.hero('Trading · 1 to 10 sessions', 'Swing Trading',
+        'Short swings on liquid IDX stocks, confirmed at the close and bought at the next open. '
+        'Only setups that pass a walk-forward test are published.', 'bolt')
 # Initial values go through session state rather than `default`, because buttons below
 # also set them; a ?view= or ?stock= in the URL still wins.
 if 'view' not in st.session_state:
@@ -423,36 +426,43 @@ def track_dialog(signal: pd.Series, lots: int) -> None:
 def render_signal_card(signal: pd.Series, settings: dict | None, can_track: bool) -> None:
     detail = signal['detail']
     close = float(signal['entry_price'])
-    with st.container(border=True):
-        st.markdown(f"**{ui.short(signal['symbol'])}** · {detail.get('company') or signal['symbol']}")
-        st.caption(detail.get('setup', ''))
-        lines = [f"Buy at the open on **{ui.day(signal['key_date'])}**"]
-        exits = []
-        if signal['stop_price'] is not None and not pd.isna(signal['stop_price']):
-            exits.append(f"stop **−{detail['stop_pct']:g}%** (about {ui.idr(signal['stop_price'])})")
-        if signal['target_price'] is not None and not pd.isna(signal['target_price']):
-            exits.append(f"target **+{detail['target_pct']:g}%** (about {ui.idr(signal['target_price'])})")
-        if exits:
-            joined = ' · '.join(exits)
-            lines.append(joined[0].upper() + joined[1:])
-        lines.append(f"Sell by **{ui.day(signal['exit_by'])}** at the latest ({detail.get('max_hold')} sessions)")
-        st.markdown('  \n'.join(lines))
-        limits = detail.get('price_limits') or {}
-        if limits:
-            st.caption(f"Next session limits {ui.idr(limits['floor'])} to {ui.idr(limits['ceiling'])}; "
-                       f"prices from the {ui.idr(close)} close.")
-        if detail.get('stop_below_floor'):
-            st.caption('The stop is below the auto-reject floor, so a stop-out could take more than one session.')
-        lots = 0
-        if settings and settings.get('capital_idr') and signal['stop_price'] is not None:
-            size = sw.position_size(float(settings['capital_idr']), float(settings.get('risk_pct') or 1.0),
-                                    close, float(signal['stop_price']))
-            lots = size['lots']
-            st.markdown(f"Size **{lots} lots** (about {ui.idr(size['cost_idr'])}), "
-                        f"{ui.idr(size['risk_idr'])} at risk")
-        elif can_track:
-            st.caption('Set your capital and risk per trade in My Trades to see a position size.')
-        st.caption(_record_text(detail.get('holdout') or {}))
+    holdout = detail.get('holdout') or {}
+    stop = None if signal['stop_price'] is None or pd.isna(signal['stop_price']) else float(signal['stop_price'])
+    target = None if signal['target_price'] is None or pd.isna(signal['target_price']) else float(signal['target_price'])
+    avg = holdout.get('avg_return')
+    badge = ui.chip(f'{avg:+.2f}% avg', 'up lg' if avg > 0 else 'down lg', 'trending_up') if avg is not None else ''
+    tiles = [('Buy at open', ui.esc(ui.day(signal['key_date'])), 'next session')]
+    if stop is not None:
+        tiles.append(('Stop', f"−{detail['stop_pct']:g}%", f'about {ui.esc(ui.idr(stop))}', 'down'))
+    if target is not None:
+        tiles.append(('Target', f"+{detail['target_pct']:g}%", f'about {ui.esc(ui.idr(target))}', 'up'))
+    tiles.append(('Sell by', ui.esc(ui.day(signal['exit_by'])), f"{detail.get('max_hold')} sessions max"))
+    parts = [
+        ui.card_head(signal['symbol'], detail.get('company'), badge, icon_name='bolt'),
+        f'<div class="hv-chips">{ui.chip(detail.get("setup", ""), "brand", "tune")}</div>',
+        ui.cells(tiles),
+        ui.ladder(close, stop, target),
+    ]
+    lots = 0
+    if settings and settings.get('capital_idr') and stop is not None:
+        size = sw.position_size(float(settings['capital_idr']), float(settings.get('risk_pct') or 1.0), close, stop)
+        lots = size['lots']
+        parts.append(ui.strip(f"Size <b>{lots} lots</b> (about {ui.esc(ui.idr(size['cost_idr']))}), "
+                              f"{ui.esc(ui.idr(size['risk_idr']))} at risk", icon_name='account_balance_wallet'))
+    elif can_track:
+        parts.append(ui.strip('Set your capital and risk per trade in My Trades to see a position size.',
+                              'plain', 'info'))
+    notes = []
+    limits = detail.get('price_limits') or {}
+    if limits:
+        notes.append(f"Next session limits {ui.esc(ui.idr(limits['floor']))} to {ui.esc(ui.idr(limits['ceiling']))}; "
+                     f"prices from the {ui.esc(ui.idr(close))} close.")
+    if detail.get('stop_below_floor'):
+        notes.append('The stop is below the auto-reject floor, so a stop-out could take more than one session.')
+    parts.append(ui.foot(ui.winbar(holdout.get('wins'), holdout.get('trades')) + ui.esc(_record_text(holdout))))
+    parts.extend(ui.foot(note) for note in notes)
+    with ui.card(signal['symbol']):
+        ui.render(''.join(parts))
         with st.container(horizontal=True):
             if can_track and st.button('Track this trade', key=f"track_{signal['symbol']}", type='primary',
                                        icon=':material/bookmark_add:'):
@@ -466,8 +476,9 @@ def render_signal_card(signal: pd.Series, settings: dict | None, can_track: bool
 
 def render_no_setup(search: dict | None) -> None:
     """Honest empty state: why there are no swing signals."""
-    st.info('No swing setup currently passes the walk-forward test, so there are no swing signals today.',
-            icon=':material/info:')
+    ui.empty_state('No swing signals today',
+                   'No swing setup currently passes the walk-forward test, so there are no swing signals today.',
+                   'shield')
     stats = (search or {}).get('stats') or {}
     record = stats.get('walk_forward') or {}
     if search and stats:
@@ -496,9 +507,7 @@ def render_today(access: bool) -> None:
     if run is None:
         st.info('Signals have not been published yet. The first update arrives after the next market close.')
         return
-    ui.status_line(run)
-    if published['stale']:
-        st.warning('These signals missed at least one nightly update. They may be out of date.')
+    ui.status_line(run, published['stale'])
     if 'global' not in published['setups']:
         render_no_setup(published['search'])
 
@@ -524,18 +533,17 @@ def render_today(access: bool) -> None:
             metrics.metric('Your swing positions', '–')
 
     if not actionable.empty:
-        st.subheader('Buy at the next open')
+        ui.section('Buy at the next open', len(actionable), 'Ranked by out-of-sample average trade')
         shown = actionable if access else actionable.head(1)
         for start in range(0, len(shown), 2):
             for column, (_, signal) in zip(st.columns(2), shown.iloc[start:start + 2].iterrows()):
                 with column:
                     render_signal_card(signal, settings, can_track=access)
         if not access and len(actionable) > 1:
-            st.markdown('Also today: ' + ', '.join(ui.short(s) for s in actionable['symbol'].iloc[1:]))
-            ui.unlock_prompt(len(actionable) - 1)
+            ui.unlock_prompt(list(actionable['symbol'].iloc[1:]))
     if not watch.empty:
-        st.subheader('Close to a setup')
-        st.markdown(', '.join(ui.short(s) for s in watch['symbol']))
+        ui.section('Close to a setup', len(watch), 'Could trigger after the next close')
+        ui.tickers(watch['symbol'])
     st.caption('Historical backtest with next-open entries, intraday stops and IDX costs. Not financial advice.')
 
 
@@ -563,13 +571,14 @@ def render_evidence(access: bool) -> None:
     if scope is None:
         baseline = sw.SEARCH_PRESETS['Quick']['strategy_params'][STRATEGY_REGIME_RSI][0]
         setup = sw.combo_setup((STRATEGY_REGIME_RSI, *baseline, DEFAULT_MAX_HOLD, DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS))
-        st.markdown(f'**{_combo_label(setup)}**')
-        st.caption('No swing setup is published right now, so this shows the baseline setup for research.')
+        ui.setup_banner(_combo_label(setup),
+                        'No swing setup is published right now, so this shows the baseline setup for research.',
+                        'Baseline setup')
     else:
         setup, holdout = setups[scope]['params'], setups[scope]['holdout']
-        st.markdown(f'**{_combo_label(setup)}**')
-        st.caption(('Setup chosen for this stock' if scope == stock else 'Published shortlist-wide setup') + '; '
-                   + _record_text({**holdout, 'avg_return': holdout.get('avg_trade')}))
+        ui.setup_banner(_combo_label(setup),
+                        ('Setup chosen for this stock' if scope == stock else 'Published shortlist-wide setup') + '; '
+                        + _record_text({**holdout, 'avg_return': holdout.get('avg_trade')}))
 
     start = (pd.Timestamp(datetime.date.today()) - pd.DateOffset(years=EVIDENCE_YEARS)).strftime('%Y-%m-%d')
     with st.spinner('Loading price history...'):

@@ -3,7 +3,9 @@
 The page runs for real against an in-memory trading store, synthetic prices
 and a synthetic dividend history; nothing touches the network.
 """
+import html
 import pickle
+import re
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -130,9 +132,16 @@ def run_page(monkeypatch, client):
         item.stop()
 
 
+def _hero(app) -> str:
+    return next(e.proto.body for e in app.get("html") if "hv-hero" in e.proto.body)
+
+
 def _texts(app) -> str:
     parts = [e.value for e in app.markdown] + [e.value for e in app.caption] + [e.value for e in app.subheader]
     parts += [e.value for e in app.title] + [e.value for e in app.info] + [e.value for e in app.warning]
+    # The trading cards are st.html; compare their visible text with tags and spacing collapsed.
+    parts += [" ".join(html.unescape(re.sub(r"<style.*?</style>|<span class=\"icon\".*?</span>|<[^>]+>", " ", e.proto.body, flags=re.S)).split())
+              for e in app.get("html")]
     return "\n".join(str(p) for p in parts)
 
 
@@ -150,14 +159,14 @@ def test_today_premium_shows_every_card_and_the_opening_list(run_page):
     app = run_page("premium")
 
     assert not app.exception
-    assert app.title[0].value == "Dividend Play"
+    assert "<h1>Dividend Play</h1>" in _hero(app)
     assert _metric(app, "Entry windows open") == "2"
     assert _metric(app, "Opening in 14 days") == "1"
     assert len(_evidence_buttons(app)) == 2
     text = _texts(app)
-    assert "**BBRI** · PT BBRI Tbk" in text and "**TLKM** · PT TLKM Tbk" in text
-    assert "Yield 6.2% · next dividend Rp 150" in text
-    assert "Entry at or below **Rp 4,010**" in text  # rounded down to the IDX tick
+    assert "BBRI PT BBRI Tbk" in text and "TLKM PT TLKM Tbk" in text
+    assert "Yield 6.2% Next dividend Rp 150" in text
+    assert "Entry at or below Rp 4,010" in text  # rounded down to the IDX tick
     assert "Dip rule active, 2.5% below its 20-day average" in text
     assert "holdout 30 of 40 won on all shortlist stocks, +5.0% average after costs" in text
     assert "Not financial advice." in text
@@ -185,8 +194,9 @@ def test_today_marks_estimated_cum_dates(run_page):
     app = run_page("premium")
 
     text = _texts(app)
-    assert "Cum date **~" in text  # TLKM is estimated
-    assert text.count("Cum date **~") == 1
+    assert "Cum date ~" in text  # TLKM is estimated
+    assert text.count("Cum date ~") == 1
+    assert text.count("Cum date estimated") == 1 and text.count("Cum date announced") == 1
 
 
 def test_today_without_store_shows_a_warning(run_page):

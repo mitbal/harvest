@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='Long Term - Panen Dividen')
 hp.enable_chart_theme()
-st.title("Growth at a Discount")
-st.caption(
+ui.inject_styles()
+ui.hero(
+    "Trading · Long term position", "Growth at a Discount",
     "Profitable IDX businesses whose earnings and revenue multiples are below "
-    "their own history while revenue and earnings continue to grow."
+    "their own history while revenue and earnings continue to grow.", "trending_up",
 )
 # Initial values go through session state rather than `default`, because buttons below
 # also set them; a ?view= or ?stock= in the URL still wins.
@@ -51,13 +52,6 @@ st.sidebar.markdown(
 st.html(
     """
     <style>
-        [data-testid="stMetric"] {
-            background: color-mix(in srgb, #064e3b 4%, transparent);
-            border-top: 2px solid #0f766e;
-            padding: 0.8rem 0.9rem;
-        }
-        [data-testid="stMetricLabel"] { color: #36534a; }
-        [data-testid="stMetricValue"] { color: #123c31; }
         .method-note {
             color: #36534a;
             font-size: 0.9rem;
@@ -379,33 +373,50 @@ def track_dialog(signal: pd.Series) -> None:
         st.rerun()
 
 
+def _meter(label: str, current: float, median: float, discount: float, digits: int) -> str:
+    """Current multiple against its own median; the median sits at three quarters of the bar."""
+    scale = median / 0.75 if median and median > 0 else max(current, 1.0)
+    fill = min(max(current / scale, 0.0), 1.0) * 100
+    return (
+        f'<div class="hv-meter"><div class="row"><span>{ui.esc(label)} <b>{current:.{digits}f}</b></span>'
+        f'<span>{ui.esc(_vs_median(discount))} its median of {median:.{digits}f}</span></div>'
+        f'<div class="bar"><div class="fill" style="width:{fill:.1f}%"></div>'
+        f'<div class="median" style="left:75%" title="Median"></div></div></div>'
+    )
+
+
 def render_candidate_card(signal: pd.Series, can_track: bool) -> None:
     d = signal["detail"]
     pe, second, growth, upside = d["pe"], d["second"], d["growth"], d["upside"]
     quality = d.get("quality") or {}
-    with st.container(border=True):
-        st.markdown(f"**#{d.get('rank')} {ui.short(signal['symbol'])}** · {d.get('company') or signal['symbol']}")
-        st.caption(f"{d.get('sector') or 'Unknown sector'} · score {d['scores']['score']:.0f} / 100")
-        lines = [
-            f"P/E **{pe['current']:.1f}**, {_vs_median(pe['discount'])} its median of {pe['median']:.1f}",
-            f"{second['label']} **{second['current']:.2f}**, {_vs_median(second['discount'])} its median "
-            f"of {second['median']:.2f}",
-            f"Growth a year: revenue **{_pct(growth['revenue_5y'])}**, earnings **{_pct(growth['earnings_5y'])}** "
-            f"(latest {_pct(growth['earnings_ttm'])})",
-        ]
-        quality_bits = [f"ROE {_pct(quality.get('roe'), signed=False)}"]
-        if d.get("basis") != "P/B" and quality.get("debt_to_equity") is not None:
-            quality_bits.append(f"debt {quality['debt_to_equity']:.2f}x equity")
-        if d.get("basis") != "P/B" and quality.get("cash_conversion") is not None:
-            quality_bits.append(f"cash flow {quality['cash_conversion']:.0f}% of profit")
-        lines.append("Quality: " + ", ".join(quality_bits))
-        lines.append(
-            f"Back at its mean valuation: about **{ui.idr(signal['target_price'])}** "
-            f"({_pct(upside['to_mean'])} from {ui.idr(signal['entry_price'])})"
-        )
-        st.markdown("  \n".join(lines))
-        st.caption(f"Latest statement {ui.day(signal['key_date'])} {pd.Timestamp(signal['key_date']).year}. "
-                   f"Exit when the discount closes or growth turns negative.")
+    score = d["scores"]["score"]
+    ring = f'<div class="hv-ring" style="--p:{score:.0f}" title="Score out of 100"><span>{score:.0f}</span></div>'
+    chips = [ui.chip(d.get("sector") or "Unknown sector", "brand", "domain"),
+             ui.chip(f"ROE {_pct(quality.get('roe'), signed=False)}", "", "verified")]
+    if d.get("basis") != "P/B" and quality.get("debt_to_equity") is not None:
+        chips.append(ui.chip(f"Debt {quality['debt_to_equity']:.2f}x equity", "", "account_balance"))
+    if d.get("basis") != "P/B" and quality.get("cash_conversion") is not None:
+        chips.append(ui.chip(f"Cash flow {quality['cash_conversion']:.0f}% of profit", "", "water_drop"))
+    tone = lambda v: "" if v is None or pd.isna(v) else ("up" if v > 0 else "down")
+    parts = [
+        ui.card_head(signal["symbol"], d.get("company"), ring, rank=d.get("rank"), icon_name="trending_up"),
+        f'<div class="hv-chips">{"".join(chips)}</div>',
+        '<div class="hv-meters">' + _meter("P/E", pe["current"], pe["median"], pe["discount"], 1)
+        + _meter(second["label"], second["current"], second["median"], second["discount"], 2) + "</div>",
+        ui.cells([
+            ("Revenue a year", _pct(growth["revenue_5y"]), "5-year growth", tone(growth["revenue_5y"])),
+            ("Earnings a year", _pct(growth["earnings_5y"]), "5-year growth", tone(growth["earnings_5y"])),
+            ("Latest earnings", _pct(growth["earnings_ttm"]), "trailing 12 months", tone(growth["earnings_ttm"])),
+        ]),
+        ui.strip(
+            f"Back at its mean valuation: about <b>{ui.esc(ui.idr(signal['target_price']))}</b> "
+            f"({_pct(upside['to_mean'])} from {ui.esc(ui.idr(signal['entry_price']))})", icon_name="flag",
+        ),
+        ui.foot(f"Latest statement {ui.esc(ui.day(signal['key_date']))} {pd.Timestamp(signal['key_date']).year}. "
+                "Exit when the discount closes or growth turns negative."),
+    ]
+    with ui.card(signal["symbol"]):
+        ui.render("".join(parts))
         with st.container(horizontal=True):
             if can_track and st.button("Track this position", key=f"track_{signal['symbol']}", type="primary",
                                        icon=":material/bookmark_add:"):
@@ -489,9 +500,7 @@ def render_today(access: bool) -> None:
     if run is None:
         st.info("Candidates have not been published yet. The first update arrives after the next market close.")
         return
-    ui.status_line(run)
-    if published["stale"]:
-        st.warning("These candidates missed at least one nightly update. They may be out of date.")
+    ui.status_line(run, published["stale"])
 
     stats = run.get("stats") or {}
     record = ((published["setups"].get("global") or {}).get("holdout")) or {}
@@ -509,21 +518,21 @@ def render_today(access: bool) -> None:
             metrics.metric("Your long term positions", "–")
     line = backtest_line(record)
     if line:
-        st.markdown(line)
+        ui.render(ui.strip(ui.bold(line), icon_name="insights"))
 
     if signals.empty:
-        st.info("No company passes every rule of the screen today.", icon=":material/info:")
+        ui.empty_state("No company passes every rule of the screen today",
+                       "The screen runs again after the next close.", "filter_alt_off")
     elif not access:
         first = signals.sort_values("detail", key=lambda d: d.map(lambda x: x.get("rank") or 0)).iloc[0]
-        st.subheader("Top candidate")
+        ui.section("Top candidate")
         render_candidate_card(first, can_track=False)
         others = [s for s in candidates_table(signals)["Symbol"] if s != first["symbol"]]
         if others:
-            st.markdown("Also today: " + ", ".join(ui.short(s) for s in others))
-            ui.unlock_prompt(len(others))
+            ui.unlock_prompt(others, noun="candidate")
     else:
         table = candidates_table(signals)
-        st.subheader("Candidates")
+        ui.section("Candidates", len(table), "Filter the table, then select a row to open its card")
         filters = st.container(horizontal=True)
         sectors = filters.multiselect("Sector", sorted(table["Sector"].unique()), placeholder="All sectors")
         max_pe = filters.number_input("Maximum P/E", min_value=1.0, value=float(np.ceil(table["P/E"].max())),
@@ -599,9 +608,11 @@ def render_evidence(access: bool) -> None:
     if not match.empty:
         detail = match.iloc[0]["detail"]
         score = detail["scores"]["score"]
-        st.caption(f"Rank {detail.get('rank')} of {len(signals)} in the latest screen.")
+        ui.render(ui.strip(f"Rank <b>{detail.get('rank')}</b> of {len(signals)} in the latest screen.",
+                           icon_name="military_tech"))
     elif published and published["run"]:
-        st.caption("Not among the latest screen's candidates. The Lab shows which rules it fails.")
+        ui.render(ui.strip("Not among the latest screen's candidates. The Lab shows which rules it fails.",
+                           "plain", "info"))
     history_years = int(((published or {}).get("setups", {}).get("global") or {}).get("params", {}).get(
         "history_years", pos.DEFAULT_FILTERS["history_years"]))
     render_detail(stock, universe.loc[stock], history_years, score)

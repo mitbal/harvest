@@ -1,4 +1,6 @@
 """Today, Evidence and Lab views of the Long Term page, per access tier."""
+import html
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -112,9 +114,16 @@ def run_page(monkeypatch):
         item.stop()
 
 
+def _hero(app) -> str:
+    return next(e.proto.body for e in app.get("html") if "hv-hero" in e.proto.body)
+
+
 def _texts(app) -> str:
     parts = [e.value for e in app.markdown] + [e.value for e in app.caption] + [e.value for e in app.subheader]
     parts += [e.value for e in app.title] + [e.value for e in app.info] + [e.value for e in app.warning]
+    # The trading cards are st.html; compare their visible text with tags and spacing collapsed.
+    parts += [" ".join(html.unescape(re.sub(r"<style.*?</style>|<span class=\"icon\".*?</span>|<[^>]+>", " ", e.proto.body, flags=re.S)).split())
+              for e in app.get("html")]
     return "\n".join(str(p) for p in parts)
 
 
@@ -133,9 +142,9 @@ def test_today_premium_lists_candidates_with_a_card(run_page):
     app = run_page("premium")
 
     assert not app.exception
-    assert app.title[0].value == "Growth at a Discount"
+    assert "<h1>Growth at a Discount</h1>" in _hero(app)
     text = _texts(app)
-    assert "the top 10 each April returned **+12.3% a year** against +4.1% for the JKSE, ahead in 2 of 2 years" in text
+    assert "the top 10 each April returned +12.3% a year against +4.1% for the JKSE, ahead in 2 of 2 years" in text
     assert "3 of 3 candidates" in text
     assert [m.label for m in app.metric][:2] == ["Candidates", "Companies analyzed"]
     assert app.metric[1].value == "187 / 200"

@@ -48,7 +48,10 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='Dividend Play - Panen Dividen')
 hp.enable_chart_theme()
-st.title('Dividend Play')
+ui.inject_styles()
+ui.hero('Trading · Around the ex-date', 'Dividend Play',
+        'Buy a dividend payer while it is cheap ahead of its ex-date, then sell into the run-up. '
+        'Every past ex-date is one trade, and the latest ones are held out.', 'payments')
 # Initial values go through session state rather than `default`, because buttons below
 # also set them; a ?view= or ?stock= in the URL still wins.
 if 'view' not in st.session_state:
@@ -512,35 +515,39 @@ def _track(signal: pd.Series) -> None:
 def render_signal_card(signal: pd.Series, can_track: bool = False) -> None:
     detail = signal['detail']
     estimated = bool(signal['key_date_estimated'])
-    with st.container(border=True):
-        st.markdown(f"**{ui.short(signal['symbol'])}** · {detail.get('company') or signal['symbol']}")
-        facts = []
-        if detail.get('yield') is not None:
-            facts.append(f"yield {detail['yield']:.1f}%")
-        if detail.get('next_dividend') is not None:
-            facts.append(f"next dividend {ui.idr(detail['next_dividend'])}")
-        if facts:
-            line = ' · '.join(facts)
-            st.caption(line[0].upper() + line[1:])
-        if estimated:
-            st.badge('Cum date estimated', icon=':material/event:', color='orange')
-        else:
-            st.badge('Cum date announced', icon=':material/event_available:', color='green')
-        st.markdown(
-            f"Entry at or below **{ui.idr(ui.tick_floor(signal['entry_price']))}**  \n"
-            f"Sell by **{ui.day(signal['exit_by'], estimated)}**  \n"
-            f"Cum date **{ui.day(signal['key_date'], estimated)}**"
-        )
-        window = detail.get('window') or {}
-        if window.get('of'):
-            st.progress(
-                min(window['day'] / window['of'], 1.0),
-                text=f"Day {window['day']} of {window['of']} in window · {window['sessions_left']} sessions left",
-            )
-        dip = detail.get('dip') or {}
-        if dip.get('rule') and dip.get('active') and dip.get('vs_ma_pct') is not None:
-            st.caption(f"Dip rule active, {abs(dip['vs_ma_pct']):.1f}% below its {dip['ma_days']}-day average")
-        st.caption(f"{detail.get('setup', '')}; {_holdout_text(detail.get('holdout') or {})}")
+    holdout = detail.get('holdout') or {}
+    avg = holdout.get('avg_return')
+    badge = ui.chip(f'{avg:+.1f}% avg', 'up lg' if avg > 0 else 'down lg', 'trending_up') if avg is not None else ''
+    chips = []
+    if detail.get('yield') is not None:
+        chips.append(ui.chip(f"Yield {detail['yield']:.1f}%", 'brand', 'percent'))
+    if detail.get('next_dividend') is not None:
+        chips.append(ui.chip(f"Next dividend {ui.idr(detail['next_dividend'])}", 'brand', 'paid'))
+    chips.append(ui.chip('Cum date estimated', 'warn', 'event') if estimated
+                 else ui.chip('Cum date announced', 'up', 'event_available'))
+    parts = [
+        ui.card_head(signal['symbol'], detail.get('company'), badge, icon_name='payments'),
+        f'<div class="hv-chips">{"".join(chips)}</div>',
+        ui.cells([
+            ('Entry at or below', ui.esc(ui.idr(ui.tick_floor(signal['entry_price']))), 'limit price'),
+            ('Cum date', ui.esc(ui.day(signal['key_date'], estimated)), 'buy by its close'),
+            ('Sell by', ui.esc(ui.day(signal['exit_by'], estimated)), 'at the latest'),
+        ]),
+    ]
+    window = detail.get('window') or {}
+    if window.get('of'):
+        parts.append(ui.progress(
+            window['day'] / window['of'], f"Day <b>{window['day']}</b> of {window['of']} in the entry window",
+            f"{window['sessions_left']} sessions left",
+        ))
+    dip = detail.get('dip') or {}
+    if dip.get('rule') and dip.get('active') and dip.get('vs_ma_pct') is not None:
+        parts.append(ui.strip(f"Dip rule active, {abs(dip['vs_ma_pct']):.1f}% below its {dip['ma_days']}-day average",
+                              icon_name='south_east'))
+    parts.append(ui.foot(ui.winbar(holdout.get('wins'), holdout.get('trades'))
+                         + ui.esc(f"{detail.get('setup', '')}; {_holdout_text(holdout)}")))
+    with ui.card(signal['symbol']):
+        ui.render(''.join(parts))
         with st.container(horizontal=True):
             if can_track and st.button(
                 'Track this trade', key=f"track_{signal['symbol']}", type='primary', icon=':material/bookmark_add:',
@@ -595,9 +602,7 @@ def render_today(access: bool) -> None:
     if run is None:
         st.info('Signals have not been published yet. The first update arrives after the next market close.')
         return
-    ui.status_line(run)
-    if published['stale']:
-        st.warning("These signals missed at least one nightly update. They may be out of date.")
+    ui.status_line(run, published['stale'])
 
     actionable = signals[signals['status'] == 'actionable'].copy()
     actionable['expected'] = actionable['detail'].map(lambda d: (d.get('holdout') or {}).get('avg_return') or 0)
@@ -626,9 +631,9 @@ def render_today(access: bool) -> None:
     else:
         metrics.metric('Your positions', '–', help='Log in to track your trades')
 
-    st.subheader('Entry window open now')
+    ui.section('Entry window open now', len(actionable), 'Best out-of-sample record first')
     if actionable.empty:
-        st.info('No entry window is open today.')
+        ui.empty_state('No entry window is open today', 'New windows open as ex-dates approach.', 'event_busy')
     else:
         shown = actionable if access else actionable.head(1)
         for start in range(0, len(shown), 2):
@@ -636,14 +641,17 @@ def render_today(access: bool) -> None:
                 with column:
                     render_signal_card(signal, can_track=access)
         if not access and len(actionable) > 1:
-            st.markdown('Also open: ' + ', '.join(ui.short(s) for s in actionable['symbol'].iloc[1:]))
-            ui.unlock_prompt(len(actionable) - 1)
+            ui.unlock_prompt(list(actionable['symbol'].iloc[1:]), noun='entry window', lead='Also open')
 
-    st.subheader('Opening soon')
+    ui.section('Opening soon', len(soon), 'Next 45 days')
     if soon.empty:
-        st.info('No entry window opens in the next 45 days.')
+        ui.empty_state('Nothing opens in the next 45 days', 'Check back after the next ex-date announcements.',
+                       'event_upcoming')
     elif not access:
-        st.markdown(', '.join(ui.short(s) for s in soon['symbol']))
+        ui.tickers(soon['symbol'], {
+            s: f"opens {ui.day(ui.first_session(d['window_start']), est)}"
+            for s, d, est in zip(soon['symbol'], soon['detail'], soon['key_date_estimated'])
+        })
     else:
         rows = pd.DataFrame({
             'Stock': soon['symbol'].map(ui.short),
@@ -692,18 +700,18 @@ def render_evidence(access: bool) -> None:
     scope = stock if stock in setups else ('global' if 'global' in setups else None)
     if scope is None:
         setup = BASELINE_SETUP
-        st.markdown(f'**{dp.format_setup(setup)}**')
-        st.caption('No setup has been published yet, so this shows the baseline setup.')
+        ui.setup_banner(dp.format_setup(setup), 'No setup has been published yet, so this shows the baseline setup.',
+                        'Baseline setup')
     else:
         setup = setups[scope]['params']
         holdout = setups[scope]['holdout']
-        st.markdown(f'**{dp.format_setup(setup)}**')
         source = 'Setup chosen for this stock' if scope == stock else 'Shortlist-wide setup'
         trades = holdout.get('trades') or 0
         wins = round((holdout.get('win_rate') or 0) * trades / 100)
-        st.caption(
+        ui.setup_banner(
+            dp.format_setup(setup),
             f"{source}. Holdout {wins} of {trades} trades won, "
-            f"{(holdout.get('avg_trade') or 0):+.1f}% average after costs."
+            f"{(holdout.get('avg_trade') or 0):+.1f}% average after costs.",
         )
 
     start = pd.Timestamp(dp.DEFAULT_START)

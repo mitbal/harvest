@@ -1,5 +1,7 @@
 """Today, Evidence and Lab views of the Swing Trading page, per access tier."""
+import html
 import pickle
+import re
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -130,9 +132,16 @@ def run_page(monkeypatch):
         item.stop()
 
 
+def _hero(app) -> str:
+    return next(e.proto.body for e in app.get("html") if "hv-hero" in e.proto.body)
+
+
 def _texts(app) -> str:
     parts = [e.value for e in app.markdown] + [e.value for e in app.caption] + [e.value for e in app.subheader]
     parts += [e.value for e in app.title] + [e.value for e in app.info] + [e.value for e in app.warning]
+    # The trading cards are st.html; compare their visible text with tags and spacing collapsed.
+    parts += [" ".join(html.unescape(re.sub(r"<style.*?</style>|<span class=\"icon\".*?</span>|<[^>]+>", " ", e.proto.body, flags=re.S)).split())
+              for e in app.get("html")]
     return "\n".join(str(p) for p in parts)
 
 
@@ -144,10 +153,10 @@ def test_today_premium_shows_cards_with_levels(run_page):
     app = run_page("premium")
 
     assert not app.exception
-    assert app.title[0].value == "Swing Trading"
+    assert "<h1>Swing Trading</h1>" in _hero(app)
     assert [b.key for b in _cards(app)] == ["evidence_BBRI.JK", "evidence_TLKM.JK"]
     text = _texts(app)
-    assert "Stop **−2%** (about Rp 980) · target **+5%** (about Rp 1,050)" in text
+    assert "Stop −2% about Rp 980 Target +5% about Rp 1,050" in text
     assert "Next session limits Rp 850 to Rp 1,250" in text
     assert "walk-forward: 44 of 80 won, +0.90% average after costs" in text
     assert "Set your capital and risk per trade in My Trades" in text
@@ -159,7 +168,7 @@ def test_today_sizes_positions_from_settings(run_page):
     app = run_page("premium", settings={"capital_idr": 100_000_000, "risk_pct": 1.0})
 
     # Rp 1,000,000 at risk / (Rp 20 x 100 shares) = 500 lots.
-    assert "Size **500 lots** (about Rp 50,000,000), Rp 1,000,000 at risk" in _texts(app)
+    assert "Size 500 lots (about Rp 50,000,000), Rp 1,000,000 at risk" in _texts(app)
 
 
 def test_today_explains_an_empty_day(run_page):

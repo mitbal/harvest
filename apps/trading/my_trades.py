@@ -7,19 +7,22 @@ import pandas as pd
 import streamlit as st
 
 import harvest.trading_store as store
+import harvest.trading_ui as ui
 from harvest.premium import current_email, get_connection, require_premium
 
 
 TOOL_LABELS = {'dividend_play': 'Dividend Play', 'swing': 'Swing Trading', 'long_term': 'Long Term'}
+TOOL_ICONS = {'dividend_play': 'payments', 'swing': 'bolt', 'long_term': 'trending_up'}
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='My Trades - Panen Dividen')
-st.title('My trades')
+ui.inject_styles()
+ui.hero('Trading · Journal', 'My trades',
+        'Track the trades you take from the trading tools, count down to each sell-by date and get '
+        'Telegram reminders before you need to sell.', 'menu_book')
 
 email = current_email()
 if email is None:
-    st.markdown('Track the trades you take from the trading tools, count down to each sell-by date and get '
-                'Telegram reminders before you need to sell.')
     st.button('Log in with Google', icon=':material/login:', type='primary', on_click=st.login, args=('google',))
     st.stop()
 require_premium()
@@ -85,45 +88,75 @@ except Exception:
 open_positions = positions[positions['closed_at'].isna()]
 closed_positions = positions[positions['closed_at'].notna()]
 
-# ── Open positions ─────────────────────────────────────────────────────────── #
-st.subheader('Open positions')
-if open_positions.empty:
-    st.info('No open positions. Use "Track this trade" on a trading card to add one.')
-for _, position in open_positions.iterrows():
-    with st.container(border=True):
-        st.markdown(
-            f"**{_short(position['symbol'])}** · {TOOL_LABELS.get(position['tool'], position['tool'])} · "
-            f"{int(position['lots'])} lots at {_idr(position['entry_price'])}, bought {_day(position['entry_date'])}"
-        )
-        rule = position['exit_rule'] or {}
-        countdown = _countdown(position['exit_by'])
-        if rule.get('kind') == 'valuation':
-            # Long Term positions have no sell-by date; the nightly scan watches the exit conditions.
-            st.caption(f"Exit when P/E reaches its mean of {rule['pe_mean']:.1f} (it was {rule['pe_at_entry']:.1f}) "
-                       'or a new quarter turns growth negative')
-        elif countdown in ('Sell today', 'Sell-by date has passed'):
-            st.warning(countdown, icon=':material/alarm:')
-        else:
-            st.caption(countdown)
-        if rule.get('stop_price') or rule.get('target_price'):
-            levels = [f"stop {_idr(rule['stop_price'])}" if rule.get('stop_price') else None,
-                      f"target {_idr(rule['target_price'])}" if rule.get('target_price') else None]
-            line = ' · '.join(filter(None, levels))
-            st.caption(line[0].upper() + line[1:])
-        if rule.get('setup_text'):
-            cum = rule.get('key_date')
-            st.caption(f"{rule['setup_text']}" + (f"; cum date {'~' if rule.get('key_date_estimated') else ''}"
-                                                  f"{_day(cum)}" if cum else ''))
+def _holding(position: pd.Series) -> str:
+    """Progress through the holding period, in IDX sessions, with the countdown as its legend."""
+    countdown = _countdown(position['exit_by'])
+    total = len(store.idx_trading_days(position['entry_date'], position['exit_by']))
+    left = store.sessions_until(position['exit_by'])
+    tone = 'down' if left == 0 else ('warn' if left <= 2 else '')
+    return ui.progress(1 - left / total if total else 1.0, ui.esc(countdown),
+                       f'{total - left} of {total} sessions held' if total else '', tone)
+
+
+def render_position(position: pd.Series) -> None:
+    rule = position['exit_rule'] or {}
+    tool = position['tool']
+    countdown = _countdown(position['exit_by'])
+    urgent = countdown in ('Sell today', 'Sell-by date has passed')
+    lots, entry = int(position['lots']), float(position['entry_price'])
+    left = store.sessions_until(position['exit_by'])
+    if urgent:
+        status = ui.chip(countdown, 'warn lg' if countdown == 'Sell today' else 'down lg', 'alarm')
+    elif rule.get('kind') == 'valuation':
+        status = ui.chip('Watching valuation', 'brand lg', 'visibility')
+    elif position['exit_by'] is not None and not pd.isna(position['exit_by']):
+        status = ui.chip(f'{left} sessions left', 'warn lg' if left <= 2 else 'brand lg', 'timer')
+    else:
+        status = ''
+    tiles = [('Bought at', ui.esc(_idr(entry)), 'per share'),
+             ('Size', f'{lots} lots', ui.esc(f'about {_idr(entry * lots * 100)}'))]
+    if rule.get('stop_price'):
+        tiles.append(('Stop', ui.esc(_idr(rule['stop_price'])), f"{(rule['stop_price'] / entry - 1) * 100:+.1f}%", 'down'))
+    if rule.get('target_price'):
+        tiles.append(('Target', ui.esc(_idr(rule['target_price'])), f"{(rule['target_price'] / entry - 1) * 100:+.1f}%", 'up'))
+    parts = [
+        ui.card_head(position['symbol'], f"{TOOL_LABELS.get(tool, tool)} · bought {_day(position['entry_date'])}", status,
+                     icon_name=TOOL_ICONS.get(tool, 'candlestick_chart')),
+        ui.cells(tiles),
+    ]
+    if rule.get('kind') == 'valuation':
+        # Long Term positions have no sell-by date; the nightly scan watches the exit conditions.
+        parts.append(ui.strip(f"Exit when P/E reaches its mean of {rule['pe_mean']:.1f} (it was "
+                              f"{rule['pe_at_entry']:.1f}) or a new quarter turns growth negative", icon_name='visibility'))
+    elif position['exit_by'] is not None and not pd.isna(position['exit_by']):
+        parts.append(_holding(position))
+    if rule.get('setup_text'):
+        cum = rule.get('key_date')
+        parts.append(ui.foot(ui.esc(rule['setup_text'] + (
+            f"; cum date {'~' if rule.get('key_date_estimated') else ''}{_day(cum)}" if cum else ''))))
+    with ui.card(f"pos-{position['id']}", urgent=urgent):
+        ui.render(''.join(parts))
         with st.container(horizontal=True):
             if st.button('Close', key=f"close_{position['id']}", icon=':material/sell:'):
                 close_dialog(position)
             if st.button('Remove', key=f"remove_{position['id']}", type='tertiary', icon=':material/delete:'):
                 remove_dialog(position)
 
+
+# ── Open positions ─────────────────────────────────────────────────────────── #
+ui.section('Open positions', len(open_positions), 'Soonest sell-by first')
+if open_positions.empty:
+    ui.empty_state('No open positions', 'Use "Track this trade" on a trading card to add one.', 'bookmark_add')
+ordered = open_positions.assign(_by=pd.to_datetime(open_positions['exit_by'])).sort_values('_by', na_position='last')
+for start in range(0, len(ordered), 2):
+    for column, (_, position) in zip(st.columns(2), ordered.iloc[start:start + 2].iterrows()):
+        with column:
+            render_position(position)
+
 # ── Closed positions ───────────────────────────────────────────────────────── #
-st.subheader('Closed positions')
+ui.section('Closed positions', len(closed_positions))
 if closed_positions.empty:
-    st.info('Closed trades and their results appear here.')
+    ui.empty_state('No closed trades yet', 'Closed trades and their results appear here.', 'history')
 else:
     results = pd.DataFrame([
         store.position_result(position, settings['buy_fee_pct'], settings['sell_fee_pct'])
@@ -134,7 +167,9 @@ else:
     summary = st.container(horizontal=True)
     summary.metric('Closed trades', len(closed))
     summary.metric('Won', f'{wins} of {len(closed)}')
-    summary.metric('Total result', _idr(closed['profit'].sum()), help='After your fees, including dividends received')
+    total, cost = closed['profit'].sum(), (closed['entry_price'] * closed['lots'] * 100).sum()
+    summary.metric('Total result', _idr(total), help='After your fees, including dividends received',
+                   delta=f'{total / cost * 100:+.1f}% on cost' if cost else None)
     table = pd.DataFrame({
         'Stock': closed['symbol'].map(_short),
         'Bought': pd.to_datetime(closed['entry_date']),
@@ -158,7 +193,7 @@ else:
     )
 
 # ── Settings ───────────────────────────────────────────────────────────────── #
-st.subheader('Settings')
+ui.section('Settings')
 with st.form('trade_settings'):
     fee_cols = st.columns(2)
     buy_fee = fee_cols[0].number_input('Buy fee %', min_value=0.0, max_value=5.0, step=0.01,
@@ -201,7 +236,8 @@ def _bot_username() -> str | None:
 
 bot = _bot_username()
 with st.container(border=True):
-    st.markdown('**Telegram alerts**')
+    ui.render(f'<div class="hv-section" style="margin:0">{ui.icon("send")}<h3 style="font-size:1.05rem">'
+              'Telegram alerts</h3></div>')
     if settings.get('telegram_chat_id'):
         st.markdown('Linked. Alerts and sell-by reminders arrive in your Telegram chat.')
         if st.button('Unlink Telegram', icon=':material/link_off:'):
