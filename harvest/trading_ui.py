@@ -66,8 +66,11 @@ def status_line(run: dict, stale: bool = False) -> None:
     render(f'<span class="hv-status{" stale" if stale else ""}"><span class="dot"></span>{esc(text)}</span>')
 
 
-def unlock_prompt(hidden: list[str], noun: str = 'setup', lead: str = 'Also today') -> None:
-    """Dark call-to-action card naming what is locked, with the unlock button inside."""
+def unlock_prompt(hidden: list[str], noun: str = 'setup', lead: str = 'Also today', page: str | None = None) -> None:
+    """Dark call-to-action card naming what is locked, with the unlock button inside.
+
+    The button opens this page's Lab view (its paywall), or ``page``'s Lab view when given.
+    """
     count = len(hidden)
     with st.container(key='hv-unlock'):
         render(
@@ -77,6 +80,10 @@ def unlock_prompt(hidden: list[str], noun: str = 'setup', lead: str = 'Also toda
             f'<div class="blur"><span>{esc(lead)}:</span>'
             + ''.join(f'<span>{esc(short(s))}</span>' for s in hidden) + '</div></div></div>'
         )
+        if page is not None:
+            if st.button('Unlock the trading lab', type='primary', icon=':material/lock_open:', key='today_unlock'):
+                st.switch_page(page, query_params={'view': VIEW_LAB})
+            return
         st.button(
             'Unlock the trading lab', type='primary', icon=':material/lock_open:',
             on_click=open_view, args=(VIEW_LAB,), key='today_unlock',
@@ -114,7 +121,8 @@ STYLES = """
   -webkit-mask-image: linear-gradient(90deg, transparent 35%, #000 100%); }
 .hv-hero .eyebrow { font-size: .74rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
   color: #a7f3d0; display: flex; gap: .4rem; align-items: center; }
-.hv-hero h1 { color: #fff; font-size: 2.15rem; font-weight: 750; letter-spacing: -.02em;
+/* !important beats main.py's page-title colour, which targets every h1. */
+.hv-hero h1 { color: #fff !important; font-size: 2.15rem; font-weight: 750; letter-spacing: -.02em;
   margin: .3rem 0 .35rem; padding: 0; line-height: 1.15; }
 .hv-hero p { margin: 0; max-width: 62ch; color: #d1fae5; font-size: .98rem; }
 
@@ -132,9 +140,16 @@ STYLES = """
 /* Section header */
 .hv-section { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; margin: .9rem 0 .1rem; }
 .hv-section h3 { white-space: nowrap; font-size: 1.3rem; font-weight: 700; margin: 0; padding: 0; color: var(--hv-ink); }
-.hv-section .count { font-size: .78rem; font-weight: 700; color: var(--hv-teal); background: var(--hv-mint);
+.hv-section .count, .hv-tool .count { font-size: .78rem; font-weight: 700; color: var(--hv-teal); background: var(--hv-mint);
   padding: .1rem .55rem; border-radius: 999px; }
 .hv-section .note { font-size: .85rem; color: var(--hv-muted); }
+
+/* Tool group header (Trading Today hub) */
+.hv-tool { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; margin: .8rem 0 .1rem; }
+.hv-tool .name { display: inline-flex; align-items: center; gap: .4rem; font-weight: 750; font-size: 1.05rem; }
+.hv-tool .name .icon { color: var(--hv-teal); }
+.hv-tool .note { font-size: .84rem; color: var(--hv-muted); }
+.hv-tool .hv-status { margin-left: auto; padding: .15rem .65rem .15rem .55rem; font-size: .76rem; }
 
 /* Metric tiles (native st.metric) */
 [data-testid="stMetric"] { background: var(--hv-card); border: 1px solid var(--hv-line); border-radius: 14px;

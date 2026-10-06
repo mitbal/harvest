@@ -450,7 +450,7 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
 
 ## Phase 5: Hub and track record
 
-- [ ] `apps/trading/today.py`: Act now (signals from all tools), Your positions, Coming up.
+- [x] `apps/trading/today.py`: Act now (signals from all tools), Your positions, Coming up.
       Make it the first page in the Trading section in `main.py`; lock icons in page titles for
       non-supporters.
 - [ ] Track record page from historical `trading_signals` and their realised outcomes.
@@ -777,3 +777,25 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     `trading_optimize --tool long_term` (weekly; about 7 minutes); rotate the FMP key; confirm the
     quality thresholds; MSIN shows a 686% upside to mean (the original model's mean reversion on a
     short P/S history), which may need a cap.
+- 2026-10-06: Phase 5, Today hub built on branch `premium/phase-5-hub`.
+  - `apps/trading/today.py` ("Trading Today", URL `/trading`), first page in the Trading section.
+    Reads only the store: each tool's latest scan run and that run's own signals (so a night with
+    no signals doesn't show the night before; the tool pages still read the latest day that has
+    signals), plus the user's open positions.
+  - Act now: one group per tool with its freshness pill. Cards are short versions of the tools'
+    Today cards in the same order (Dividend Play and Swing by holdout average, Long Term by rank),
+    up to 4 / 4 / 3 per tool, then "See all N in <tool>". Buttons switch to the tool page, or to its
+    Evidence view with `?stock=` (the URL keeps the stock, unlike the in-page buttons). Track this
+    trade stays on the tool pages.
+  - Free tier: first card per tool, one unlock prompt naming the rest that opens the Dividend Play
+    paywall (`ui.unlock_prompt(page=...)`). Lock icons: `main.py` shows 🔒 instead of the icon for
+    the three tool pages and My Trades when `has_access()` is false; the hub itself is open.
+  - Your positions: table with the session countdown, warning strips for "Sell today" and passed
+    sell-by dates, link to My Trades; logged-out visitors get a login prompt.
+  - Coming up (45 days): Dividend Play windows opening, swing near-setups at the next session, and the
+    user's own sell-by and cum dates.
+  - Fixed in the design kit: the hero title was invisible on every trading page because `main.py`'s
+    `h1 { color: ... !important }` beat `.hv-hero h1`.
+  - Tests: 7 AppTests (`apptests/test_trading_today.py`): full, free and logged-out tiers, empty
+    store, outage, positions and coming up, See evidence navigation. Verified in the preview against
+    the test store (desktop, mobile, free tier with the gate on, unlock click).

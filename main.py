@@ -3,6 +3,7 @@ import logging
 
 import streamlit as st
 
+from harvest.premium import has_access
 from harvest.utils import setup_logging
 
 
@@ -35,11 +36,14 @@ page_best_timing = st.Page('apps/calendar/best_timing.py', title='Best Timing', 
 page_assistant = st.Page('apps/assistant/assistant.py', title='Financial Assistant', icon='🧑‍🏫')
 page_article = st.Page('apps/article/article.py', title='Analysis Article', icon='📰')
 page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simulator', icon='🎮')
-page_backtester = st.Page('apps/trading/backtester.py', title='Long Term Position Trading', icon='📈')
+# Supporter-only trading pages show a lock instead of their icon to everyone else.
+_lock = (lambda icon: icon) if has_access() else (lambda icon: '🔒')
+page_trading_today = st.Page('apps/trading/today.py', title='Trading Today', icon='☀️', url_path='trading')
+page_backtester = st.Page('apps/trading/backtester.py', title='Long Term Position Trading', icon=_lock('📈'))
 # Keeps the old URL so existing links and bookmarks still work.
-page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Short Term Swing Trading', icon='⚡', url_path='day_trading')
-page_dividend_play = st.Page('apps/trading/dividend_play.py', title='Dividend Play', icon='🎣')
-page_my_trades = st.Page('apps/trading/my_trades.py', title='My Trades', icon='📒')
+page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Short Term Swing Trading', icon=_lock('⚡'), url_path='day_trading')
+page_dividend_play = st.Page('apps/trading/dividend_play.py', title='Dividend Play', icon=_lock('🎣'))
+page_my_trades = st.Page('apps/trading/my_trades.py', title='My Trades', icon=_lock('📒'))
 
 
 pages = st.navigation(
@@ -60,6 +64,7 @@ pages = st.navigation(
                 page_comparison,
             ],
         'Trading': [
+                page_trading_today,
                 page_backtester,
                 page_swing_trading,
                 page_dividend_play,
