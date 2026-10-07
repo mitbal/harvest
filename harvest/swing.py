@@ -1166,8 +1166,11 @@ def evaluate_stock_strategies(
         validation = trade_metrics(trades[in_holdout], bars) or _EMPTY_METRICS
         if trades_out is not None:
             trades_out.extend(
-                {'symbol': ticker, 'combo': combo_id, 'entry_date': entry, 'return_pct': value}
-                for entry, value in zip(trades['entry_date'], trades['return_pct'])
+                {'symbol': ticker, 'combo': combo_id, 'entry_date': entry, 'exit_date': exit_date,
+                 'entry_price': price, 'return_pct': value}
+                for entry, exit_date, price, value in zip(
+                    trades['entry_date'], trades['exit_date'], trades['entry_price'], trades['return_pct'],
+                )
             )
 
         rows.append({
@@ -1266,7 +1269,8 @@ def walk_forward(
     the best pooled t-stat on the previous ``train_years`` (across all stocks)
     is chosen and its trades in the next fold are recorded. The record is the
     honest estimate of the published setup's edge; ``final_combo`` is the
-    choice on the latest ``train_years``, the one to publish.
+    choice on the latest ``train_years``, the one to publish. ``trades`` are the
+    record's trades, for the portfolio simulation.
     """
     trades = trades.copy()
     trades['entry_date'] = pd.to_datetime(trades['entry_date'])
@@ -1291,6 +1295,7 @@ def walk_forward(
     return {
         'folds': folds,
         'record': trade_stats(record['return_pct']),
+        'trades': record.reset_index(drop=True),
         'final_combo': _pick_combo(final, min_train_trades),
     }
 

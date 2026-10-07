@@ -223,7 +223,10 @@ def test_optimize_publishes_global_and_stock_setups():
     symbols = [f"S{i:02d}.JK" for i in range(25)]
     data = {s: _run_up_history(i) for i, s in enumerate(symbols)}
     a, b, c = _loaders(_universe(symbols), {s: d[1] for s, d in data.items()}, {s: d[0] for s, d in data.items()})
-    with a, b, c:
+    bars = {s: d[0].set_index("date").assign(volume=5_000_000) for s, d in data.items()}
+    jkse = pd.DataFrame({"close": 7000.0}, index=pd.bdate_range("2014-01-01", AS_OF))
+    with a, b, c, patch.object(trading_data, "load_ohlcv_histories", return_value=bars) as load_bars, \
+            patch.object(trading_data, "load_jkse_index", return_value=jkse):
         stats = trading_optimize.dividend_play(client, as_of=AS_OF, preset="Quick")
 
     setups = store.read_setups(client, "dividend_play")
@@ -238,6 +241,25 @@ def test_optimize_publishes_global_and_stock_setups():
     run = store.latest_run(client, "dividend_play", "optimize")
     assert run["stats"]["setups_searched"] == len(dp.build_setup_grid(**dp.SEARCH_PRESETS["Quick"]))
     assert setups["global"]["run_id"] == run["id"]
+    portfolio = run["stats"]["portfolio"]
+    assert portfolio["stats"]["start"] >= run["stats"]["holdout_from"]
+    assert portfolio["stats"]["trades_taken"] > 0
+    assert portfolio["settings"]["max_positions"] == 5
+    assert portfolio["stats"]["benchmark"]["total_return"] == 0.0
+    assert portfolio["curve"][0]["account"] == pytest.approx(100.0, abs=5.0)
+    assert set(load_bars.call_args.args[0]) <= set(symbols)
+
+
+def test_portfolio_failure_does_not_fail_the_optimize_run():
+    client = FakeSupabase()
+    symbols = [f"S{i:02d}.JK" for i in range(25)]
+    data = {s: _run_up_history(i) for i, s in enumerate(symbols)}
+    a, b, c = _loaders(_universe(symbols), {s: d[1] for s, d in data.items()}, {s: d[0] for s, d in data.items()})
+    with a, b, c, patch.object(trading_data, "load_ohlcv_histories", side_effect=OSError("R2 down")):
+        stats = trading_optimize.dividend_play(client, as_of=AS_OF, preset="Quick")
+
+    assert "R2 down" in stats["portfolio"]["error"]
+    assert "global" in store.read_setups(client, "dividend_play")
 
 
 def test_optimize_failure_keeps_published_setups():
@@ -368,6 +390,9 @@ def test_swing_optimize_publishes_a_walk_forward_winner():
     assert setups["global"]["holdout"]["method"] == "walk_forward"
     assert len(setups["global"]["holdout"]["folds"]) == 6
     assert set(setups["global"]["params"]) == set(sw.SETUP_KEYS)
+    portfolio = store.latest_run(client, "swing", "optimize")["stats"]["portfolio"]
+    assert portfolio["stats"]["trades_offered"] == stats["walk_forward"]["trades"]
+    assert portfolio["stats"]["trades_taken"] > 0
 
 
 def test_swing_optimize_publishes_nothing_without_an_edge():

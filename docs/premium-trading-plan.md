@@ -454,7 +454,7 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
       Make it the first page in the Trading section in `main.py`; lock icons in page titles for
       non-supporters.
 - [x] Track record page from historical `trading_signals` and their realised outcomes.
-- [ ] Portfolio simulation for Dividend Play and Swing: fixed capital, max open positions,
+- [x] Portfolio simulation for Dividend Play and Swing: fixed capital, max open positions,
       100-share lots, liquidity cap, equity curve vs JKSE.
 - [ ] Give the user real track-record numbers to replace placeholders in the promo animation.
 
@@ -827,3 +827,29 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     a rerun kept all 23 settled rows. Page checked in the preview against that store.
   - Open [ASK USER]: run the `trading_outcomes` part of `pipeline/premium_trading.sql`; schedule
     `python -m pipeline.trading_track --tool all` after the nightly scans.
+- 2026-10-07: Phase 5, portfolio simulation built on branch `premium/phase-5-portfolio-sim` (stacked on
+  the track record branch).
+  - `harvest/portfolio_sim.py` (`harvest/portfolio.py` is the portfolio analytics page's module):
+    Rp 100 juta, 5 equal slots (equity / 5, capped by cash), 100-share lots, at most 5% of the stock's
+    20-session average traded value, one position per stock. Entries before exits on a day (conservative),
+    exits book the trade's own after-cost return, open positions marked at the close. Stats: CAGR, total
+    return, worst fall, trades taken / offered, skips by reason, liquidity cuts, average positions and
+    invested share, the JKSE over the same period; weekly curve indexed to 100.
+  - Inputs are out-of-sample only. Dividend Play: the published global setup on every shortlist stock over
+    the held-out ex-dates (per-stock setups are left out, since they were picked on those same trades).
+    Swing: the walk-forward record's trades (`sw.walk_forward` now returns them; `trades_out` carries exit
+    date and entry price), computed even when no setup is published.
+  - Run weekly in `trading_optimize` and stored as `stats.portfolio` of the optimize run; a failure is
+    recorded there without failing the run. JKSE from FMP, optional.
+  - Track Record page: "Backtest as one account" section for Dividend Play and Swing (settings line,
+    account vs JKSE a year, worst fall, trades taken, growth-of-100 chart with hover, skip breakdown),
+    shown even before live results exist and labelled as out-of-sample backtest, not live.
+  - Tests: 7 engine tests, optimize job tests extended (stored simulation, failure isolation), walk-forward
+    trades, 3 more AppTests.
+  - Real-data check (R2 prices, local dividends to Feb 2025, 14 blue chips, the published setup's shape,
+    holdout from 31 Jan 2022): 39 of 59 trades taken (20 skipped with every slot full, none cut by
+    liquidity), +77.8% (+20.8% a year), worst fall -9.8%, 3.2 positions open on average, 2.5 s. Mechanics
+    only: the setup shape was chosen with hindsight, and the JKSE line needs FMP.
+  - Open [ASK USER]: confirm capital, slots and the 5% liquidity cap. `tests/apps/test_porto_overview.py`
+    fails at collection on this branch since commit 9813859 (`sector_event.selection.rows` on the test
+    stub), unrelated to the trading work.

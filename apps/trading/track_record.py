@@ -43,6 +43,12 @@ METHOD = {
         'against the JKSE price index over the same days. The growth-based exit is not replayed.'
     ),
 }
+SIMULATED = {
+    'dividend_play': 'the published shortlist-wide setup on every shortlist stock, over the held-out ex-dates '
+                     'the search never saw (stock-specific setups are left out because they were picked on '
+                     'those same trades)',
+    'swing': 'the walk-forward record: in each half year, the setup chosen on the three years before it',
+}
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='Track Record - Panen Dividen')
@@ -62,7 +68,12 @@ tool = TOOLS[label]
 @st.cache_data(ttl=10 * 60, show_spinner=False)
 def _load(tool: str) -> dict:
     client = get_connection()
-    return {'outcomes': store.read_outcomes(client, tool), 'run': store.latest_run(client, tool, 'track')}
+    return {
+        'outcomes': store.read_outcomes(client, tool),
+        'run': store.latest_run(client, tool, 'track'),
+        # The weekly search stores its portfolio simulation in the run stats.
+        'optimize': store.latest_run(client, tool, 'optimize') if tool in SIMULATED else None,
+    }
 
 
 def load(tool: str) -> dict | None:
@@ -232,22 +243,83 @@ def render_long_term(outcomes: pd.DataFrame, access: bool) -> None:
         st.caption(f"{hidden} open {'picks are' if hidden != 1 else 'pick is'} for supporters.")
 
 
+def growth_chart(curve: list[dict]) -> None:
+    """The account and the JKSE as growth of 100, one line each, with a shared hover rule."""
+    frame = pd.DataFrame(curve)
+    frame['date'] = pd.to_datetime(frame['date'])
+    series = {'account': 'Account', 'jkse': 'JKSE'}
+    long = frame.melt('date', [c for c in series if c in frame], var_name='Series', value_name='Value').dropna()
+    long['Series'] = long['Series'].map(series)
+    domain = [series[c] for c in series if c in frame]
+    hover = alt.selection_point(fields=['date'], nearest=True, on='pointerover', empty=False)
+    base = alt.Chart(long).encode(
+        x=alt.X('date:T', title=None),
+        y=alt.Y('Value:Q', title='Growth of 100', scale=alt.Scale(zero=False)),
+        color=alt.Color('Series:N', scale=alt.Scale(domain=domain, range=[cs.CHART_PRIMARY, cs.CHART_AMBER][:len(domain)]),
+                        # One series needs no legend: the axis title names it.
+                        legend=alt.Legend(title=None, orient='top') if len(domain) > 1 else None),
+    )
+    lines = base.mark_line(strokeWidth=2)
+    points = base.mark_point(size=60, filled=True).encode(
+        opacity=alt.condition(hover, alt.value(1), alt.value(0)),
+        tooltip=[alt.Tooltip('date:T', format='%-d %b %Y', title='Week of'), 'Series:N',
+                 alt.Tooltip('Value:Q', format='.1f')],
+    ).add_params(hover)
+    rule = alt.Chart(long).mark_rule(color=cs.CHART_GRID).encode(x='date:T').transform_filter(hover)
+    st.altair_chart((lines + rule + points).properties(height=280), width='stretch', theme=None)
+
+
+def render_simulation(tool: str, optimize_run: dict | None) -> None:
+    """The backtest's trades taken as one account with fixed capital, slots, lots and a liquidity cap."""
+    portfolio = ((optimize_run or {}).get('stats') or {}).get('portfolio')
+    ui.section('Backtest as one account', note='Out-of-sample trades, not live results')
+    if not portfolio or not portfolio.get('stats'):
+        st.caption('The portfolio simulation appears after the next weekly search.'
+                   if not (portfolio or {}).get('error') else 'The portfolio simulation failed in the last weekly search.')
+        return
+    settings, stats = portfolio['settings'], portfolio['stats']
+    ui.render(ui.strip(
+        f"Rp {settings['capital'] / 1e6:,.0f} juta, up to <b>{settings['max_positions']} positions</b> of equal size, "
+        f"{settings['lot_size']}-share lots, each at most {settings['liquidity_pct']:g}% of the stock's average "
+        f"daily trading. {ui.esc(ui.day(stats['start']))} {pd.Timestamp(stats['start']).year} to "
+        f"{ui.esc(ui.day(stats['end']))} {pd.Timestamp(stats['end']).year}.",
+        icon_name='account_balance_wallet',
+    ))
+    bench = stats.get('benchmark') or {}
+    metrics = st.container(horizontal=True)
+    metrics.metric('Account a year', _pct(stats.get('cagr')), help='Compound annual growth after costs')
+    metrics.metric('JKSE a year', _pct(bench.get('cagr')), help='The JKSE price index over the same period')
+    metrics.metric('Worst fall', _pct(stats.get('max_drawdown')), help='Largest drop from a previous high')
+    metrics.metric('Trades taken', f"{stats['trades_taken']} of {stats['trades_offered']}",
+                   help='The rest were skipped: every slot taken, the stock already held, or too small for one lot')
+    if portfolio.get('curve'):
+        growth_chart(portfolio['curve'])
+    skipped = stats['skipped']
+    st.caption(
+        f"Skipped: {skipped['full']} with every slot taken, {skipped['held']} with the stock already held, "
+        f"{skipped['too_small']} too small or illiquid for one lot. Cut to the liquidity limit: "
+        f"{stats['liquidity_capped']}. On average {stats['avg_positions']:.1f} positions were open and "
+        f"{stats['avg_invested_pct']:.0f}% of the account invested. The trades are {SIMULATED[tool]}."
+    )
+
+
 published = load(tool)
 if published is None:
     st.warning('The track record is unavailable right now. Please try again in a few minutes.')
     st.stop()
 outcomes, run = published['outcomes'], published['run']
+access = has_access()
 if run is None and outcomes.empty:
     ui.empty_state('The track record starts after the first nightly update',
                    'Every card published from then on is counted here, winners and losers alike.', 'hourglass_empty')
-    st.stop()
-status_pill(run, outcomes)
-
-access = has_access()
-if tool == 'long_term':
-    render_long_term(outcomes, access)
 else:
-    render_trades(outcomes, access)
+    status_pill(run, outcomes)
+    if tool == 'long_term':
+        render_long_term(outcomes, access)
+    else:
+        render_trades(outcomes, access)
+if tool in SIMULATED:
+    render_simulation(tool, published['optimize'])
 
 with st.expander('How results are counted', icon=':material/info:'):
     st.markdown(METHOD[tool])

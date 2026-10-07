@@ -198,6 +198,7 @@ def test_evaluate_stock_strategies_splits_train_and_holdout():
     assert rows[0]["Validation Trades"] > 0
     assert len(trades) == rows[0]["# Trades"] + rows[0]["Validation Trades"]
     assert {t["combo"] for t in trades} == {0}
+    assert all(t["exit_date"] >= t["entry_date"] and t["entry_price"] > 0 for t in trades)
 
 
 @pytest.mark.parametrize("series, status", [(None, "missing_data"), (_closes([100.0] * 30), "insufficient_history")])
@@ -354,6 +355,8 @@ def test_walk_forward_records_the_choice_made_on_past_data():
     # The record includes the losing fold(s) of combo 0: below combo 1's own mean.
     assert result["record"]["avg_trade"] < 0.6
     assert result["record"]["trades"] == sum(fold["trades"] for fold in result["folds"])
+    assert len(result["trades"]) == result["record"]["trades"]
+    assert result["trades"]["entry_date"].min() >= pd.Timestamp("2022-01-01")
 
 
 def test_walk_forward_needs_enough_training_trades():

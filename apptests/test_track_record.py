@@ -29,8 +29,28 @@ def _trade(symbol, signal_date, status, result=None, **fields):
     return row
 
 
-def _client(published=True) -> FakeSupabase:
+PORTFOLIO = {
+    "settings": {"capital": 100_000_000.0, "max_positions": 5, "liquidity_pct": 5.0, "liquidity_days": 20,
+                 "lot_size": 100},
+    "stats": {"start": "2023-03-01", "end": "2026-10-02", "final_equity": 131_000_000.0, "total_return": 31.0,
+              "cagr": 7.9, "max_drawdown": -12.4, "trades_offered": 120, "trades_taken": 80,
+              "skipped": {"held": 2, "full": 35, "too_small": 3}, "liquidity_capped": 9, "wins": 52,
+              "closed": 80, "avg_positions": 3.6, "avg_invested_pct": 71.0,
+              "benchmark": {"total_return": 10.0, "cagr": 2.7, "max_drawdown": -18.0}},
+    "curve": [{"date": "2023-03-03", "account": 100.0, "jkse": 100.0},
+              {"date": "2023-03-10", "account": 101.5, "jkse": 99.2}],
+}
+
+
+def _optimize_run(fake, tool, portfolio):
+    run_id = store.start_run(fake, tool, "optimize", "2026-10-04")
+    store.finish_run(fake, run_id, "ok", {"portfolio": portfolio})
+
+
+def _client(published=True, portfolio=PORTFOLIO) -> FakeSupabase:
     fake = FakeSupabase()
+    if portfolio is not None:
+        _optimize_run(fake, "dividend_play", portfolio)
     if published:
         for tool in ("dividend_play", "swing", "long_term"):
             run_id = store.start_run(fake, tool, "track", "2026-10-05")
@@ -145,3 +165,35 @@ def test_store_outage(run_page):
 
     assert not app.exception
     assert "The track record is unavailable right now" in app.warning[0].value
+
+
+def test_portfolio_simulation(run_page):
+    app = run_page()
+
+    assert _metric(app, "Account a year") == "+7.9%"
+    assert _metric(app, "JKSE a year") == "+2.7%"
+    assert _metric(app, "Worst fall") == "-12.4%"
+    assert _metric(app, "Trades taken") == "80 of 120"
+    text = _texts(app)
+    assert "Rp 100 juta, up to 5 positions of equal size, 100-share lots" in text
+    assert "Skipped: 35 with every slot taken, 2 with the stock already held, 3 too small" in text
+    assert len(app.get("arrow_vega_lite_chart") or app.get("vega_lite_chart")) == 2
+
+
+def test_portfolio_simulation_shows_before_live_results(run_page):
+    app = run_page(client=_client(published=False))
+
+    assert not app.exception
+    assert "The track record starts after the first nightly update" in _texts(app)
+    assert _metric(app, "Account a year") == "+7.9%"
+
+
+def test_portfolio_simulation_missing_or_failed(run_page):
+    app = run_page(tool="Swing Trading")
+    assert "The portfolio simulation appears after the next weekly search." in _texts(app)
+
+    failed = run_page(client=_client(portfolio={"error": "OSError: R2 down"}))
+    assert "The portfolio simulation failed in the last weekly search." in _texts(failed)
+
+    long_term = run_page(tool="Long Term")
+    assert "Backtest as one account" not in _texts(long_term)

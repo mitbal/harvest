@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 import harvest.dividend_play as dp
+import harvest.portfolio_sim as ps
 import harvest.position as pos
 import harvest.swing as sw
 import harvest.track_record as tr
@@ -86,6 +87,48 @@ def dividend_play_stock_holdout(row) -> dict:
     }
 
 
+def load_benchmark() -> Optional[pd.Series]:
+    """JKSE closes by date, or None when FMP is unavailable (the simulation runs without it)."""
+    try:
+        return trading_data.load_jkse_index()["close"]
+    except Exception:
+        logger.exception("JKSE index unavailable; portfolio simulation runs without the benchmark")
+        return None
+
+
+def dividend_play_portfolio(setup: dict, histories: dict, events: dict, start, split, as_of) -> dict:
+    """The global setup's holdout trades on every shortlist stock, taken as one account.
+
+    Per-stock setups are left out: they were picked on these same holdout trades, so they
+    would flatter the account.
+    """
+    trades = []
+    for symbol, prices in histories.items():
+        result = dp.backtest_dividend_play(dp.play_data(prices, events.get(symbol), start, as_of),
+                                           **setup, **dp.trade_costs())
+        held = result[result["entry_date"] >= split]
+        trades.extend(
+            {"symbol": symbol, "entry_date": entry, "exit_date": exit_date, "entry_price": price, "return_pct": value}
+            for entry, exit_date, price, value in zip(
+                held["entry_date"], held["exit_date"], held["entry_price"], held["total_return"],
+            )
+        )
+    trades = pd.DataFrame(trades, columns=ps.TRADE_COLUMNS)
+    bars = trading_data.load_ohlcv_histories(
+        sorted(trades["symbol"].unique()), split - pd.Timedelta(days=2 * ps.LIQUIDITY_DAYS + 10),
+    ) if not trades.empty else {}
+    return ps.simulate_portfolio(trades, bars, benchmark=load_benchmark(), start=split, end=as_of)
+
+
+def _portfolio_or_error(simulate, *args) -> Optional[dict]:
+    """Run a portfolio simulation; a failure is recorded in the run stats without failing the run."""
+    try:
+        return simulate(*args)
+    except Exception as exc:
+        logger.exception("Portfolio simulation failed")
+        return {"error": f"{type(exc).__name__}: {exc}"[:300]}
+
+
 def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dict:
     """Search Dividend Play setups on the default shortlist and publish those that pass.
 
@@ -144,6 +187,9 @@ def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dic
                 "holdout": dividend_play_stock_holdout(row),
             })
         store.write_setups(client, "dividend_play", published, run_id)
+        portfolio = _portfolio_or_error(
+            dividend_play_portfolio, published[0]["params"], histories, events, start, split, as_of,
+        ) if not qualified.empty else None
 
         stats = {
             "preset": preset,
@@ -160,6 +206,7 @@ def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dic
             "required_holdout_trades": min_trades,
             "global_setup": None if qualified.empty else dp.format_setup(published[0]["params"]),
             "stock_setups": int(len(best_stock)),
+            "portfolio": portfolio,
             "duration_seconds": round(time.monotonic() - started, 1),
         }
         store.finish_run(client, run_id, "ok", stats)
@@ -268,6 +315,10 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
                     },
                 })
         store.write_setups(client, "swing", published, run_id)
+        # The walk-forward's trades, published setup or not: the honest record of the search.
+        portfolio = _portfolio_or_error(
+            lambda: ps.simulate_portfolio(forward["trades"], histories, benchmark=benchmark, start=split, end=as_of),
+        ) if not forward["trades"].empty else None
 
         stats = {
             "preset": preset,
@@ -283,6 +334,7 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
                              if published else None),
             "stock_setups": len(stock_setups),
             "required_stock_t_stat": round(sw.required_t_stat(len(combos)), 2),
+            "portfolio": portfolio,
             "duration_seconds": round(time.monotonic() - started, 1),
         }
         store.finish_run(client, run_id, "ok", stats)
