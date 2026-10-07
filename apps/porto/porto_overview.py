@@ -754,77 +754,97 @@ with st.expander('Sector exposure', icon=':material/donut_small:', expanded=Fals
 
     sector_cols = st.columns([3, 2])
     with sector_cols[0]:
-        st.markdown('**Annual dividend by sector**')
-        sector_base = alt.Chart(sector_df).encode(
-            y=alt.Y('sector:N', sort=sector_df['sector'].tolist(), title=None),
-            x=alt.X(
-                'total_dividend:Q', title='Annual dividend (IDR)',
-                axis=alt.Axis(format='~s', tickCount=4),
-                scale=alt.Scale(domain=[0, max(sector_df['total_dividend'].max(), 1) * 1.3]),
-            ),
+        st.markdown('**Dividend by sector**')
+        st.caption(
+            f'{len(sector_df)} sectors · IDR {total_income:,.0f} a year. '
+            'Select a row to see its holdings.'
         )
-        sector_bar = sector_base.mark_bar(
-            color=cs.CHART_PRIMARY, cornerRadiusTopRight=4, cornerRadiusBottomRight=4, height={'band': 0.7},
-        ).encode(
-            tooltip=[
-                alt.Tooltip('sector:N', title='Sector'),
-                alt.Tooltip('total_dividend:Q', title='Annual dividend (IDR)', format=',.0f'),
-                alt.Tooltip('share:Q', title='Share of income (%)', format='.1f'),
-                alt.Tooltip('holdings:Q', title='Holdings'),
-            ],
-        )
-        sector_labels = sector_base.mark_text(align='left', dx=4, color=cs.CHART_MUTED_TEXT, fontSize=11).transform_calculate(
-            label="format(datum.share, '.1f') + '%'"
-        ).encode(text='label:N')
-        st.altair_chart(
-            (sector_bar + sector_labels).properties(height=max(200, 34 * len(sector_df))),
+        sector_event = st.dataframe(
+            sector_df[['sector', 'holdings', 'total_dividend', 'share']],
+            on_select='rerun',
+            selection_mode='single-row',
+            hide_index=True,
             width='stretch',
-            theme=None,
+            key='porto_sector_table',
+            column_config={
+                'sector': st.column_config.TextColumn('Sector'),
+                'holdings': st.column_config.NumberColumn('Stocks', format='%d', width='small'),
+                'total_dividend': st.column_config.NumberColumn('Dividend (IDR)', format='%,d'),
+                'share': st.column_config.ProgressColumn(
+                    'Share',
+                    format='%.1f%%',
+                    min_value=0,
+                    max_value=float(sector_df['share'].max()) or 1.0,
+                    help='Bar length is relative to your largest income sector',
+                ),
+            },
         )
 
     with sector_cols[1]:
-        st.markdown('**Holdings in sector**')
-        sector_name = st.selectbox(
-            'Sector',
-            sector_df['sector'].tolist(),
-            format_func=lambda name: f'{name} ({sector_df.set_index("sector").loc[name, "share"]:.1f}%)',
-            label_visibility='collapsed',
-            key='porto_sector_pick',
-        )
-        st.dataframe(
-            df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
-            hide_index=True,
-            width='stretch',
-            column_config={
-                'total_dividend': st.column_config.NumberColumn('Annual dividend (IDR)', format='%,d'),
-            }
-        )
-
-    st.markdown('**Dividend by sector**')
-    sector_table = pd.concat(
-        [
-            sector_df[['sector', 'holdings', 'total_dividend', 'share']],
-            pd.DataFrame([{
-                'sector': 'Total',
-                'holdings': int(sector_df['holdings'].sum()),
-                'total_dividend': total_income,
-                'share': 100.0 if total_income else 0.0,
-            }]),
-        ],
-        ignore_index=True,
-    )
-    st.dataframe(
-        sector_table,
-        hide_index=True,
-        width='stretch',
-        column_config={
-            'sector': st.column_config.TextColumn('Sector'),
-            'holdings': st.column_config.NumberColumn('Holdings', format='%d'),
-            'total_dividend': st.column_config.NumberColumn('Annual dividend (IDR)', format='%,d'),
-            'share': st.column_config.NumberColumn('Share of income', format='%.1f%%'),
-        },
-    )
-
+        selected_rows = sector_event.selection.rows
+        if not selected_rows:
+            st.markdown('**Income mix**')
+            st.caption('Share of your annual dividend from each sector.')
+            sector_colors = [
+                cs.CHART_CATEGORY_RANGE[i % len(cs.CHART_CATEGORY_RANGE)] for i in range(len(sector_df))
+            ]
+            donut_base = alt.Chart(sector_df).encode(
+                theta=alt.Theta('total_dividend:Q', stack=True),
+                order=alt.Order('total_dividend:Q', sort='descending'),
+            )
+            # Radii follow the plot size so the ring never outgrows a narrow column
+            donut = donut_base.mark_arc(
+                innerRadius=alt.ExprRef('min(width, height) * 0.3'),
+                outerRadius=alt.ExprRef('min(width, height) * 0.5 - 4'),
+                stroke='white',
+                strokeWidth=2,
+            ).encode(
+                color=alt.Color(
+                    'sector:N',
+                    scale=alt.Scale(domain=sector_df['sector'].tolist(), range=sector_colors),
+                    legend=None,
+                ),
+                tooltip=[
+                    alt.Tooltip('sector:N', title='Sector'),
+                    alt.Tooltip('total_dividend:Q', title='Annual dividend (IDR)', format=',.0f'),
+                    alt.Tooltip('share:Q', title='Share of income (%)', format='.1f'),
+                ],
+            )
+            center_base = alt.Chart(pd.DataFrame({'total': [f'IDR {total_income / 1e6:,.1f}M'], 'unit': ['per year']}))
+            center = (
+                center_base.mark_text(dy=-8, fontSize=15, fontWeight='bold', color=cs.CHART_TEXT).encode(text='total:N')
+                + center_base.mark_text(dy=11, fontSize=11, color=cs.CHART_MUTED_TEXT).encode(text='unit:N')
+            )
+            st.altair_chart(
+                (donut + center).properties(height=240).configure_view(stroke=None),
+                width='stretch',
+                theme=None,
+            )
+            # HTML legend wraps on narrow columns instead of clipping like a Vega legend
+            legend_items = ''.join(
+                f'<span style="display:inline-flex;align-items:center;gap:6px;margin:2px 12px 2px 0;'
+                f'font-size:0.8rem;color:{cs.CHART_TEXT};white-space:nowrap">'
+                f'<span style="width:10px;height:10px;border-radius:50%;background:{color};flex:none"></span>'
+                f'{html.escape(str(name))} <span style="color:{cs.CHART_MUTED_TEXT}">{share:.1f}%</span></span>'
+                for name, share, color in zip(sector_df['sector'], sector_df['share'], sector_colors)
+            )
+            st.markdown(f'<div style="display:flex;flex-wrap:wrap">{legend_items}</div>', unsafe_allow_html=True)
+        else:
+            sector_name = sector_df['sector'].iloc[selected_rows[0]]
+            sector_row = sector_df.iloc[selected_rows[0]]
+            st.markdown(f'**{sector_name} holdings**')
+            st.caption(
+                f'{int(sector_row["holdings"])} stock{"s" if sector_row["holdings"] != 1 else ""} · '
+                f'{sector_row["share"]:.1f}% of your dividend income. Clear the selection to see the mix.'
+            )
+            st.dataframe(
+                df[df['sector'] == sector_name][['Symbol', 'total_dividend']].sort_values('total_dividend', ascending=False),
+                hide_index=True,
+                width='stretch',
+                column_config={
+                    'total_dividend': st.column_config.NumberColumn('Dividend (IDR)', format='%,d'),
+                }
+            )
 
 with st.expander('Dividend timeline', icon=':material/calendar_month:', expanded=False):
 
