@@ -39,6 +39,7 @@ page_simulator = st.Page('apps/simulator/simulator.py', title='Compounding Simul
 # Supporter-only trading pages show a lock instead of their icon to everyone else.
 _lock = (lambda icon: icon) if has_access() else (lambda icon: '🔒')
 page_trading_today = st.Page('apps/trading/today.py', title='Trading Today', icon='☀️', url_path='trading')
+page_track_record = st.Page('apps/trading/track_record.py', title='Track Record', icon='🧾')
 page_backtester = st.Page('apps/trading/backtester.py', title='Long Term Position Trading', icon=_lock('📈'))
 # Keeps the old URL so existing links and bookmarks still work.
 page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Short Term Swing Trading', icon=_lock('⚡'), url_path='day_trading')
@@ -69,6 +70,7 @@ pages = st.navigation(
                 page_swing_trading,
                 page_dividend_play,
                 page_my_trades,
+                page_track_record,
         ]
     }
 )

@@ -1,4 +1,4 @@
-"""Read and write the trading tables: runs, setups, signals and positions.
+"""Read and write the trading tables: runs, setups, signals, outcomes and positions.
 
 Every function takes the Supabase client as its first argument, so the
 pipeline (supabase-py ``Client``) and the app (``st.connection``) share this
@@ -19,7 +19,7 @@ import pandas as pd
 
 
 TOOLS = ('dividend_play', 'swing', 'long_term')
-RUN_KINDS = ('optimize', 'scan')
+RUN_KINDS = ('optimize', 'scan', 'track')
 RUN_STATUSES = ('running', 'ok', 'failed')
 SIGNAL_STATUSES = ('actionable', 'opening_soon', 'candidate')
 
@@ -28,6 +28,15 @@ SIGNAL_COLUMNS = [
     'exit_by', 'key_date', 'key_date_estimated', 'setup_scope', 'detail',
 ]
 SIGNAL_DATE_COLUMNS = ('as_of', 'exit_by', 'key_date')
+OUTCOME_COLUMNS = [
+    'tool', 'symbol', 'signal_date', 'status', 'entry_date', 'entry_price', 'exit_date', 'exit_price',
+    'exit_reason', 'return_pct', 'benchmark_pct', 'detail', 'updated_at',
+]
+OUTCOME_DATE_COLUMNS = ('signal_date', 'entry_date', 'exit_date')
+OUTCOME_STATUSES = ('open', 'closed', 'not_filled')
+# Settled outcomes are the public record and are never rewritten.
+FINAL_OUTCOME_STATUSES = ('closed', 'not_filled')
+PAGE_SIZE = 1000
 POSITION_COLUMNS = [
     'id', 'email', 'tool', 'symbol', 'entry_date', 'entry_price', 'lots', 'exit_rule',
     'exit_by', 'closed_at', 'exit_price', 'created_at',
@@ -272,6 +281,85 @@ def read_signals(client, tool: str, as_of=None) -> pd.DataFrame:
         .order('symbol').execute().data or []
     )
     return _frame(rows, SIGNAL_COLUMNS, SIGNAL_DATE_COLUMNS)
+
+
+def _select_all(query_factory, page_size: int = PAGE_SIZE) -> list[dict]:
+    """Every row of a select, fetched in pages (PostgREST returns at most 1,000 rows per request).
+
+    ``query_factory`` builds a fresh, ordered query each time, so pages don't overlap.
+    """
+    rows, start = [], 0
+    while True:
+        page = query_factory().range(start, start + page_size - 1).execute().data or []
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        start += page_size
+
+
+def read_signal_history(client, tool: str, status: str, columns: str = '*') -> pd.DataFrame:
+    """Every stored signal of one status, oldest first: the input of the track record."""
+    _check(tool, TOOLS, 'tool')
+    _check(status, SIGNAL_STATUSES, 'status')
+    rows = _select_all(lambda: (
+        client.table('trading_signals').select(columns).eq('tool', tool).eq('status', status)
+        .order('as_of').order('symbol')
+    ))
+    wanted = SIGNAL_COLUMNS if columns == '*' else [c.strip() for c in columns.split(',')]
+    return _frame(rows, wanted, [c for c in SIGNAL_DATE_COLUMNS if c in wanted])
+
+
+def scan_dates(client, tool: str) -> list[datetime.date]:
+    """Sessions with a successful scan, oldest first."""
+    rows = _select_all(lambda: (
+        client.table('trading_runs').select('as_of').eq('tool', tool).eq('kind', 'scan').eq('status', 'ok')
+        .order('as_of')
+    ))
+    return sorted({_to_date(row['as_of']) for row in rows})
+
+
+# ── Outcomes (track record) ───────────────────────────────────────────────── #
+
+def write_outcomes(client, tool: str, outcomes: list[dict]) -> dict:
+    """Store a tool's recomputed outcomes; returns counts of written, kept and removed rows.
+
+    Rows already settled (closed or not filled) are kept as first written, so the record can't
+    drift when prices are revised or the replay changes. Open rows are replaced, and open rows
+    the replay no longer produces are removed.
+    """
+    _check(tool, TOOLS, 'tool')
+    existing = _select_all(lambda: (
+        client.table('trading_outcomes').select('symbol,signal_date,status').eq('tool', tool)
+        .order('signal_date').order('symbol')
+    ))
+    settled = {(row['symbol'], str(row['signal_date'])) for row in existing if row['status'] in FINAL_OUTCOME_STATUSES}
+    rows, kept = [], 0
+    for outcome in outcomes:
+        row = {column: _jsonable(outcome.get(column)) for column in OUTCOME_COLUMNS if column != 'updated_at'}
+        row.update({'tool': tool, 'updated_at': _now()})
+        _check(row['status'], OUTCOME_STATUSES, 'status')
+        if (row['symbol'], row['signal_date']) in settled:
+            kept += 1
+            continue
+        rows.append(row)
+    if rows:
+        client.table('trading_outcomes').upsert(rows, on_conflict='tool,symbol,signal_date').execute()
+    current = {(row['symbol'], row['signal_date']) for row in rows} | settled
+    gone = [row for row in existing
+            if row['status'] not in FINAL_OUTCOME_STATUSES and (row['symbol'], str(row['signal_date'])) not in current]
+    for row in gone:
+        (client.table('trading_outcomes').delete().eq('tool', tool).eq('symbol', row['symbol'])
+         .eq('signal_date', str(row['signal_date'])).execute())
+    return {'written': len(rows), 'kept': kept, 'removed': len(gone)}
+
+
+def read_outcomes(client, tool: str) -> pd.DataFrame:
+    """A tool's outcomes, oldest signal first."""
+    _check(tool, TOOLS, 'tool')
+    rows = _select_all(lambda: (
+        client.table('trading_outcomes').select('*').eq('tool', tool).order('signal_date').order('symbol')
+    ))
+    return _frame(rows, OUTCOME_COLUMNS, OUTCOME_DATE_COLUMNS)
 
 
 # ── Positions ─────────────────────────────────────────────────────────────── #

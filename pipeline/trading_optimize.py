@@ -21,6 +21,7 @@ import pandas as pd
 import harvest.dividend_play as dp
 import harvest.position as pos
 import harvest.swing as sw
+import harvest.track_record as tr
 import harvest.trading_store as store
 from pipeline import trading_data
 
@@ -171,7 +172,8 @@ def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dic
 SWING_PRESET = "Balanced"
 SWING_HISTORY_YEARS = 7      # 3 years of training before a 3-year walk-forward, plus warm-up
 SWING_HOLDOUT_YEARS = 3
-SWING_COSTS = {"buy_fee": 0.15, "sell_fee": 0.15, "sell_tax": 0.1, "slippage_ticks": sw.DEFAULT_SLIPPAGE_TICKS}
+# Shared with the track record, so live outcomes pay the same costs as the backtest.
+SWING_COSTS = tr.SWING_COSTS
 INDICATOR_WARMUP_DAYS = 400
 
 

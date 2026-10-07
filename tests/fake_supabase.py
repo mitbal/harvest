@@ -2,7 +2,7 @@
 
 Supports the subset of the postgrest API the store uses: select, insert,
 upsert(on_conflict=..., ignore_duplicates=...), update, delete, eq, neq, in_, is_, gte, lte,
-not_.<filter>, order and limit. Rows are copied in and out like over HTTP.
+not_.<filter>, order, limit and range. ``select`` returns only the listed columns. Rows are copied in and out like over HTTP.
 """
 import copy
 import itertools
@@ -18,6 +18,7 @@ PRIMARY_KEYS = {
     'positions': ('id',),
     'user_settings': ('email',),
     'alert_log': ('email', 'kind', 'ref'),
+    'trading_outcomes': ('tool', 'symbol', 'signal_date'),
 }
 SERIAL_TABLES = {'trading_runs', 'positions'}
 
@@ -41,11 +42,14 @@ class Query:
         self.filters = []
         self.orders = []
         self.row_limit = None
+        self.row_offset = 0
+        self.columns = None
         self._negate = False
 
     # Actions
     def select(self, columns='*'):
         self.action = 'select'
+        self.columns = None if columns.strip() == '*' else [c.strip() for c in columns.split(',')]
         return self
 
     def insert(self, rows):
@@ -104,6 +108,10 @@ class Query:
         self.row_limit = count
         return self
 
+    def range(self, start, end):
+        self.row_offset, self.row_limit = start, end - start + 1
+        return self
+
     # Execution
     def _matches(self):
         return [row for row in self.db.rows(self.table) if all(test(row) for test in self.filters)]
@@ -119,7 +127,11 @@ class Query:
             present = [row for row in rows if row.get(column) is not None]
             missing = [row for row in rows if row.get(column) is None]
             rows = sorted(present, key=lambda row: row[column], reverse=desc) + missing
-        return rows[: self.row_limit] if self.row_limit is not None else rows
+        end = self.row_offset + self.row_limit if self.row_limit is not None else None
+        rows = rows[self.row_offset:end]
+        if self.columns is not None:
+            rows = [{column: row.get(column) for column in self.columns} for row in rows]
+        return rows
 
     def _execute_insert(self):
         rows = self.payload if isinstance(self.payload, list) else [self.payload]

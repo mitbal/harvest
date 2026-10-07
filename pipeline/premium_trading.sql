@@ -63,6 +63,25 @@ create table if not exists trading_signals (
   primary key (tool, symbol, as_of)
 );
 
+-- Phase 5: realised outcome of each published card, written by pipeline/trading_track.py.
+-- Settled rows (closed, not_filled) are never rewritten; open rows are refreshed nightly.
+create table if not exists trading_outcomes (
+  tool text not null,
+  symbol text not null,
+  signal_date date not null,            -- first card of the trade
+  status text not null,                 -- 'open' | 'closed' | 'not_filled'
+  entry_date date,
+  entry_price numeric,
+  exit_date date,
+  exit_price numeric,
+  exit_reason text,
+  return_pct numeric,                   -- after costs; open trades marked to the latest close
+  benchmark_pct numeric,                -- JKSE price change over the same days
+  detail jsonb,
+  updated_at timestamptz default now(),
+  primary key (tool, symbol, signal_date)
+);
+
 create table if not exists positions (
   id bigserial primary key,
   email text not null,
@@ -116,7 +135,7 @@ declare
 begin
   foreach t in array array[
     'premium_users', 'donations', 'trading_runs', 'trading_setups',
-    'trading_signals', 'positions', 'user_settings', 'alert_log'
+    'trading_signals', 'positions', 'user_settings', 'alert_log', 'trading_outcomes'
   ] loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists app_server_all on %I', t);

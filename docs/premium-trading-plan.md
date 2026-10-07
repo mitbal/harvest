@@ -453,7 +453,7 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
 - [x] `apps/trading/today.py`: Act now (signals from all tools), Your positions, Coming up.
       Make it the first page in the Trading section in `main.py`; lock icons in page titles for
       non-supporters.
-- [ ] Track record page from historical `trading_signals` and their realised outcomes.
+- [x] Track record page from historical `trading_signals` and their realised outcomes.
 - [ ] Portfolio simulation for Dividend Play and Swing: fixed capital, max open positions,
       100-share lots, liquidity cap, equity curve vs JKSE.
 - [ ] Give the user real track-record numbers to replace placeholders in the promo animation.
@@ -799,3 +799,31 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - Tests: 7 AppTests (`apptests/test_trading_today.py`): full, free and logged-out tiers, empty
     store, outage, positions and coming up, See evidence navigation. Verified in the preview against
     the test store (desktop, mobile, free tier with the gate on, unlock click).
+- 2026-10-07: Phase 5, track record built on branch `premium/phase-5-track-record` (stacked on the hub).
+  - `harvest/track_record.py` replays each published card against later prices using only what the
+    card said. Dividend Play: limit order at the tick-rounded "entry at or below" price on the next
+    session (fill at the open or the limit, whichever is lower), retried with the next day's card while
+    the buy-zone streak lasts, else `not_filled`; sold at the close on the sell-by date (or the setup's
+    take profit / stop loss), dividend received after tax when the ex-date falls inside the hold.
+    Swing: `sw.simulate_trades` with next-open entry, the card's stop/target %, max hold, backtest costs
+    and slippage (`tr.SWING_COSTS`, now also used by `trading_optimize`); the strategy's early exit isn't
+    on the card, so it isn't replayed. Long Term: bought at the close of the first listing, closed when the
+    price reaches that card's target; the growth-based exit isn't replayed. One position per stock at a
+    time. Returns after costs, JKSE price change over the same days, open trades marked to the latest close.
+  - New table `trading_outcomes` (DDL and RLS in `pipeline/premium_trading.sql`). `store.write_outcomes`
+    never rewrites settled rows (closed, not filled), refreshes open ones and removes open rows the replay
+    drops. `store.read_signal_history` / `read_outcomes` page through PostgREST's 1,000-row limit
+    (`_select_all`); the fake client gained `range` and column selection. Run kind `track`.
+  - `pipeline/trading_track.py --tool <tool|all>`: loads cards, R2 OHLC, dividends and the JKSE index
+    (optional; stored without it when FMP fails), writes outcomes and a `track` run.
+  - Page `apps/trading/track_record.py` ("Track Record", public, last in the Trading section): tool
+    switch bound to `?tool=`, closed-trade metrics with the backtest's expected average next to the live
+    one, a per-trade result chart, closed / open / not-filled tables, method notes. Non-supporters see
+    settled results; open trades and open Long Term picks (today's positions) are counts only.
+  - Tests: 15 replay tests, 6 job/store tests, 6 AppTests.
+  - Real-data dry run (in-memory store, R2 prices, local dividend pickle from Feb 2025): 216 sessions of
+    Dividend Play cards (March 2024 to January 2025) on the 14 blue chips with the published setup shape,
+    338 cards, replayed in 3.4 s into 22 closed trades and 1 unfilled card (11 of 22 won, -2.6% average);
+    a rerun kept all 23 settled rows. Page checked in the preview against that store.
+  - Open [ASK USER]: run the `trading_outcomes` part of `pipeline/premium_trading.sql`; schedule
+    `python -m pipeline.trading_track --tool all` after the nightly scans.
