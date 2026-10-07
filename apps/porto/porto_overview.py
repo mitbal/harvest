@@ -760,7 +760,7 @@ with st.expander('Sector exposure', icon=':material/donut_small:', expanded=Fals
             x=alt.X(
                 'total_dividend:Q', title='Annual dividend (IDR)',
                 axis=alt.Axis(format='~s', tickCount=4),
-                scale=alt.Scale(domain=[0, max(sector_df['total_dividend'].max(), 1) * 1.15]),
+                scale=alt.Scale(domain=[0, max(sector_df['total_dividend'].max(), 1) * 1.3]),
             ),
         )
         sector_bar = sector_base.mark_bar(
@@ -799,6 +799,31 @@ with st.expander('Sector exposure', icon=':material/donut_small:', expanded=Fals
                 'total_dividend': st.column_config.NumberColumn('Annual dividend (IDR)', format='%,d'),
             }
         )
+
+    st.markdown('**Dividend by sector**')
+    sector_table = pd.concat(
+        [
+            sector_df[['sector', 'holdings', 'total_dividend', 'share']],
+            pd.DataFrame([{
+                'sector': 'Total',
+                'holdings': int(sector_df['holdings'].sum()),
+                'total_dividend': total_income,
+                'share': 100.0 if total_income else 0.0,
+            }]),
+        ],
+        ignore_index=True,
+    )
+    st.dataframe(
+        sector_table,
+        hide_index=True,
+        width='stretch',
+        column_config={
+            'sector': st.column_config.TextColumn('Sector'),
+            'holdings': st.column_config.NumberColumn('Holdings', format='%d'),
+            'total_dividend': st.column_config.NumberColumn('Annual dividend (IDR)', format='%,d'),
+            'share': st.column_config.NumberColumn('Share of income', format='%.1f%%'),
+        },
+    )
 
 
 with st.expander('Dividend timeline', icon=':material/calendar_month:', expanded=False):
