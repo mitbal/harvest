@@ -134,8 +134,16 @@ def _build_st_stub():
     st.sidebar.multiselect = _multiselect
     st.sidebar.data_editor = _data_editor
 
+    class _Selection(dict):
+        """Like Streamlit's selection state: ``selection["rows"]`` and ``selection.rows`` both work."""
+        def __getattr__(self, name):
+            try:
+                return self[name]
+            except KeyError:
+                raise AttributeError(name) from None
+
     _df_mock = MagicMock()
-    _df_mock.selection = {"rows": []}
+    _df_mock.selection = _Selection(rows=[], columns=[], cells=[])
     st.dataframe = MagicMock(return_value=_df_mock)
     st.sidebar.dataframe = MagicMock(return_value=_df_mock)
 
