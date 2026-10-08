@@ -267,7 +267,7 @@ def render_swing_backtest(
                 x=alt.X('date:T', title=None),
                 y=alt.Y('close:Q', title='Close', scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip('date:T', title='Date'), alt.Tooltip('close:Q', title='Close', format=',.0f')],
-            ),
+            ).interactive(),
             alt.Chart(markers).mark_point(filled=True, size=60, opacity=1).encode(
                 x='date:T', y='price:Q',
                 shape=alt.Shape('Action:N', scale=alt.Scale(domain=['Buy', 'Sell'], range=['triangle-up', 'triangle-down'])),
@@ -285,7 +285,7 @@ def render_swing_backtest(
         st.altair_chart(
             alt.Chart(equity).mark_line(color=cs.CHART_PRIMARY).encode(
                 x=alt.X('date:T', title=None), y=alt.Y('equity:Q', title='Account (start = 100)', scale=alt.Scale(zero=False)),
-            ).properties(height=300),
+            ).properties(height=300).interactive(),
             width='stretch', theme=None,
         )
     with log_tab:

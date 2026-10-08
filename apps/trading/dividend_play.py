@@ -270,7 +270,7 @@ def render_backtest(stock: str, prices: pd.DataFrame, divs: pd.DataFrame, params
                 x=alt.X('date:T', title=None),
                 y=alt.Y('close:Q', title='Close', scale=alt.Scale(zero=False)),
                 tooltip=[alt.Tooltip('date:T', title='Date'), alt.Tooltip('close:Q', title='Close', format=',.0f')],
-            )
+            ).interactive()
         ]
         if not trades.empty:
             windows = trades[['ex_date']].assign(
@@ -348,7 +348,7 @@ def render_backtest(stock: str, prices: pd.DataFrame, divs: pd.DataFrame, params
                              alt.Tooltip('median:Q', title='Median', format='.1f'),
                              alt.Tooltip('q25:Q', title='25th pct', format='.1f'),
                              alt.Tooltip('q75:Q', title='75th pct', format='.1f')],
-                )
+                ).interactive()
                 ex_rule = alt.Chart(pd.DataFrame({'x': [0]})).mark_rule(
                     color=cs.CHART_NEUTRAL, strokeDash=[4, 4]).encode(x='x:Q')
                 st.altair_chart((band + iqr + median + ex_rule).properties(height=340), width='stretch', theme=None)
@@ -374,22 +374,47 @@ def render_backtest(stock: str, prices: pd.DataFrame, divs: pd.DataFrame, params
             if trades.empty:
                 st.info('No trades to show.')
             else:
-                bars = trades.melt(
-                    id_vars=['ex_date'], value_vars=['price_return', 'dividend_return'],
-                    var_name='Component', value_name='Return',
-                ).replace({'Component': {'price_return': 'Price', 'dividend_return': 'Dividend'}})
+                # One slot per trade (no calendar gaps), with each component drawn as a manual stack so
+                # the bars can span their slot and stay zoomable
+                chrono = trades.sort_values('ex_date').reset_index(drop=True)
+                chrono['trade'] = chrono.index + 1
+                chrono['cumulative'] = (np.cumprod(1 + chrono['total_return'] / 100) - 1) * 100
+                dividend_base = chrono['price_return'].clip(lower=0)
+                bars = pd.concat([
+                    chrono.assign(Component='Price', Return=chrono['price_return'],
+                                  y0=0.0, y1=chrono['price_return']),
+                    chrono.assign(Component='Dividend', Return=chrono['dividend_return'],
+                                  y0=dividend_base, y1=dividend_base + chrono['dividend_return']),
+                ], ignore_index=True).assign(left=lambda f: f['trade'] - 0.5, right=lambda f: f['trade'] + 0.5)
+                labels = ', '.join(f"'{date:%b %y}'" for date in chrono['ex_date'])
+                trade_axis = alt.X('left:Q', title='Ex-date', scale=alt.Scale(nice=False),
+                                   axis=alt.Axis(tickMinStep=1, labelExpr=f'[{labels}][datum.value - 1] || ""'))
+                # Rounded stacked bars get clipped away once the scales are zoomable
+                returns = alt.Chart(bars).mark_bar(cornerRadiusEnd=0, stroke='white', strokeWidth=0.5).encode(
+                    x=trade_axis, x2='right:Q',
+                    y=alt.Y('y0:Q', title='Net return per trade (%)'), y2='y1:Q',
+                    color=alt.Color('Component:N', scale=alt.Scale(domain=['Price', 'Dividend', 'Cumulative'],
+                                                                   range=[cs.CHART_PRIMARY, cs.CHART_AMBER,
+                                                                          cs.CHART_BLUE]),
+                                    legend=alt.Legend(title=None, orient='top')),
+                    tooltip=[alt.Tooltip('ex_date:T', title='Ex-date'), 'Component:N',
+                             alt.Tooltip('Return:Q', format='+.2f'),
+                             alt.Tooltip('total_return:Q', title='Trade total', format='+.2f')],
+                ).interactive(bind_y=False)
+                cumulative = alt.Chart(chrono.assign(Component='Cumulative')).mark_line(
+                    point=True, strokeWidth=2).encode(
+                    x='trade:Q',
+                    y=alt.Y('cumulative:Q', title='Cumulative gain (%)', axis=alt.Axis(orient='right')),
+                    color=alt.Color('Component:N'),
+                    tooltip=[alt.Tooltip('ex_date:T', title='Ex-date'),
+                             alt.Tooltip('cumulative:Q', title='Cumulative gain %', format='+.1f')],
+                )
                 st.altair_chart(
-                    alt.Chart(bars).mark_bar().encode(
-                        x=alt.X('yearmonthdate(ex_date):O', title='Ex-date', axis=alt.Axis(labelAngle=-45)),
-                        y=alt.Y('Return:Q', title='Net return (%)'),
-                        color=alt.Color('Component:N', scale=alt.Scale(domain=['Price', 'Dividend'],
-                                                                       range=[cs.CHART_PRIMARY, cs.CHART_AMBER]),
-                                        legend=alt.Legend(title=None, orient='top')),
-                        tooltip=[alt.Tooltip('ex_date:T', title='Ex-date'), 'Component:N',
-                                 alt.Tooltip('Return:Q', format='+.2f')],
-                    ).properties(height=280),
+                    alt.layer(returns, cumulative).resolve_scale(y='independent').properties(height=300),
                     width='stretch', theme=None,
                 )
+                st.caption('Bars are each trade\'s net return, oldest first; the line compounds them into the '
+                           'cumulative gain on the right axis. Scroll to zoom, double-click to reset.')
                 log = trades.sort_values('ex_date', ascending=False).copy()
                 st.dataframe(
                     log,

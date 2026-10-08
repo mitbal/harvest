@@ -143,6 +143,7 @@ def _ratio_chart(history: pd.DataFrame, label: str, years: int):
             y=alt.Y("ratio:Q", title=label, scale=alt.Scale(zero=False)),
             tooltip=[alt.Tooltip("date:T", title="Date"), alt.Tooltip("ratio:Q", title=label, format=".2f")],
         )
+        .interactive()
     )
     mean_rule = (
         alt.Chart(pd.DataFrame({"mean": [mean]}))
@@ -292,6 +293,7 @@ def render_detail(symbol: str, profile_row: pd.Series, history_years: int, score
                 tooltip=["date:T", "Series:N", alt.Tooltip("Index:Q", format=".1f")],
             )
             .properties(height=330)
+            .interactive()
         )
         st.altair_chart(growth_chart, width="stretch", theme=None)
         growth_metrics = st.columns(4)
@@ -462,6 +464,7 @@ def render_backtest(record: dict) -> None:
             tooltip=["date:T", "Series:N", alt.Tooltip("Value:Q", format=".1f")],
         )
         .properties(height=280)
+        .interactive()
     )
     st.altair_chart(chart, width="stretch", theme=None)
     table = pd.DataFrame({
