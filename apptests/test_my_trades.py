@@ -84,8 +84,9 @@ def test_my_trades_asks_logged_out_visitors_to_log_in(trades):
     app = trades(email=None)
 
     assert not app.exception
-    assert [b.label for b in app.button] == ["Log in with Google"]
-    assert not app.subheader
+    assert "Log in with Google" in [b.label for b in app.button]
+    assert "Log in to track your trades" in _texts(app)
+    assert "Open positions" not in _texts(app) and "Save settings" not in [b.label for b in app.button]
 
 
 def test_my_trades_is_gated_for_free_users(trades):
@@ -103,7 +104,7 @@ def test_my_trades_lists_only_the_users_positions(trades):
     assert "BBRI Dividend Play · bought" in text and "Bought at Rp 1,000 per share Size 5 lots" in text
     assert "sessions left, sell by" in text
     assert "ASII" not in text
-    closed = app.dataframe[0].value
+    closed = app.dataframe[-1].value  # after Coming up
     assert closed["Stock"].tolist() == ["TLKM"]
     expected = (1100 * (1 - 0.0025) / (1000 * 1.0015) - 1) * 100
     assert closed["Return"].iloc[0] == pytest.approx(expected)

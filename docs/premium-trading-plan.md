@@ -76,7 +76,7 @@ Kickoff prompt the user will give you, for example:
 
 | Topic | Decision |
 |---|---|
-| Page structure | Keep three separate tool pages, each with Today / Evidence / Lab views, plus a Trading Today hub and My Trades |
+| Page structure | Keep three separate tool pages, each with Today / Evidence / Lab views, plus My Trades as the single hub (signals from all tools, coming up and your positions; decided 2026-10-08, replaces the separate Trading Today page) |
 | Computation | Pages only read. Weekly optimize job and daily scan job in the pipeline |
 | Price storage | Parquet on Cloudflare R2 (local file fallback for development) |
 | User data | Supabase: `users`, `premium_users`, `donations`, `positions`, `user_settings`, `trading_*`, `alert_log` |
@@ -96,11 +96,10 @@ content is described in Phase 1 tasks below; follow those descriptions.
 
 ```
 Trading (sidebar section in main.py)
-  Today          apps/trading/today.py         hub (Phase 5)
   Dividend Play  apps/trading/dividend_play.py Today | Evidence | Lab
   Swing Trading  apps/trading/swing_trading.py Today | Evidence | Lab (renamed from day_trading.py)
   Long Term      apps/trading/backtester.py    Today | Evidence | Lab
-  My Trades      apps/trading/my_trades.py     (Phase 2)
+  My Trades      apps/trading/my_trades.py     hub: Act now, Coming up, journal (Phase 2, hub in Phase 5)
 ```
 
 ## Architecture
@@ -111,7 +110,7 @@ Railway cron                                  Storage                          S
 pipeline/historical_prices_core.py (daily) -> R2: prices/<exch>.parquet  --->  harvest/prices.py
 pipeline/daily_data.py (daily)             -> Redis: latest_returns_<exch> ->  market_watch, stock pages
 pipeline/trading_optimize.py (weekly)      -> Supabase: trading_setups   -+
-pipeline/trading_scan.py (daily)           -> Supabase: trading_signals   +->  Today / Evidence / hub
+pipeline/trading_scan.py (daily)           -> Supabase: trading_signals   +->  Today / Evidence / My Trades
                                            -> Supabase: trading_runs     -+    (freshness banner)
                                            -> Telegram alerts
 server.py webhooks (BMC, Trakteer, Telegram)-> Supabase: premium_users ------>  harvest/premium.py
@@ -450,7 +449,8 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
 
 ## Phase 5: Hub and track record
 
-- [x] `apps/trading/today.py`: Act now (signals from all tools), Your positions, Coming up.
+- [x] Hub with Act now (signals from all tools), Your positions, Coming up. Built as
+      `apps/trading/today.py`, then merged into `apps/trading/my_trades.py` (2026-10-08).
       Make it the first page in the Trading section in `main.py`; lock icons in page titles for
       non-supporters.
 - [x] Track record page from historical `trading_signals` and their realised outcomes.
@@ -853,3 +853,17 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - Open [ASK USER]: confirm capital, slots and the 5% liquidity cap. `tests/apps/test_porto_overview.py`
     fails at collection on this branch since commit 9813859 (`sector_event.selection.rows` on the test
     stub), unrelated to the trading work.
+- 2026-10-08: Hub merged into My Trades on branch `premium/phase-5-hub-merge` (stacked on the
+  portfolio simulation branch), at the user's request: one page instead of a hub that repeated the
+  positions list.
+  - `apps/trading/today.py` removed. `apps/trading/my_trades.py` now reads: metrics, Act now, Coming
+    up, then the journal (open positions as cards with Close / Remove, closed results, settings,
+    Telegram). URL stays `/my_trades` (the Telegram alerts link there).
+  - Act now and Coming up are open to everyone with the hub's free-tier rules (first card per tool,
+    unlock prompt). The journal keeps its gates: a login prompt for logged-out visitors, the paywall
+    for logged-in non-supporters. Positions and settings are loaded only for users with access, and
+    a store outage there shows a warning instead of stopping the page.
+  - `main.py`: My Trades is first in the Trading section without a lock icon; the tool pages keep theirs.
+  - Tests: hub AppTests moved to `apptests/test_my_trades_hub.py` against My Trades; positions are
+    checked as cards now. Full suite: 700 passed. Logged-out view checked in the preview (the local
+    store isn't reachable, so the signal groups show "Unavailable right now").

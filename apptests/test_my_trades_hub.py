@@ -1,4 +1,4 @@
-"""Trading Today hub: signals from every tool, your positions and what is coming up, per access tier."""
+"""My Trades as the hub: signals from every tool, what is coming up and your positions, per access tier."""
 import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -16,7 +16,7 @@ from tests.fake_supabase import FakeSupabase
 
 
 REPO = Path(__file__).resolve().parents[1]
-PAGE = str(REPO / "apps" / "trading" / "today.py")
+PAGE = str(REPO / "apps" / "trading" / "my_trades.py")
 TODAY = datetime.date.today()
 
 
@@ -118,12 +118,9 @@ def test_free_visitors_get_one_card_per_tool_and_an_unlock_prompt(run_page):
 def test_positions_and_coming_up(run_page):
     app = run_page()
 
-    positions = app.dataframe[0].value
-    assert positions["Stock"].tolist() == ["UNVR"]
-    assert positions["Exit"].iloc[0].endswith(f"sell by {(TODAY + datetime.timedelta(days=14)):%a} "
-                                              f"{(TODAY + datetime.timedelta(days=14)).day} "
-                                              f"{(TODAY + datetime.timedelta(days=14)):%b}")
-    events = app.dataframe[1].value
+    assert "UNVR Dividend Play · bought" in _texts(app)
+    assert _metric(app, "Your positions") == "1"
+    events = app.dataframe[0].value
     assert set(events["Stock"]) == {"ASII", "GOTO", "UNVR"}
     assert "Sell by, your position" in events["What"].tolist()
     assert "Cum date, your position" in events["What"].tolist()
@@ -135,7 +132,7 @@ def test_logged_out_visitors_are_asked_to_log_in_for_positions(run_page):
     app = run_page("logged_out")
 
     assert not app.exception
-    assert "Log in to see your positions" in _texts(app)
+    assert "Log in to track your trades" in _texts(app)
     assert any(b.label == "Log in with Google" for b in app.button)
     events = app.dataframe[0].value
     assert set(events["Stock"]) == {"ASII", "GOTO"}
