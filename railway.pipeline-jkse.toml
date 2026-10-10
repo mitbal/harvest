@@ -10,7 +10,7 @@ watchPatterns = [
 ]
 
 [deploy]
-# The Dividend Play scan runs only after the daily prices are in; a failed update skips it.
-startCommand = 'sh -c "timeout --signal=TERM --kill-after=60s 6h python -m pipeline.daily_data --exchange jkse && timeout --signal=TERM --kill-after=60s 1h python -m pipeline.trading_scan --tool dividend_play"'
+# Prices, then the trading scans and track record (pipeline/trading_nightly.sh).
+startCommand = "sh pipeline/trading_nightly.sh"
 cronSchedule = "0 16 * * 1-5"
 restartPolicyType = "NEVER"

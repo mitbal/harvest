@@ -383,7 +383,7 @@ work; the gate behaves per tier with the flag on.
 - [ ] User runs the Supabase SQL, sets secrets, deploys pipeline and app.
 - [ ] User adds early supporters to `premium_users` manually.
 - [ ] User turns on `PREMIUM_ENFORCED` in production.
-- [ ] Update `tests/live/smoke.spec.js` to expect the paywall on trading pages for anonymous visitors.
+- [x] Update `tests/live/smoke.spec.js` to expect the paywall on trading pages for anonymous visitors.
 
 ## Phase 2: Positions, alerts, donation webhooks
 
@@ -867,3 +867,15 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - Tests: hub AppTests moved to `apptests/test_my_trades_hub.py` against My Trades; positions are
     checked as cards now. Full suite: 700 passed. Logged-out view checked in the preview (the local
     store isn't reachable, so the signal groups show "Unavailable right now").
+- 2026-10-10: Launch config on branch `premium/launch-config`, at the user's request.
+  - `pipeline/trading_nightly.sh` (run by `railway.pipeline-jkse.toml`): `daily_data`, then the
+    Dividend Play, Swing and Long Term scans and `trading_track --tool all`. A failed price update
+    skips the rest; a failed scan doesn't stop the others, but the job exits non-zero.
+  - `pipeline/trading_weekly.sh` (run by `railway.trading-optimize.toml`, Sunday 10:00 WIB):
+    optimize for all three tools, timeouts 1h / 3h / 1h, inside Railway's 6-hour limit.
+  - Smoke test: Dividend Play, My Trades and Track Record added to the page checks; the Lab view
+    of each tool must show the paywall to logged-out visitors when `PREMIUM_ENFORCED=true`
+    (GitHub variable passed by `live-smoke-test.yml`; skipped otherwise). Passed against a local
+    server with the gate on.
+  - Open [ASK USER]: run the weekly optimize service once by hand before the first nightly scan;
+    set the `PREMIUM_ENFORCED` GitHub variable when the gate goes on in production.

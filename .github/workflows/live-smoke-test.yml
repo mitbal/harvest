@@ -24,6 +24,7 @@ jobs:
     env:
       BASE_URL: https://panendividen.com
       DEPLOY_SETTLE_SECONDS: ${{ vars.DEPLOY_SETTLE_SECONDS || '120' }}
+      PREMIUM_ENFORCED: ${{ vars.PREMIUM_ENFORCED || 'false' }}
 
     steps:
       - name: Check out the published revision

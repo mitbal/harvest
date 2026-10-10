@@ -10,7 +10,20 @@ const publicPages = [
   { path: '/stock_comparison', heading: 'Stock Comparison' },
   { path: '/backtester', heading: 'Growth at a Discount' },
   { path: '/day_trading', heading: 'Swing Trading' },
+  { path: '/dividend_play', heading: 'Dividend Play' },
+  { path: '/my_trades', heading: 'My trades' },
+  { path: '/track_record', heading: 'Track record' },
 ];
+
+// The Lab view of each trading tool is for supporters only.
+const supporterLabs = [
+  { path: '/dividend_play', heading: 'Dividend Play' },
+  { path: '/day_trading', heading: 'Swing Trading' },
+  { path: '/backtester', heading: 'Growth at a Discount' },
+];
+
+// Set PREMIUM_ENFORCED=true (GitHub variable) once the gate is on in production.
+const premiumEnforced = process.env.PREMIUM_ENFORCED === 'true';
 
 async function expectHealthyStreamlitPage(page, path, heading) {
   const response = await page.goto(path, { waitUntil: 'domcontentloaded' });
@@ -63,5 +76,17 @@ test('stock picker opens a research section for a selected stock', async ({ page
 for (const { path, heading } of publicPages) {
   test(`${path} renders without a Streamlit exception`, async ({ page }) => {
     await expectHealthyStreamlitPage(page, path, heading);
+  });
+}
+
+for (const { path, heading } of supporterLabs) {
+  test(`${path} Lab shows the paywall to logged-out visitors`, async ({ page }) => {
+    test.skip(!premiumEnforced, 'PREMIUM_ENFORCED is not true');
+
+    await expectHealthyStreamlitPage(page, `${path}?view=Lab`, heading);
+    await expect(
+      page.getByRole('heading', { level: 1, name: 'Unlock the trading lab' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: /Log in with Google/ })).toBeVisible();
   });
 }

@@ -9,7 +9,8 @@ watchPatterns = [
 ]
 
 [deploy]
-# Weekly setup search, Sunday 10:00 WIB. Needs the same environment as the jkse pipeline.
-startCommand = "timeout --signal=TERM --kill-after=60s 3h python -m pipeline.trading_optimize --tool dividend_play"
+# Weekly setup search for every tool, Sunday 10:00 WIB (pipeline/trading_weekly.sh).
+# Needs the same environment as the jkse pipeline. Railway stops a run after 6 hours.
+startCommand = "sh pipeline/trading_weekly.sh"
 cronSchedule = "0 3 * * 0"
 restartPolicyType = "NEVER"
