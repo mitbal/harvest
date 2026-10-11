@@ -5,6 +5,7 @@
     "test:live": "playwright test --config=playwright.live.config.js"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1"
+    "@playwright/test": "1.62.1",
+    "railway": "3.13.1"
   }
 }
