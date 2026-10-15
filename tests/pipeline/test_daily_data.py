@@ -1,4 +1,6 @@
+from contextlib import nullcontext
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
@@ -137,6 +139,49 @@ def test_download_data_separates_errors_from_missing_data():
     assert summary["error_symbols"] == ["ERROR"]
 
 
+def _write_snapshot(root):
+    (root / "jkse" / "dividends").mkdir(parents=True)
+    (root / "jkse" / "income_statements").mkdir(parents=True)
+    (root / "jkse" / "dividends" / "PAYS.csv").write_text(
+        "ex_date,dividend\n2026-06-09,170\n"
+    )
+    (root / "jkse" / "income_statements" / "PAYS.csv").write_text(
+        "date,revenue,net_income\n2026-03-31,100,10\n2026-06-30,120,12\n"
+    )
+
+
+def test_download_fundamentals_reads_jkse_from_one_snapshot(tmp_path):
+    _write_snapshot(tmp_path)
+
+    with patch.object(
+        daily_data.hd, "daguerreo_snapshot", return_value=nullcontext(tmp_path)
+    ) as snapshot, patch.object(daily_data.hd.requests, "get") as get:
+        dividends, dividend_summary, financials, financial_summary = (
+            daily_data.download_fundamentals("jkse", ["PAYS.JK", "NODATA.JK"], 2)
+        )
+
+    snapshot.assert_called_once_with()
+    get.assert_not_called()
+    assert dividends["PAYS.JK"]["adjDividend"].tolist() == [170]
+    assert financials["PAYS.JK"]["netIncome"].tolist() == [12, 10]
+    # A stock missing from the snapshot is "no data", not an error.
+    assert dividend_summary["failed_symbols"] == ["NODATA.JK"]
+    assert dividend_summary["errors"] == 0
+    assert financial_summary["failed_symbols"] == ["NODATA.JK"]
+
+
+def test_download_fundamentals_skips_snapshot_for_sp500():
+    with patch.object(daily_data.hd, "daguerreo_snapshot") as snapshot, patch.object(
+        daily_data, "download_single_us_dividend", return_value=pd.DataFrame({"x": [1]})
+    ), patch.object(
+        daily_data, "download_single_us_financial", return_value=pd.DataFrame({"x": [1]})
+    ):
+        dividends, _, financials, _ = daily_data.download_fundamentals("sp500", ["AAPL"], 1)
+
+    snapshot.assert_not_called()
+    assert list(dividends) == list(financials) == ["AAPL"]
+
+
 def _summary(total, error_symbols):
     return {
         "type": "dividend",
@@ -268,6 +313,8 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         "download_data",
         side_effect=[({"TEST.JK": pd.DataFrame()}, download_summary)] * 2,
     ), patch.object(
+        daily_data.hd, "daguerreo_snapshot", return_value=nullcontext(Path("/snapshot"))
+    ), patch.object(
         daily_data,
         "run_historical_pipeline",
         return_value={"rows_upserted": 1},
@@ -349,6 +396,8 @@ def test_run_daily_does_not_publish_when_dividend_downloads_error():
         daily_data,
         "download_data",
         side_effect=[({}, dividend_summary), ({}, dict(dividend_summary, type="financial"))],
+    ), patch.object(
+        daily_data.hd, "daguerreo_snapshot", return_value=nullcontext(Path("/snapshot"))
     ), patch.object(
         daily_data, "run_historical_pipeline", return_value={}
     ) as run_historical, patch.object(

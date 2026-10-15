@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -235,16 +237,16 @@ def download_data(
     return data, summary
 
 
-def download_single_financial(stock: str):
-    return hd.get_financial_data(stock, period="quarter", source="dag")
+def download_single_financial(stock: str, data_dir: Path):
+    return hd.get_financial_data_dag(stock, data_dir=data_dir)
 
 
 def download_single_us_financial(stock: str):
     return hd.get_financial_data(stock, period="quarter", source="fmp")
 
 
-def download_single_dividend(stock: str):
-    return hd.get_dividend_history_single_stock(stock, source="dag")
+def download_single_dividend(stock: str, data_dir: Path):
+    return hd.get_dividend_history_single_stock_dag(stock, data_dir=data_dir)
 
 
 def download_single_us_dividend(stock: str):
@@ -459,6 +461,30 @@ def _add_syariah_status(profiles: pd.DataFrame) -> pd.DataFrame:
     return merged.set_index("symbol")
 
 
+def download_fundamentals(
+    exchange: str, stock_list: list[str], max_concurrency: int
+) -> tuple[dict, dict, dict, dict]:
+    """Dividends and financials for every stock, plus their download summaries.
+
+    JKSE reads both from one Daguerreo snapshot; S&P 500 calls FMP per stock.
+    """
+    with contextlib.ExitStack() as stack:
+        if exchange == "jkse":
+            data_dir = stack.enter_context(hd.daguerreo_snapshot())
+            dividend_function = partial(download_single_dividend, data_dir=data_dir)
+            financial_function = partial(download_single_financial, data_dir=data_dir)
+        else:
+            dividend_function = download_single_us_dividend
+            financial_function = download_single_us_financial
+        dividends, dividend_summary = download_data(
+            stock_list, dividend_function, "dividend", max_concurrency
+        )
+        financials, financial_summary = download_data(
+            stock_list, financial_function, "financial", max_concurrency
+        )
+    return dividends, dividend_summary, financials, financial_summary
+
+
 def check_download_errors(summary: dict, max_error_rate: float) -> None:
     """Raise when too many downloads errored for the outputs to be trusted."""
     total = summary["total"]
@@ -496,15 +522,8 @@ def run_daily(
     logger.info("Starting daily pipeline for %s", exchange)
     profiles, active_stocks = _load_company_profiles(exchange)
 
-    dividend_function = download_single_dividend if exchange == "jkse" else download_single_us_dividend
-    financial_function = (
-        download_single_financial if exchange == "jkse" else download_single_us_financial
-    )
-    dividends, dividend_summary = download_data(
-        active_stocks, dividend_function, "dividend", max_concurrency
-    )
-    financials, financial_summary = download_data(
-        active_stocks, financial_function, "financial", max_concurrency
+    dividends, dividend_summary, financials, financial_summary = download_fundamentals(
+        exchange, active_stocks, max_concurrency
     )
 
     historical_summary = run_historical_pipeline(

@@ -2,7 +2,11 @@ import os
 import io
 import time
 import random
+import tarfile
 import datetime
+import tempfile
+import contextlib
+from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
 
@@ -14,6 +18,7 @@ requests.get = session.get
 from typing import Dict
 
 _DAGUERREO_DATA_BASE = 'https://cdn.jsdelivr.net/gh/mitbal/daguerreo-data@main'
+_DAGUERREO_TARBALL_URL = 'https://codeload.github.com/mitbal/daguerreo-data/tar.gz/refs/heads/main'
 _DAG_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _dag_not_found_cache: set = set()
 _FMP_TIMEOUT = (10, 30)
@@ -43,6 +48,36 @@ def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
         time.sleep(delay + random.uniform(0, 0.4))
     r.raise_for_status()
     return r
+
+
+@contextlib.contextmanager
+def daguerreo_snapshot():
+    """Download the latest Daguerreo commit once and yield its local directory.
+
+    Bulk jobs read every stock from this instead of one CDN request per file:
+    a single tarball is far faster, avoids jsDelivr's 503s, and is never served
+    from a stale ``@main`` cache.
+    """
+    r = _dag_fetch_with_retry(_DAGUERREO_TARBALL_URL)
+    r.raise_for_status()
+    with tempfile.TemporaryDirectory(prefix='daguerreo-') as tmp:
+        with tarfile.open(fileobj=io.BytesIO(r.content), mode='r:gz') as archive:
+            archive.extractall(tmp, filter='data')
+        (root,) = Path(tmp).iterdir()
+        # An empty snapshot would read as "no stock pays dividends", so fail loudly.
+        for folder in ('jkse/dividends', 'jkse/income_statements'):
+            if not any((root / folder).glob('*.csv')):
+                raise RuntimeError(f'Daguerreo snapshot has no {folder} files')
+        yield root
+
+
+def _read_dag_snapshot_file(data_dir, relative_path):
+    """Text of a file in a daguerreo_snapshot, or None when it is missing or empty."""
+    path = Path(data_dir) / relative_path
+    if not path.is_file():
+        return None
+    text = path.read_text()
+    return text if text.strip() else None
 
 # from datetime import datetime, timedelta
 
@@ -259,16 +294,29 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None):
         return None
 
 
-def get_dividend_history_single_stock_dag(stock):
+def _parse_dag_dividends(text):
+    df = pd.read_csv(io.StringIO(text))
+    return df.rename(columns={'ex_date': 'date', 'dividend': 'adjDividend'})
+
+
+def get_dividend_history_single_stock_dag(stock, data_dir=None):
+    """Daguerreo dividends for one IDX stock, from ``data_dir`` (a daguerreo_snapshot) or the CDN."""
+
+    relative_path = f'jkse/dividends/{stock[:4]}.csv'
+    if data_dir is not None:
+        text = _read_dag_snapshot_file(data_dir, relative_path)
+        if text is None:
+            print(f"No dividend data available for {stock} (not in snapshot).")
+            return None
+        return _parse_dag_dividends(text)
 
     if stock in _dag_not_found_cache:
         return None
 
-    url = f'{_DAGUERREO_DATA_BASE}/jkse/dividends/{stock[:4]}.csv'
+    url = f'{_DAGUERREO_DATA_BASE}/{relative_path}'
     r = _dag_fetch_with_retry(url)
     if r.status_code == 200 and r.text.strip() and '404: Not Found' not in r.text:
-        df = pd.read_csv(io.StringIO(r.text))
-        df.rename(columns={'ex_date': 'date', 'dividend': 'adjDividend'}, inplace=True)
+        df = _parse_dag_dividends(r.text)
     else:
         if r.status_code == 404:
             _dag_not_found_cache.add(stock)
@@ -329,23 +377,36 @@ def get_financial_data_fmp(stock, period='quarter', api_key=None):
     return pd.DataFrame(fs)
 
 
-def get_financial_data_dag(stock):
+def _parse_dag_financials(text):
+    df = pd.read_csv(io.StringIO(text))
+    df.rename(columns={
+        'reported_currency': 'reportedCurrency',
+        'calendar_year': 'calendarYear',
+        'gross_profit': 'grossProfit',
+        'net_income': 'netIncome',
+    }, inplace=True)
+    return df.sort_values('date', ascending=False).reset_index(drop=True)
+
+
+def get_financial_data_dag(stock, data_dir=None):
+    """Daguerreo quarterly income statements, from ``data_dir`` (a daguerreo_snapshot) or the CDN."""
     ticker = stock.upper().removesuffix('.JK')
+    relative_path = f'jkse/income_statements/{ticker}.csv'
+    if data_dir is not None:
+        text = _read_dag_snapshot_file(data_dir, relative_path)
+        if text is None:
+            print(f"No financial data available for {stock} (not in snapshot).")
+            return None
+        return _parse_dag_financials(text)
+
     cache_key = f'income_statements/{ticker}'
     if cache_key in _dag_not_found_cache:
         return None
 
-    url = f'{_DAGUERREO_DATA_BASE}/jkse/income_statements/{ticker}.csv'
+    url = f'{_DAGUERREO_DATA_BASE}/{relative_path}'
     r = _dag_fetch_with_retry(url)
     if r.status_code == 200 and r.text.strip() and '404: Not Found' not in r.text:
-        df = pd.read_csv(io.StringIO(r.text))
-        df.rename(columns={
-            'reported_currency': 'reportedCurrency',
-            'calendar_year': 'calendarYear',
-            'gross_profit': 'grossProfit',
-            'net_income': 'netIncome',
-        }, inplace=True)
-        return df.sort_values('date', ascending=False).reset_index(drop=True)
+        return _parse_dag_financials(r.text)
 
     if r.status_code == 404:
         _dag_not_found_cache.add(cache_key)

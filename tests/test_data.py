@@ -6,6 +6,8 @@ External calls (requests, FMP API, USD/IDR rate) are patched with
 unittest.mock so the suite runs offline with zero infrastructure.
 """
 import datetime
+import io
+import tarfile
 from unittest.mock import patch, MagicMock
 
 import numpy as np
@@ -93,6 +95,55 @@ class TestMarketDataSources:
 
         sleep.assert_not_called()
         hd._dag_not_found_cache.discard("NODIV.JK")
+
+    @staticmethod
+    def _tarball(files):
+        """A gzipped tarball shaped like GitHub's: everything under one top-level folder."""
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for name, text in files.items():
+                data = text.encode()
+                info = tarfile.TarInfo(f"daguerreo-data-main/{name}")
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        response = hd.requests.Response()
+        response.status_code = 200
+        response._content = buffer.getvalue()
+        return response
+
+    def test_snapshot_reads_dividends_and_financials_from_disk(self):
+        tarball = self._tarball({
+            "jkse/dividends/BBCA.csv": "ex_date,dividend\n2026-06-09,170\n",
+            "jkse/dividends/EMPT.csv": "",
+            "jkse/income_statements/BBCA.csv": "date,net_income\n2026-03-31,10\n2026-06-30,12\n",
+        })
+        with patch("harvest.data.requests.get", return_value=tarball) as get:
+            with hd.daguerreo_snapshot() as data_dir:
+                dividends = hd.get_dividend_history_single_stock_dag("BBCA.JK", data_dir=data_dir)
+                financials = hd.get_financial_data_dag("BBCA.JK", data_dir=data_dir)
+                assert hd.get_dividend_history_single_stock_dag("EMPT.JK", data_dir=data_dir) is None
+                assert hd.get_dividend_history_single_stock_dag("NONE.JK", data_dir=data_dir) is None
+                assert hd.get_financial_data_dag("NONE.JK", data_dir=data_dir) is None
+            assert not data_dir.exists()
+
+        get.assert_called_once_with(hd._DAGUERREO_TARBALL_URL, timeout=30)
+        assert dividends["adjDividend"].tolist() == [170]
+        assert financials["netIncome"].tolist() == [12, 10]
+
+    def test_snapshot_without_dividends_fails_loudly(self):
+        """A broken snapshot must not read as every stock having no dividends."""
+        tarball = self._tarball({"jkse/income_statements/BBCA.csv": "date\n2026-03-31\n"})
+        with patch("harvest.data.requests.get", return_value=tarball):
+            with pytest.raises(RuntimeError, match="jkse/dividends"):
+                with hd.daguerreo_snapshot():
+                    pass
+
+    def test_snapshot_raises_when_github_stays_unavailable(self):
+        with patch("harvest.data.requests.get", return_value=self._response(503)), \
+                patch("harvest.data.time.sleep"):
+            with pytest.raises(hd.requests.exceptions.HTTPError):
+                with hd.daguerreo_snapshot():
+                    pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
