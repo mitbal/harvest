@@ -119,6 +119,86 @@ def test_download_data_treats_empty_dataframes_as_failures():
             )
 
 
+def test_download_data_separates_errors_from_missing_data():
+    def download(symbol):
+        if symbol == "ERROR":
+            raise RuntimeError("503 Service Unavailable")
+        if symbol == "MISSING":
+            return None
+        return pd.DataFrame({"value": [1]})
+
+    with patch.object(daily_data, "DEFAULT_RETRIES", 0):
+        _data, summary = daily_data.download_data(
+            ["OK", "MISSING", "ERROR"], download, "dividend", max_concurrency=1
+        )
+
+    assert summary["failed_symbols"] == ["ERROR", "MISSING"]
+    assert summary["errors"] == 1
+    assert summary["error_symbols"] == ["ERROR"]
+
+
+def _summary(total, error_symbols):
+    return {
+        "type": "dividend",
+        "total": total,
+        "errors": len(error_symbols),
+        "error_symbols": error_symbols,
+    }
+
+
+def test_check_download_errors_allows_missing_data_and_few_errors():
+    daily_data.check_download_errors(_summary(100, ["A.JK"] * 5), max_error_rate=0.05)
+    daily_data.check_download_errors({"type": "dividend", "total": 0}, max_error_rate=0.05)
+
+
+def test_check_download_errors_rejects_widespread_outage():
+    with pytest.raises(RuntimeError, match="6 of 100 dividend downloads errored"):
+        daily_data.check_download_errors(_summary(100, ["A.JK"] * 6), max_error_rate=0.05)
+
+
+def _score_profiles(symbols):
+    return pd.DataFrame(
+        {
+            "price": [1000.0] * len(symbols),
+            "mktCap": [200_000_000_000] * len(symbols),
+            "ipoDate": ["2010-01-04"] * len(symbols),
+            "lastDiv": [0.0] * len(symbols),
+            "sector": ["Industrials"] * len(symbols),
+            "industry": ["Conglomerates"] * len(symbols),
+            "is_syariah": [True] * len(symbols),
+        },
+        index=pd.Index(symbols, name="symbol"),
+    )
+
+
+def test_compute_div_score_keeps_dividends_without_financials():
+    """A missing income statement used to skip the dividend metrics too."""
+    dividends = {
+        "PAYER.JK": pd.DataFrame(
+            {
+                "date": ["2025-06-11", "2026-06-09"],
+                "adjDividend": [120.0, 170.0],
+                "fiscal_year": [2024, 2025],
+                "dividend_type": ["final", "final"],
+            }
+        )
+    }
+
+    with patch.object(
+        daily_data.hd, "calc_latest_finalized_dividend_sum", return_value=170.0
+    ):
+        frame = daily_data.compute_div_score(
+            _score_profiles(["PAYER.JK", "NONPAYER.JK"]), {}, dividends
+        )
+
+    assert frame.loc["PAYER.JK", "lastDiv"] == 170.0
+    assert frame.loc["PAYER.JK", "yield"] == pytest.approx(17.0)
+    assert frame.loc["PAYER.JK", "numDividendYear"] > 0
+    assert np.isnan(frame.loc["PAYER.JK", "earningTTM"])
+    assert frame.loc["NONPAYER.JK", "lastDiv"] == 0.0
+    assert frame["numOfYear"].tolist() == [datetime.now().year - 2010] * 2
+
+
 def test_load_company_profiles_keeps_only_listed_active_stocks():
     listed = pd.DataFrame({"symbol": ["ACTIVE", "INACTIVE", "ACTIVE"]})
     profiles = pd.DataFrame(
@@ -245,6 +325,45 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
     assert redis_frames["latest_returns_jkse"]["symbol"].tolist() == ["TEST.JK"]
     assert redis_frames["latest_returns_jkse"]["return_1y"].tolist() == [0.1]
     assert store_storage.call_count == 2
+
+
+def test_run_daily_does_not_publish_when_dividend_downloads_error():
+    profiles = pd.DataFrame(
+        {"isActivelyTrading": [True], "mktCap": [200_000_000_000], "price": [100.0]},
+        index=pd.Index(["TEST.JK"], name="symbol"),
+    )
+    dividend_summary = {
+        "type": "dividend",
+        "total": 10,
+        "succeeded": 4,
+        "failed": 6,
+        "failed_symbols": [],
+        "errors": 6,
+        "error_symbols": ["A.JK"] * 6,
+        "success_rate": 40.0,
+    }
+
+    with patch.dict("os.environ", PIPELINE_ENV, clear=True), patch.object(
+        daily_data, "_load_company_profiles", return_value=(profiles, ["TEST.JK"])
+    ), patch.object(
+        daily_data,
+        "download_data",
+        side_effect=[({}, dividend_summary), ({}, dict(dividend_summary, type="financial"))],
+    ), patch.object(
+        daily_data, "run_historical_pipeline", return_value={}
+    ) as run_historical, patch.object(
+        daily_data, "get_supabase_client"
+    ), patch.object(
+        daily_data, "store_frames_to_redis"
+    ) as store_redis, patch.object(
+        daily_data, "store_pickle_to_supabase_storage"
+    ) as store_storage:
+        with pytest.raises(RuntimeError, match="not publishing"):
+            daily_data.run_daily(exchange="jkse")
+
+    run_historical.assert_called_once()
+    store_redis.assert_not_called()
+    store_storage.assert_not_called()
 
 
 def test_storage_upload_errors_propagate():

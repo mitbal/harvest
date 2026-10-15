@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETRIES = 3
 DEFAULT_RETRY_DELAY = 30
 DEFAULT_MAX_CONCURRENCY = 5
+# Above this share of dividend downloads erroring (not just missing), the run
+# refuses to publish so yesterday's scores stay up instead of zeroed dividends.
+MAX_DIVIDEND_ERROR_RATE = 0.05
 DEFAULT_MCAP_FILTERS = {
     "jkse": 100_000_000_000,
     "sp500": 10_000_000_000,
@@ -193,6 +196,7 @@ def download_data(
 
     data = {}
     failed_symbols = []
+    error_symbols = []
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
         futures = {
             executor.submit(_download_with_retries, download_func, stock, data_type): stock
@@ -210,6 +214,7 @@ def download_data(
                     failed_symbols.append(stock)
             except Exception as exc:
                 failed_symbols.append(stock)
+                error_symbols.append(stock)
                 logger.error("%s download exhausted retries for %s: %s", data_type, stock, exc)
 
     if stock_list and not data:
@@ -221,6 +226,9 @@ def download_data(
         "succeeded": len(data),
         "failed": len(failed_symbols),
         "failed_symbols": sorted(failed_symbols),
+        # The subset of failures that raised, as opposed to returning no data.
+        "errors": len(error_symbols),
+        "error_symbols": sorted(error_symbols),
         "success_rate": (len(data) / len(stock_list) * 100) if stock_list else 0.0,
     }
     logger.info("Download summary: %s", summary)
@@ -301,6 +309,8 @@ def compute_div_score(
         frame[column] = value
     frame["mktCap"] = pd.to_numeric(frame["mktCap"], errors="raise").astype("int64")
 
+    # Financial and dividend metrics are computed independently, so a missing
+    # income statement never zeroes a stock's dividend fields (or vice versa).
     for symbol in frame.index.tolist():
         try:
             financial_frame = financials[symbol]
@@ -314,7 +324,14 @@ def compute_div_score(
             frame.loc[symbol, "medianProfitMargin"] = financial_stats["median_profit_margin"]
             frame.loc[symbol, "revenueTTM"] = financial_stats["revenueTTM"]
             frame.loc[symbol, "earningTTM"] = financial_stats["earningTTM"]
+        except Exception as exc:
+            logger.warning("Unable to compute financial metrics for %s: %s", symbol, exc)
 
+        # No dividend history (e.g. Daguerreo 404) means the stock has never paid:
+        # keep the zero defaults. Download errors are caught in run_daily before this.
+        if dividends.get(symbol) is None:
+            continue
+        try:
             dividend_frame = dividends[symbol].copy()
             if exchange == "jkse":
                 last_dividend = hd.calc_latest_finalized_dividend_sum(dividend_frame)
@@ -349,10 +366,11 @@ def compute_div_score(
             frame.loc[symbol, "max10CutPct"] = dividend_stats["max_10y_cut_pct"]
             frame.loc[symbol, "numDividendYear"] = dividend_stats["num_dividend_year"]
             frame.loc[symbol, "positiveYear"] = dividend_stats["num_positive_year"]
-            ipo_year = datetime.strptime(frame.loc[symbol, "ipoDate"], "%Y-%m-%d").year
-            frame.loc[symbol, "numOfYear"] = datetime.now().year - ipo_year
         except Exception as exc:
             logger.warning("Unable to compute dividend metrics for %s: %s", symbol, exc)
+
+    ipo_years = pd.to_datetime(frame["ipoDate"], format="%Y-%m-%d", errors="coerce").dt.year
+    frame["numOfYear"] = datetime.now().year - ipo_years
 
     frame["peRatio"] = frame["mktCap"] / frame["earningTTM"]
     frame["psRatio"] = frame["mktCap"] / frame["revenueTTM"]
@@ -441,6 +459,18 @@ def _add_syariah_status(profiles: pd.DataFrame) -> pd.DataFrame:
     return merged.set_index("symbol")
 
 
+def check_download_errors(summary: dict, max_error_rate: float) -> None:
+    """Raise when too many downloads errored for the outputs to be trusted."""
+    total = summary["total"]
+    error_rate = summary.get("errors", 0) / total if total else 0.0
+    if error_rate > max_error_rate:
+        raise RuntimeError(
+            f"{summary['errors']} of {total} {summary['type']} downloads errored "
+            f"({error_rate:.1%} > {max_error_rate:.0%}); not publishing. "
+            f"Errored symbols: {', '.join(summary['error_symbols'])}"
+        )
+
+
 def run_daily(
     exchange: str = "jkse",
     mcap_filter: Optional[int] = None,
@@ -485,6 +515,9 @@ def run_daily(
         symbols=active_stocks,
         target=price_target,
     )
+
+    # After the price update (so prices still land), before anything is published.
+    check_download_errors(dividend_summary, MAX_DIVIDEND_ERROR_RATE)
 
     supabase = get_supabase_client()
     refresh_warning = None

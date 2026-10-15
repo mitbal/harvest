@@ -59,6 +59,41 @@ class TestMarketDataSources:
         assert "HTTP 429" in output
         assert "secret" not in output
 
+    @staticmethod
+    def _response(status_code, text=""):
+        response = hd.requests.Response()
+        response.status_code = status_code
+        response._content = text.encode()
+        return response
+
+    def test_dag_dividend_raises_when_cdn_stays_unavailable(self):
+        """A persistent 503 must not look like a stock without dividends."""
+        with patch("harvest.data.requests.get", return_value=self._response(503)) as get, \
+                patch("harvest.data.time.sleep") as sleep:
+            with pytest.raises(hd.requests.exceptions.HTTPError):
+                hd.get_dividend_history_single_stock_dag("OUTAGE.JK")
+
+        assert get.call_count == 4
+        assert sleep.call_count == 3
+        assert "OUTAGE.JK" not in hd._dag_not_found_cache
+
+    def test_dag_dividend_recovers_after_transient_503(self):
+        csv = "ex_date,dividend,payment_date,fiscal_year,dividend_type\n2026-06-09,170,2026-06-25,2025,final\n"
+        responses = [self._response(503), self._response(200, csv)]
+        with patch("harvest.data.requests.get", side_effect=responses), \
+                patch("harvest.data.time.sleep"):
+            result = hd.get_dividend_history_single_stock_dag("RECOVER.JK")
+
+        assert result["adjDividend"].tolist() == [170]
+
+    def test_dag_dividend_returns_none_for_missing_file(self):
+        with patch("harvest.data.requests.get", return_value=self._response(404)), \
+                patch("harvest.data.time.sleep") as sleep:
+            assert hd.get_dividend_history_single_stock_dag("NODIV.JK") is None
+
+        sleep.assert_not_called()
+        hd._dag_not_found_cache.discard("NODIV.JK")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # preprocess_div

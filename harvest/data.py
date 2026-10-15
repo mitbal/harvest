@@ -20,11 +20,18 @@ _FMP_TIMEOUT = (10, 30)
 
 
 def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
+    """GET a Daguerreo file, retrying transient statuses; raises HTTPError if they persist.
+
+    Raising (instead of returning the response) keeps a CDN outage from looking
+    like a stock with no data, and lets callers' own retries run.
+    """
     r = None
     for attempt in range(retries):
         r = requests.get(url, timeout=30)
         if r.status_code in (200, 404) or r.status_code not in _DAG_RETRYABLE_STATUS:
             return r
+        if attempt == retries - 1:
+            break
         retry_after = r.headers.get('Retry-After')
         if retry_after:
             try:
@@ -34,6 +41,7 @@ def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
         else:
             delay = base_delay * (2 ** attempt)
         time.sleep(delay + random.uniform(0, 0.4))
+    r.raise_for_status()
     return r
 
 # from datetime import datetime, timedelta
