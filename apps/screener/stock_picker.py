@@ -1834,6 +1834,21 @@ filter_controls = full_table_section.container(
     gap='medium',
 )
 
+# Each option lists the state_owned tags it hides
+OWNERSHIP_OPTIONS = {
+    'All': None,
+    'No BUMN (+Anak)': ['BUMN', 'Anak BUMN'],
+}
+
+
+def filter_by_ownership(df, choice):
+    """Drop the stocks whose state_owned tag the chosen ownership filter hides."""
+    statuses = OWNERSHIP_OPTIONS.get(choice)
+    if statuses is None or 'state_owned' not in df.columns:
+        return df
+    return df[~df['state_owned'].isin(statuses)]
+
+
 is_syariah = False
 if sl == 'JKSE':
     syariah_filter = filter_controls.segmented_control(
@@ -1855,6 +1870,16 @@ final_df = get_div_score_table(key)
 if sl != 'JKSE':
     final_df = final_df.drop('GOOGL', errors='ignore')
 
+# Old cached tables have no state_owned column until the pipeline reruns
+ownership_filter = 'All'
+if sl == 'JKSE' and 'state_owned' in final_df.columns:
+    ownership_filter = filter_controls.segmented_control(
+        'Ownership filter',
+        options=list(OWNERSHIP_OPTIONS),
+        default='All',
+        width='content',
+    )
+
 # ---------------------------------------------------------------------------
 # Column pruning — keep only columns actually used in the page
 # ---------------------------------------------------------------------------
@@ -1871,8 +1896,8 @@ _KEEP_COLS = [
     # Returns
     'return_7d', 'return_1m', 'return_1y', 'return_10y',
     'total_return_1y', 'total_return_10y',
-    # Syariah flag (JKSE only)
-    'is_syariah',
+    # Syariah and state ownership tags (JKSE only)
+    'is_syariah', 'state_owned',
 ]
 
 _TABLE_PRESETS = {
@@ -1997,6 +2022,7 @@ with full_table_section:
 
     if is_syariah:
         final_df = final_df[final_df['is_syariah'] == True]
+    final_df = filter_by_ownership(final_df, ownership_filter)
 
     filtered_df = get_processed_df(final_df, currency)
 

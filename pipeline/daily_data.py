@@ -427,7 +427,7 @@ def compute_div_score(
         "total_return_10y",
     ]
     if exchange == "jkse":
-        features.insert(0, "is_syariah")
+        features[:0] = ["is_syariah", "state_owned"]
     return frame[features]
 
 
@@ -459,6 +459,16 @@ def _add_syariah_status(profiles: pd.DataFrame) -> pd.DataFrame:
     merged = profiles.reset_index().merge(syariah, on="symbol", how="left")
     merged["is_syariah"] = merged["Kode"].notna()
     return merged.set_index("symbol")
+
+
+def _add_state_owned_status(profiles: pd.DataFrame) -> pd.DataFrame:
+    """Tag each stock as BUMN, Anak BUMN or Swasta from the curated list."""
+    bumn_path = REPOSITORY_ROOT / "data" / "jkse" / "bumn.csv"
+    bumn = pd.read_csv(bumn_path, sep=";", usecols=["Kode", "Status"])
+    status = bumn.set_index(bumn["Kode"].astype(str) + ".JK")["Status"]
+    tagged = profiles.copy()
+    tagged["state_owned"] = tagged.index.map(status).fillna("Swasta")
+    return tagged
 
 
 def download_fundamentals(
@@ -547,6 +557,7 @@ def run_daily(
         latest_returns = get_latest_returns_from_prices(exchange, active_stocks)
     if exchange == "jkse":
         profiles = _add_syariah_status(profiles)
+        profiles = _add_state_owned_status(profiles)
 
     latest_returns = latest_returns[latest_returns.index.astype(str).isin(active_stocks)]
     if latest_returns.empty:

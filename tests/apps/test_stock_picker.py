@@ -228,3 +228,20 @@ def test_ddm_range_has_no_upper_bound_when_spread_is_too_narrow():
 
     assert low is not None
     assert high is None
+
+
+def test_ownership_filter_hides_bumn_and_subsidiaries():
+    df = pd.DataFrame(
+        {'state_owned': ['BUMN', 'Anak BUMN', 'Swasta']},
+        index=['BBRI.JK', 'PTBA.JK', 'ASII.JK'],
+    )
+
+    assert sp.filter_by_ownership(df, 'No BUMN (+Anak)').index.tolist() == ['ASII.JK']
+    assert len(sp.filter_by_ownership(df, 'All')) == 3
+    assert len(sp.filter_by_ownership(df, None)) == 3
+
+
+def test_ownership_filter_ignores_tables_without_the_tag():
+    df = pd.DataFrame({'price': [1.0]}, index=['BBRI.JK'])
+
+    assert sp.filter_by_ownership(df, 'No BUMN (+Anak)') is df

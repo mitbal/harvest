@@ -211,6 +211,7 @@ def _score_profiles(symbols):
             "sector": ["Industrials"] * len(symbols),
             "industry": ["Conglomerates"] * len(symbols),
             "is_syariah": [True] * len(symbols),
+            "state_owned": ["Swasta"] * len(symbols),
         },
         index=pd.Index(symbols, name="symbol"),
     )
@@ -242,6 +243,23 @@ def test_compute_div_score_keeps_dividends_without_financials():
     assert np.isnan(frame.loc["PAYER.JK", "earningTTM"])
     assert frame.loc["NONPAYER.JK", "lastDiv"] == 0.0
     assert frame["numOfYear"].tolist() == [datetime.now().year - 2010] * 2
+    assert frame["state_owned"].tolist() == ["Swasta", "Swasta"]
+
+
+def test_add_state_owned_status_defaults_unlisted_stocks_to_swasta():
+    profiles = pd.DataFrame(
+        {"price": [1.0, 2.0, 3.0]},
+        index=pd.Index(["BBRI.JK", "PTBA.JK", "ASII.JK"], name="symbol"),
+    )
+
+    tagged = daily_data._add_state_owned_status(profiles)
+
+    assert tagged["state_owned"].to_dict() == {
+        "BBRI.JK": "BUMN",
+        "PTBA.JK": "Anak BUMN",
+        "ASII.JK": "Swasta",
+    }
+    assert tagged.index.name == "symbol"
 
 
 def test_load_company_profiles_keeps_only_listed_active_stocks():
@@ -324,6 +342,10 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         daily_data, "refresh_returns_view"
     ) as refresh_view, patch.object(
         daily_data, "_add_syariah_status", side_effect=lambda frame: frame.assign(is_syariah=True)
+    ), patch.object(
+        daily_data,
+        "_add_state_owned_status",
+        side_effect=lambda frame: frame.assign(state_owned="Swasta"),
     ), patch.object(
         daily_data,
         "get_latest_returns_from_prices",

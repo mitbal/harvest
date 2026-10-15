@@ -33,6 +33,7 @@ Thumbs.db
 # Data and Artifacts
 data/jkse/*
 !data/jkse/syariah.csv
+!data/jkse/bumn.csv
 data/sp500/
 data/logs/
 data/images/

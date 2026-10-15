@@ -23,5 +23,6 @@ ENV PATH="/opt/venv/bin:$PATH" \
 COPY harvest ./harvest
 COPY pipeline ./pipeline
 COPY data/jkse/syariah.csv ./data/jkse/syariah.csv
+COPY data/jkse/bumn.csv ./data/jkse/bumn.csv
 
 CMD ["python", "-m", "pipeline.daily_data", "--help"]
