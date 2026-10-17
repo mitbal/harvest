@@ -31,12 +31,11 @@ def test_validate_environment_reports_all_missing_variables():
         assert variable in str(error.value)
 
 
-def test_validate_environment_skips_r2_for_supabase_rollback():
+def test_validate_environment_requires_r2():
     env = {name: "x" for name in daily_data.REQUIRED_ENVIRONMENT}
     with patch.dict("os.environ", env, clear=True):
-        daily_data.validate_environment("supabase")
         with pytest.raises(EnvironmentError, match="R2_BUCKET"):
-            daily_data.validate_environment("r2")
+            daily_data.validate_environment()
 
 
 def _history(symbol, closes):
@@ -75,7 +74,6 @@ def test_parser_uses_current_year_and_exchange_defaults():
     assert args.start_year == 2020
     assert args.end_year == datetime.now().year
     assert args.mcap_filter is None
-    assert args.price_target == "r2"
 
 
 def test_main_returns_nonzero_when_pipeline_fails():
@@ -339,8 +337,6 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
     ) as run_historical, patch.object(
         daily_data, "get_supabase_client", return_value=supabase
     ), patch.object(
-        daily_data, "refresh_returns_view"
-    ) as refresh_view, patch.object(
         daily_data, "_add_syariah_status", side_effect=lambda frame: frame.assign(is_syariah=True)
     ), patch.object(
         daily_data,
@@ -383,10 +379,8 @@ def test_run_daily_uses_exchange_defaults_and_current_calendar_year():
         max_concurrency=daily_data.DEFAULT_MAX_CONCURRENCY,
         use_local_cache=False,
         symbols=["TEST.JK"],
-        target="r2",
     )
     get_returns.assert_called_once_with("jkse", ["TEST.JK"])
-    refresh_view.assert_not_called()
     assert compute_score.call_args.kwargs["latest_returns"].index.tolist() == ["TEST.JK"]
     assert summary["returns_rows"] == 1
     redis_frames = store_redis.call_args.args[0]
@@ -443,16 +437,6 @@ def test_storage_upload_errors_propagate():
 
     with pytest.raises(RuntimeError, match="storage failed"):
         daily_data.store_pickle_to_supabase_storage("data/test.pkl", {}, client=client)
-
-
-def test_returns_view_read_errors_propagate():
-    client = MagicMock()
-    client.table.return_value.select.return_value.range.return_value.execute.side_effect = (
-        RuntimeError("database unavailable")
-    )
-
-    with pytest.raises(RuntimeError, match="Unable to fetch returns"):
-        daily_data.get_latest_returns_from_db(client)
 
 
 def test_prefect_daily_wrapper_delegates_to_plain_core():

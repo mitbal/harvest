@@ -277,6 +277,9 @@ and the related tests.
 - [x] Hand the user the cleanup SQL, to run only after production reads are confirmed working:
       `drop index if exists idx_historical_prices_symbol;` now, and later
       `drop materialized view mat_view_latest_returns; drop table historical_prices;` [ASK USER].
+- [x] After the drop, remove the rollback path: `upsert_to_db`, `--target` (core CLI),
+      `--price-target`, `refresh_returns_view` and `get_latest_returns_from_db` (`daily_data`),
+      and `pipeline/historical_prices.sql`. R2 is now the only price store.
 
 Done when: no app or pipeline code queries `historical_prices` or `mat_view_latest_returns`;
 pages load prices from Parquet; tests pass.

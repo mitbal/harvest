@@ -19,7 +19,7 @@ from supabase import Client, create_client
 
 import harvest.data as hd
 import harvest.prices as prices
-from pipeline.historical_prices_core import TARGETS as PRICE_TARGETS, run_historical_pipeline
+from pipeline.historical_prices_core import run_historical_pipeline
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ DEFAULT_MCAP_FILTERS = {
 REQUIRED_ENVIRONMENT = ("FMP_API_KEY", "REDIS_URL", "SUPABASE_URL", "SUPABASE_KEY")
 R2_ENVIRONMENT = tuple(f"R2_{field.upper()}" for field in prices.R2_FIELDS)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-# Trading sessions back from the latest close, matching the old mat_view_latest_returns.
+# Trading sessions back from the latest close.
 RETURN_WINDOWS = {
     "return_7d": 5,
     "return_1m": 21,
@@ -46,8 +46,8 @@ RETURN_WINDOWS = {
 }
 
 
-def validate_environment(price_target: str = "r2") -> None:
-    required = REQUIRED_ENVIRONMENT + (R2_ENVIRONMENT if price_target == "r2" else ())
+def validate_environment() -> None:
+    required = REQUIRED_ENVIRONMENT + R2_ENVIRONMENT
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
         raise EnvironmentError(f"Missing required environment variables: {', '.join(missing)}")
@@ -116,50 +116,6 @@ def compute_latest_returns(price_history: pd.DataFrame) -> pd.DataFrame:
 def get_latest_returns_from_prices(exchange: str, symbols: list[str]) -> pd.DataFrame:
     """Latest returns for ``symbols`` from the R2 price history."""
     return compute_latest_returns(prices.read_prices(exchange, symbols=symbols))
-
-
-def refresh_returns_view(client: Optional[Client] = None) -> Optional[str]:
-    """Request a materialized-view refresh (Supabase rollback target only)."""
-    try:
-        (client or get_supabase_client()).rpc("refresh_latest_returns").execute()
-        return None
-    except Exception as exc:
-        message = str(exc)
-        logger.warning(
-            "Returns-view refresh returned an error; Postgres may still be refreshing: %s",
-            message,
-        )
-        return message
-
-
-def get_latest_returns_from_db(client: Optional[Client] = None) -> pd.DataFrame:
-    """Fetch all precalculated returns from the materialized view (Supabase rollback target only)."""
-    supabase = client or get_supabase_client()
-    records = []
-    page_size = 1000
-    offset = 0
-    try:
-        while True:
-            response = (
-                supabase.table("mat_view_latest_returns")
-                .select("*")
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
-            page = response.data or []
-            if not page:
-                break
-            records.extend(page)
-            if len(page) < page_size:
-                break
-            offset += page_size
-    except Exception as exc:
-        raise RuntimeError("Unable to fetch returns from materialized view") from exc
-
-    frame = pd.DataFrame(records)
-    if not frame.empty and "symbol" in frame.columns:
-        frame = frame.set_index("symbol")
-    return frame
 
 
 def _download_with_retries(
@@ -513,10 +469,9 @@ def run_daily(
     dividend_years=None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     use_local_price_cache: bool = False,
-    price_target: str = "r2",
 ) -> dict:
     """Run the complete daily data pipeline and return a serializable summary."""
-    validate_environment(price_target)
+    validate_environment()
     if exchange not in DEFAULT_MCAP_FILTERS:
         raise ValueError("exchange must be either 'jkse' or 'sp500'")
     if max_concurrency < 1:
@@ -542,19 +497,13 @@ def run_daily(
         max_concurrency=max_concurrency,
         use_local_cache=use_local_price_cache,
         symbols=active_stocks,
-        target=price_target,
     )
 
     # After the price update (so prices still land), before anything is published.
     check_download_errors(dividend_summary, MAX_DIVIDEND_ERROR_RATE)
 
     supabase = get_supabase_client()
-    refresh_warning = None
-    if price_target == "supabase":
-        refresh_warning = refresh_returns_view(supabase)
-        latest_returns = get_latest_returns_from_db(supabase)
-    else:
-        latest_returns = get_latest_returns_from_prices(exchange, active_stocks)
+    latest_returns = get_latest_returns_from_prices(exchange, active_stocks)
     if exchange == "jkse":
         profiles = _add_syariah_status(profiles)
         profiles = _add_state_owned_status(profiles)
@@ -607,7 +556,6 @@ def run_daily(
         },
         "historical_prices": historical_summary,
         "returns_rows": len(latest_returns),
-        "returns_refresh_warning": refresh_warning,
         "score_rows": len(dividend_scores),
         "score_non_null": int(dividend_scores["DScore"].notna().sum()),
         "calendar_years": sorted(available_years),
@@ -624,12 +572,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-year", type=int, default=2020)
     parser.add_argument("--end-year", type=int, default=datetime.now().year)
     parser.add_argument("--max-concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
-    parser.add_argument(
-        "--price-target",
-        choices=PRICE_TARGETS,
-        default="r2",
-        help="Where daily prices are stored; 'supabase' is the pre-R2 path, kept for rollback",
-    )
     return parser
 
 
@@ -648,7 +590,6 @@ def main(argv=None) -> int:
             dividend_years=range(args.start_year, args.end_year + 1),
             max_concurrency=args.max_concurrency,
             use_local_price_cache=False,
-            price_target=args.price_target,
         )
         return 0
     except Exception:

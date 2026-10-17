@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -22,11 +22,6 @@ def test_rejects_unknown_mode():
         historical_prices_core.run_historical_pipeline(mode="unknown")
 
 
-def test_rejects_unknown_target():
-    with pytest.raises(ValueError, match="target"):
-        historical_prices_core.run_historical_pipeline(target="unknown")
-
-
 def test_r2_target_merges_new_rows_into_stored_history():
     stored = pd.DataFrame(
         {
@@ -44,10 +39,9 @@ def test_r2_target_merges_new_rows_into_stored_history():
         historical_prices_core.prices, "read_prices", return_value=stored
     ), patch.object(
         historical_prices_core.prices, "write_prices"
-    ) as write, patch.object(historical_prices_core, "upsert_to_db") as upsert:
+    ) as write:
         summary = historical_prices_core.run_historical_pipeline(max_concurrency=1)
 
-    upsert.assert_not_called()
     written = write.call_args.args[1]
     # The corrected close replaces the stored one; other symbols keep their history.
     assert written[["symbol", "close"]].values.tolist() == [
@@ -55,7 +49,6 @@ def test_r2_target_merges_new_rows_into_stored_history():
         ["TEST", 80.0],
         ["TEST", 100.0],
     ]
-    assert summary["target"] == "r2"
     assert summary["rows_stored"] == 3
 
 
@@ -102,9 +95,7 @@ def test_r2_backfill_does_not_read_stored_history():
     assert fetch.call_args.args[1] == historical_prices_core.BACKFILL_START_DATE
 
 
-def test_partial_price_downloads_are_upserted():
-    client = MagicMock()
-
+def test_partial_price_downloads_are_stored():
     def fetch(symbol, _start_date):
         if symbol == "FAIL":
             raise RuntimeError("failed")
@@ -114,17 +105,13 @@ def test_partial_price_downloads_are_upserted():
         historical_prices_core.hd, "get_all_idx_stocks", return_value=_stocks("OK", "FAIL")
     ), patch.object(
         historical_prices_core, "_fetch_with_retries", side_effect=fetch
-    ), patch.object(
-        historical_prices_core, "get_supabase_client", return_value=client
-    ), patch.object(historical_prices_core, "upsert_to_db") as upsert:
-        summary = historical_prices_core.run_historical_pipeline(
-            max_concurrency=2, target="supabase"
-        )
+    ), patch.object(historical_prices_core, "write_to_r2", return_value=1) as store:
+        summary = historical_prices_core.run_historical_pipeline(max_concurrency=2)
 
     assert summary["symbols_succeeded"] == 1
     assert summary["failed_symbols"] == ["FAIL"]
     assert summary["rows_upserted"] == 1
-    upsert.assert_called_once()
+    assert store.call_args.args[1]["symbol"].tolist() == ["OK"]
 
 
 def test_empty_price_stage_fails():
@@ -136,17 +123,13 @@ def test_empty_price_stage_fails():
 
 
 def test_supplied_symbols_define_the_historical_price_universe():
-    client = MagicMock()
-
     with patch.object(
         historical_prices_core.hd, "get_all_idx_stocks"
     ) as get_stocks, patch.object(
         historical_prices_core, "_fetch_with_retries", return_value=_prices("ACTIVE")
-    ) as fetch, patch.object(
-        historical_prices_core, "get_supabase_client", return_value=client
-    ), patch.object(historical_prices_core, "upsert_to_db"):
+    ) as fetch, patch.object(historical_prices_core, "write_to_r2", return_value=1):
         summary = historical_prices_core.run_historical_pipeline(
-            symbols=["ACTIVE", "ACTIVE"], max_concurrency=1, target="supabase"
+            symbols=["ACTIVE", "ACTIVE"], max_concurrency=1
         )
 
     get_stocks.assert_not_called()
@@ -159,21 +142,17 @@ def test_local_cache_keeps_new_corrections(tmp_path):
     prices.write_prices(
         "jkse", pd.concat([_prices("TEST", close=90.0), _prices("INACTIVE")]), path=cache_path
     )
-    client = MagicMock()
 
     with patch.object(
         historical_prices_core.hd, "get_all_idx_stocks", return_value=_stocks("TEST")
     ), patch.object(
         historical_prices_core, "_fetch_with_retries", return_value=_prices("TEST", close=100.0)
-    ), patch.object(
-        historical_prices_core, "get_supabase_client", return_value=client
-    ), patch.object(historical_prices_core, "upsert_to_db"):
+    ), patch.object(historical_prices_core, "write_to_r2", return_value=1):
         historical_prices_core.run_historical_pipeline(
             max_concurrency=1,
             use_local_cache=True,
             cache_path=cache_path,
             symbols=["TEST"],
-            target="supabase",
         )
 
     cached = prices.read_prices("jkse", path=cache_path)
@@ -181,7 +160,7 @@ def test_local_cache_keeps_new_corrections(tmp_path):
     assert cached["symbol"].tolist() == ["TEST"]
 
 
-def test_database_failure_does_not_replace_local_cache(tmp_path):
+def test_store_failure_does_not_replace_local_cache(tmp_path):
     cache_path = tmp_path / "jkse" / "historical_prices.parquet"
     prices.write_prices("jkse", _prices("TEST", close=90.0), path=cache_path)
     original = prices.read_prices("jkse", path=cache_path)
@@ -191,16 +170,13 @@ def test_database_failure_does_not_replace_local_cache(tmp_path):
     ), patch.object(
         historical_prices_core, "_fetch_with_retries", return_value=_prices("TEST", close=100.0)
     ), patch.object(
-        historical_prices_core, "get_supabase_client", return_value=MagicMock()
-    ), patch.object(
-        historical_prices_core, "upsert_to_db", side_effect=RuntimeError("database failed")
+        historical_prices_core, "write_to_r2", side_effect=OSError("R2 write failed")
     ):
-        with pytest.raises(RuntimeError, match="database failed"):
+        with pytest.raises(OSError, match="R2 write failed"):
             historical_prices_core.run_historical_pipeline(
                 max_concurrency=1,
                 use_local_cache=True,
                 cache_path=cache_path,
-                target="supabase",
             )
 
     pd.testing.assert_frame_equal(prices.read_prices("jkse", path=cache_path), original)
@@ -231,20 +207,11 @@ def test_prefect_historical_wrapper_delegates_to_plain_core():
     )
 
 
-def test_cli_passes_target_and_start_date():
+def test_cli_passes_start_date():
     with patch.object(
         historical_prices_core, "run_historical_pipeline", return_value={}
     ) as run:
-        code = historical_prices_core.main(
-            ["--exchange", "jkse", "--target", "supabase", "--start-date", "2026-04-01"]
-        )
+        code = historical_prices_core.main(["--exchange", "jkse", "--start-date", "2026-04-01"])
 
     assert code == 0
-    assert run.call_args.kwargs["target"] == "supabase"
     assert run.call_args.kwargs["start_date"] == "2026-04-01"
-
-
-def test_cli_defaults_to_r2():
-    args = historical_prices_core.build_parser().parse_args(["--exchange", "jkse"])
-
-    assert args.target == "r2"

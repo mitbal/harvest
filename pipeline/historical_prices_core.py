@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from supabase import Client, create_client
 
 import harvest.data as hd
 import harvest.prices as prices
@@ -21,16 +20,6 @@ DEFAULT_RETRIES = 3
 DEFAULT_RETRY_DELAY = 10
 DEFAULT_MAX_CONCURRENCY = 10
 BACKFILL_START_DATE = "2010-01-01"
-TARGETS = ("r2", "supabase")
-
-
-def get_supabase_client() -> Client:
-    """Create a Supabase client from the pipeline environment."""
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY environment variables.")
-    return create_client(url, key)
 
 
 def get_local_path(exchange: str) -> Path:
@@ -96,14 +85,6 @@ def write_to_r2(exchange: str, new_frame: pd.DataFrame, mode: str) -> int:
     return len(merged)
 
 
-def upsert_to_db(frame: pd.DataFrame, client: Optional[Client] = None) -> None:
-    """Upsert one historical-price chunk into Supabase (rollback target)."""
-    if frame.empty:
-        return
-    supabase = client or get_supabase_client()
-    supabase.table("historical_prices").upsert(frame.to_dict(orient="records")).execute()
-
-
 def run_historical_pipeline(
     exchange: str = "jkse",
     mode: str = "incremental",
@@ -111,10 +92,9 @@ def run_historical_pipeline(
     use_local_cache: bool = False,
     cache_path: Optional[Path] = None,
     symbols: Optional[list[str]] = None,
-    target: str = "r2",
     start_date: Optional[str] = None,
 ) -> dict:
-    """Fetch historical prices and persist them to R2 (or Supabase, for rollback).
+    """Fetch historical prices and merge them into the R2 price history.
 
     Incremental mode refetches the last 7 days (or from ``start_date``) and
     merges them into the stored history; backfill rebuilds it from 2010.
@@ -123,8 +103,6 @@ def run_historical_pipeline(
         raise ValueError("exchange must be either 'jkse' or 'sp500'")
     if mode not in {"incremental", "backfill"}:
         raise ValueError("mode must be either 'incremental' or 'backfill'")
-    if target not in TARGETS:
-        raise ValueError(f"target must be one of {', '.join(TARGETS)}")
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
 
@@ -171,14 +149,7 @@ def run_historical_pipeline(
     new_frame = pd.concat(all_data, ignore_index=True).drop_duplicates(
         subset=["symbol", "date"], keep="last"
     )
-    stored_rows = None
-    if target == "r2":
-        stored_rows = write_to_r2(exchange, new_frame, mode)
-    else:
-        client = get_supabase_client()
-        chunk_size = 1000
-        for offset in range(0, len(new_frame), chunk_size):
-            upsert_to_db(new_frame.iloc[offset : offset + chunk_size], client=client)
+    stored_rows = write_to_r2(exchange, new_frame, mode)
 
     if use_local_cache:
         local_path = cache_path or get_local_path(exchange)
@@ -200,7 +171,6 @@ def run_historical_pipeline(
         "symbols_failed": len(failed_symbols),
         "failed_symbols": sorted(failed_symbols),
         "rows_upserted": len(new_frame),
-        "target": target,
         "rows_stored": stored_rows,
         "local_cache_enabled": use_local_cache,
     }
@@ -212,7 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fetch daily prices into the price store")
     parser.add_argument("--exchange", choices=["jkse", "sp500"], required=True)
     parser.add_argument("--mode", choices=["incremental", "backfill"], default="incremental")
-    parser.add_argument("--target", choices=TARGETS, default="r2")
     parser.add_argument("--start-date", help="Refetch from this date (YYYY-MM-DD) in incremental mode")
     parser.add_argument("--max-concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
     return parser
@@ -225,7 +194,6 @@ def main(argv=None) -> int:
             exchange=args.exchange,
             mode=args.mode,
             max_concurrency=args.max_concurrency,
-            target=args.target,
             start_date=args.start_date,
         )
         return 0
