@@ -68,6 +68,25 @@ def test_dividend_history_marks_current_year_as_partial_not_a_cut():
     assert status[this_year - 1] == 'Raised or held'
 
 
+def test_dividend_history_projection_of_a_cutter_stays_positive():
+    div_df = pd.DataFrame({
+        'date': ['2020-04-01', '2021-04-01', '2022-04-01'],
+        'adjDividend': [160.0, 130.0, 100.0],
+    })
+    chart = plot.plot_dividend_history(div_df, extrapolote=True, n_future_years=5, last_val=100, inc_val=-30)
+    spec = chart.to_dict()
+    projected = [
+        row['adjDividend']
+        for rows in spec['datasets'].values()
+        for row in rows
+        if 'status' not in row
+    ]
+
+    assert len(projected) == 5
+    assert all(v > 0 for v in projected)
+    assert projected == sorted(projected, reverse=True)
+
+
 def test_diverging_color_centres_the_ramp_on_mid():
     from harvest import chart_style as cs
 

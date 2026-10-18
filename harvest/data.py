@@ -606,6 +606,32 @@ def is_dividend_schedule_current(div_df, as_of=None, grace_days=60):
     return bool((end_date - payment_dates.iloc[-1]).days <= expected_days + grace_days)
 
 
+# Yearly growth bounds for dividend projections, shared by the screener's score and charts.
+DIV_PROJECTION_MIN_GROWTH = -0.20
+DIV_PROJECTION_MAX_GROWTH = 0.05
+
+
+def calc_div_projection_rate(last_div, annual_increase):
+    """Turn the flat average yearly increase into a capped fractional growth rate."""
+    last_div = pd.to_numeric(last_div, errors='coerce')
+    annual_increase = pd.to_numeric(annual_increase, errors='coerce')
+    if not np.isfinite(last_div) or last_div <= 0 or not np.isfinite(annual_increase):
+        return 0.0
+    return float(np.clip(annual_increase / last_div, DIV_PROJECTION_MIN_GROWTH, DIV_PROJECTION_MAX_GROWTH))
+
+
+def project_dividends(last_div, annual_increase, n_years):
+    """Compound the latest dividend forward for n_years at its capped growth rate.
+
+    Compounding a cut shrinks the dividend toward zero instead of a flat cut driving it negative.
+    """
+    last_div = pd.to_numeric(last_div, errors='coerce')
+    if not np.isfinite(last_div) or last_div <= 0:
+        return [0.0] * n_years
+    rate = calc_div_projection_rate(last_div, annual_increase)
+    return [float(last_div * (1 + rate) ** (i + 1)) for i in range(n_years)]
+
+
 def calc_div_stats(div_df_input):
 
     stats = {}

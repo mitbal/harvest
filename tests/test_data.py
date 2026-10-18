@@ -370,6 +370,41 @@ class TestCalcDivScore:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# project_dividends
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestProjectDividends:
+
+    def test_steady_cutter_decays_without_going_negative(self):
+        # A flat -30/yr on 100 used to project 70, 40, 10, -20, -50.
+        result = hd.project_dividends(100, -30, 5)
+        assert result == pytest.approx([80, 64, 51.2, 40.96, 32.768])
+        assert all(v > 0 for v in result)
+
+    def test_growth_is_capped(self):
+        result = hd.project_dividends(100, 50, 2)
+        assert result == pytest.approx([105, 110.25])
+
+    def test_growth_within_caps_is_compounded(self):
+        result = hd.project_dividends(100, 3, 2)
+        assert result == pytest.approx([103, 106.09])
+
+    def test_flat_dividend_stays_flat(self):
+        assert hd.project_dividends(100, 0, 3) == pytest.approx([100, 100, 100])
+
+    @pytest.mark.parametrize("last_div", [0, -5, np.nan, None])
+    def test_missing_or_non_positive_last_div_projects_zero(self, last_div):
+        assert hd.project_dividends(last_div, 10, 3) == [0.0, 0.0, 0.0]
+
+    def test_missing_increase_holds_dividend_flat(self):
+        assert hd.project_dividends(100, np.nan, 2) == pytest.approx([100, 100])
+
+    def test_rate_uses_the_shared_bounds(self):
+        assert hd.calc_div_projection_rate(100, -90) == hd.DIV_PROJECTION_MIN_GROWTH
+        assert hd.calc_div_projection_rate(100, 90) == hd.DIV_PROJECTION_MAX_GROWTH
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # calc_growth_stats
 # ══════════════════════════════════════════════════════════════════════════════
 

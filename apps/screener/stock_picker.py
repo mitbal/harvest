@@ -712,7 +712,8 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
         curr_price = stock_data['price']
         pe_ratio = stock_data['peRatio']
         
-        next_div = last_div + inc_val
+        next_div = hd.project_dividends(last_div, inc_val, 1)[0]
+        next_change = next_div - last_div
         next_yield = next_div / curr_price * 100 if curr_price > 0 else 0
 
         payout_ratio = None
@@ -735,8 +736,8 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         
         k1.metric('Est. Next Div', f"{next_div:,.1f}", 
-                  delta=f"{inc_val:+.1f} YoY" if inc_val != 0 else None,
-                  delta_color='normal' if inc_val >= 0 else 'inverse')
+                  delta=f"{next_change:+.1f} YoY" if next_change != 0 else None,
+                  delta_color='normal')
                   
         k2.metric('Dividend Yield', f"{next_yield:.2f}%")
         
@@ -1951,7 +1952,8 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     #    floored at -20%/yr, so dividend cutters degrade gracefully instead of
     #    having the whole score clip to 0.
     reliability = (df['positiveYear'] / df['numOfYear'].replace(0, np.nan)).fillna(1.0)
-    growth_rate = (df['avgFlatAnnualDivIncrease'] / df['lastDiv'].replace(0, np.nan)).clip(-0.20, 0.05).fillna(0)
+    growth_rate = (df['avgFlatAnnualDivIncrease'] / df['lastDiv'].replace(0, np.nan)).clip(
+        hd.DIV_PROJECTION_MIN_GROWTH, hd.DIV_PROJECTION_MAX_GROWTH).fillna(0)
     proj_div    = df['lastDiv'] * (1 + growth_rate * PROJECTION_HORIZON_YRS * reliability)
     fwd_yield   = (proj_div / df['price'].replace(0, np.nan) * 100).clip(lower=0)
 

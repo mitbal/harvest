@@ -8,6 +8,7 @@ import pandas as pd
 import altair as alt
 from streamlit_echarts5 import JsCode
 
+from harvest.data import calc_div_projection_rate, project_dividends
 from harvest.chart_style import (
     CHART_AMBER,
     CHART_BLUE,
@@ -830,9 +831,9 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
 
     if extrapolote:
         ext_years = list(range(end_year+1, end_year+1+n_future_years))
-        ext_values = [last_val+(i+1)*inc_val for i in range(n_future_years)]
+        ext_values = project_dividends(last_val, inc_val, n_future_years)
 
-        if inc_val > 0:
+        if calc_div_projection_rate(last_val, inc_val) >= 0:
             ext_color = alt.value(CHART_POSITIVE)
         else:
             ext_color = alt.value(CHART_NEGATIVE)
