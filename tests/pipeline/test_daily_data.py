@@ -59,13 +59,15 @@ def test_compute_latest_returns_counts_sessions_back_from_latest_close():
     assert returns.loc["LONG", "return_10y"] == pytest.approx(2521 / 1 - 1)
     assert returns.loc["SHORT", "return_7d"] == pytest.approx(0.1)
     assert returns.loc["SHORT", ["return_1m", "return_1y", "return_10y"]].isna().all()
+    assert returns.loc["LONG", "price_date"] == pd.bdate_range("2015-01-01", periods=2521)[-1]
+    assert returns.loc["SHORT", "price_date"] == pd.Timestamp("2015-01-08")
 
 
 def test_compute_latest_returns_handles_empty_history():
     returns = daily_data.compute_latest_returns(pd.DataFrame())
 
     assert returns.empty
-    assert list(returns.columns) == list(daily_data.RETURN_WINDOWS)
+    assert list(returns.columns) == list(daily_data.RETURN_WINDOWS) + ["price_date"]
 
 
 def test_parser_uses_current_year_and_exchange_defaults():
@@ -243,6 +245,20 @@ def test_compute_div_score_keeps_dividends_without_financials():
     assert frame.loc["NONPAYER.JK", "lastDiv"] == 0.0
     assert frame["numOfYear"].tolist() == [datetime.now().year - 2010] * 2
     assert frame["state_owned"].tolist() == ["Swasta", "Swasta"]
+    assert frame["price_date"].isna().all()
+
+
+def test_compute_div_score_carries_latest_close_date():
+    latest_returns = pd.DataFrame(
+        {"return_1y": [0.1], "price_date": [pd.Timestamp("2026-10-21")]},
+        index=pd.Index(["PAYER.JK"], name="symbol"),
+    )
+
+    frame = daily_data.compute_div_score(
+        _score_profiles(["PAYER.JK"]), {}, {}, latest_returns=latest_returns
+    )
+
+    assert frame.loc["PAYER.JK", "price_date"] == pd.Timestamp("2026-10-21")
 
 
 def test_add_state_owned_status_defaults_unlisted_stocks_to_swasta():

@@ -19,6 +19,7 @@ LOT_SIZE = 100
 REQUIRED_COLUMNS = {'Symbol', 'Available Lot', 'Average Price'}
 PASTE_RAW_FIELDS_PER_ROW = 11  # expected tokens per stock row in raw paste format
 PROFILE_COLUMNS = ['price', 'sector', 'lastDiv']
+OPTIONAL_PROFILE_COLUMNS = ['price_date']  # absent from payloads published before it existed
 DIVIDEND_HISTORY_COLUMNS = {'date', 'adjDividend', 'fiscal_year', 'dividend_type'}
 
 
@@ -133,8 +134,9 @@ def annual_dividend_from_history(div_df, fallback: float) -> float:
 
 def merge_market_data(portfolio: pd.DataFrame, profiles: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """Join holdings to market profiles; return matched rows and the symbols with no profile."""
+    optional = [column for column in OPTIONAL_PROFILE_COLUMNS if column in profiles.columns]
     df = portfolio.merge(
-        profiles[['Symbol'] + PROFILE_COLUMNS],
+        profiles[['Symbol'] + PROFILE_COLUMNS + optional],
         on='Symbol',
         how='left',
         validate='one_to_one',
@@ -173,6 +175,27 @@ def validate_market_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
     validated['sector'] = validated['sector'].fillna('Unclassified').replace('', 'Unclassified')
     return validated, excluded
+
+
+def _format_date(date: pd.Timestamp) -> str:
+    return f'{date.day} {date:%b %Y}'
+
+
+def market_data_caption(df: pd.DataFrame) -> str:
+    """Describe which close the holdings' prices come from, naming any holding off that date."""
+    dates = pd.to_datetime(df['price_date'], errors='coerce') if 'price_date' in df.columns else None
+    if dates is None or dates.isna().all():
+        return 'Market prices and dividends come from the daily data pipeline.'
+
+    as_of = dates.max()
+    caption = f'Market prices are closing prices as of **{_format_date(as_of)}**.'
+    older = df.loc[dates < as_of, 'Symbol'].astype(str).tolist()
+    if older:
+        caption += f' Older close for {", ".join(older)}.'
+    live = df.loc[dates.isna(), 'Symbol'].astype(str).tolist()
+    if live:
+        caption += f' Live quote for {", ".join(live)}.'
+    return caption
 
 
 def enrich_holdings(df: pd.DataFrame) -> pd.DataFrame:

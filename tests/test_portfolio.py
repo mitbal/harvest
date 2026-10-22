@@ -182,6 +182,42 @@ class TestMergeMarketData:
             hpf.merge_market_data(portfolio, profiles)
 
 
+    def test_keeps_price_date_when_published(self, profiles):
+        profiles["price_date"] = pd.Timestamp("2026-10-21")
+        portfolio = pd.DataFrame({"Symbol": ["BBCA"], "Available Lot": [10], "Average Price": [9000]})
+
+        result, _ = hpf.merge_market_data(portfolio, profiles)
+
+        assert result.loc[0, "price_date"] == pd.Timestamp("2026-10-21")
+
+
+class TestMarketDataCaption:
+
+    def test_names_the_close_date(self):
+        frame = pd.DataFrame({
+            "Symbol": ["BBCA", "BBRI"],
+            "price_date": [pd.Timestamp("2026-10-21")] * 2,
+        })
+
+        assert hpf.market_data_caption(frame) == "Market prices are closing prices as of **21 Oct 2026**."
+
+    def test_flags_older_closes_and_live_quotes(self):
+        frame = pd.DataFrame({
+            "Symbol": ["BBCA", "GOTO", "BNGA"],
+            "price_date": [pd.Timestamp("2026-10-21"), pd.Timestamp("2026-03-02"), pd.NaT],
+        })
+
+        assert hpf.market_data_caption(frame) == (
+            "Market prices are closing prices as of **21 Oct 2026**. "
+            "Older close for GOTO. Live quote for BNGA."
+        )
+
+    def test_falls_back_without_dates(self):
+        frame = pd.DataFrame({"Symbol": ["BBCA"]})
+
+        assert "daily data pipeline" in hpf.market_data_caption(frame)
+
+
 class TestMarketDataValidation:
 
     def test_rejects_when_every_row_is_invalid(self):

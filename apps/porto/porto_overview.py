@@ -505,7 +505,7 @@ except Exception as e:
 
 # --- Goals ---
 with st.container(horizontal=True, horizontal_alignment='distribute', vertical_alignment='center'):
-    st.caption(':material/update: Market prices and dividends come from the daily data pipeline.')
+    st.caption(f':material/update: {hpf.market_data_caption(df)}')
     with st.popover('Income goal', icon=':material/flag:'):
         target = st.number_input(
             'Target annual income (IDR million)',

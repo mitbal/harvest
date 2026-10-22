@@ -98,18 +98,21 @@ def compute_latest_returns(price_history: pd.DataFrame) -> pd.DataFrame:
     """Returns over each window in ``RETURN_WINDOWS``, from every symbol's latest close.
 
     A window counts trading sessions back from the latest row, so a symbol with
-    too little history gets NaN for that window. Indexed by symbol.
+    too little history gets NaN for that window. ``price_date`` is the date of
+    that latest close. Indexed by symbol.
     """
-    columns = list(RETURN_WINDOWS)
+    columns = list(RETURN_WINDOWS) + ["price_date"]
     if price_history.empty:
         return pd.DataFrame(columns=columns, index=pd.Index([], name="symbol"))
     history = price_history[["symbol", "date", "close"]].sort_values(["symbol", "date"])
     sessions_back = history.groupby("symbol").cumcount(ascending=False)
-    latest = history[sessions_back == 0].set_index("symbol")["close"]
+    latest_rows = history[sessions_back == 0].set_index("symbol")
+    latest = latest_rows["close"]
     returns = pd.DataFrame(index=latest.index)
     for column, lag in RETURN_WINDOWS.items():
         base = history[sessions_back == lag].set_index("symbol")["close"]
         returns[column] = latest / base.reindex(latest.index) - 1
+    returns["price_date"] = pd.to_datetime(latest_rows["date"])
     return returns
 
 
@@ -342,11 +345,15 @@ def compute_div_score(
 
     return_columns = ["return_7d", "return_1m", "return_1y", "return_10y"]
     if latest_returns is not None and not latest_returns.empty:
-        available = [column for column in return_columns if column in latest_returns.columns]
+        available = [
+            column for column in return_columns + ["price_date"] if column in latest_returns.columns
+        ]
         frame = frame.join(latest_returns[available])
     for column in return_columns:
         if column not in frame.columns:
             frame[column] = np.nan
+    if "price_date" not in frame.columns:
+        frame["price_date"] = pd.NaT
 
     one_year_start_price = frame["price"] / (1 + frame["return_1y"])
     ten_year_start_price = frame["price"] / (1 + frame["return_10y"])
@@ -358,6 +365,7 @@ def compute_div_score(
 
     features = [
         "price",
+        "price_date",
         "lastDiv",
         "scoreDiv",
         "yield",
