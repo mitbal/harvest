@@ -275,6 +275,36 @@ class TestDividendFreshness:
             without_final, fiscal_year=2024, as_of="2025-06-15"
         ) == 0
 
+    @staticmethod
+    def _fiscal_year_dividends(totals):
+        years = sorted(totals)
+        return pd.DataFrame({
+            "date": [f"{year + 1}-05-01" for year in years],
+            "adjDividend": [totals[year] for year in years],
+            "fiscal_year": years,
+            "dividend_type": ["final"] * len(years),
+        })
+
+    def test_spiking_latest_year_falls_back_to_three_year_median(self):
+        dividends = self._fiscal_year_dividends({2023: 140, 2024: 88, 2025: 201})
+
+        assert hd.calc_smoothed_dividend_sum(dividends, as_of="2026-10-01") == 140
+
+    def test_ordinary_growth_is_not_smoothed(self):
+        dividends = self._fiscal_year_dividends({2023: 100, 2024: 110, 2025: 140})
+
+        assert hd.calc_smoothed_dividend_sum(dividends, as_of="2026-10-01") == 140
+
+    def test_new_payer_keeps_its_first_dividend(self):
+        dividends = self._fiscal_year_dividends({2025: 300})
+
+        assert hd.calc_smoothed_dividend_sum(dividends, as_of="2026-10-01") == 300
+
+    def test_smoothing_has_nothing_to_score_without_a_current_year(self):
+        dividends = self._fiscal_year_dividends({2022: 100, 2023: 100})
+
+        assert hd.calc_smoothed_dividend_sum(dividends, as_of="2026-10-01") == 0
+
     def test_schedule_detects_an_overdue_dividend(self):
         dividends = pd.DataFrame({
             "date": ["2024-01-15", "2024-04-15", "2024-07-15", "2024-10-15"],
@@ -449,6 +479,21 @@ class TestCalcFinStats:
         assert "median_profit_margin" in stats
         # nanmedian of ~10% profit rows should be positive
         assert stats["median_profit_margin"] > 0
+
+    def test_recent_profit_margin_ignores_older_quarters(self):
+        # Five years at a 20% margin, then three years at 10%, listed newest first.
+        dates = pd.date_range("2018-01-01", periods=32, freq="QE").strftime("%Y-%m-%d")
+        fin = pd.DataFrame({
+            "date": dates[::-1],
+            "revenue": [100.0] * 32,
+            "netIncome": [10.0] * 12 + [20.0] * 20,
+            "reportedCurrency": ["IDR"] * 32,
+        })
+
+        stats = hd.calc_fin_stats(fin, target_currency="IDR")
+
+        assert stats["recent_profit_margin"] == pytest.approx(10.0)
+        assert stats["median_profit_margin"] == pytest.approx(20.0)
 
     @patch("harvest.data.get_usd_idr_rate", return_value=15_000)
     def test_usd_stats_keys_present(self, mock_rate, fin_df_usd):

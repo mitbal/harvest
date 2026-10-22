@@ -236,6 +236,7 @@ def test_compute_div_score_keeps_dividends_without_financials():
         )
 
     assert frame.loc["PAYER.JK", "lastDiv"] == 170.0
+    assert frame.loc["PAYER.JK", "scoreDiv"] == 170.0
     assert frame.loc["PAYER.JK", "yield"] == pytest.approx(17.0)
     assert frame.loc["PAYER.JK", "numDividendYear"] > 0
     assert np.isnan(frame.loc["PAYER.JK", "earningTTM"])

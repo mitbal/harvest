@@ -245,12 +245,14 @@ def compute_div_score(
     initialized_columns = {
         "yield": 0.0,
         "lastDiv": 0.0,
+        "scoreDiv": 0.0,
         "revenueGrowth": np.nan,
         "revenueCAGR5Y": np.nan,
         "revenueGrowthTTM": np.nan,
         "netIncomeGrowth": np.nan,
         "netIncomeGrowthTTM": np.nan,
         "medianProfitMargin": np.nan,
+        "recentProfitMargin": np.nan,
         "earningTTM": np.nan,
         "revenueTTM": np.nan,
         "avgFlatAnnualDivIncrease": np.nan,
@@ -280,6 +282,7 @@ def compute_div_score(
             frame.loc[symbol, "netIncomeGrowth"] = financial_stats["trim_mean_10y_netIncome_growth"]
             frame.loc[symbol, "netIncomeGrowthTTM"] = financial_stats["netIncome_growth_TTM"]
             frame.loc[symbol, "medianProfitMargin"] = financial_stats["median_profit_margin"]
+            frame.loc[symbol, "recentProfitMargin"] = financial_stats["recent_profit_margin"]
             frame.loc[symbol, "revenueTTM"] = financial_stats["revenueTTM"]
             frame.loc[symbol, "earningTTM"] = financial_stats["earningTTM"]
         except Exception as exc:
@@ -293,6 +296,7 @@ def compute_div_score(
             dividend_frame = dividends[symbol].copy()
             if exchange == "jkse":
                 last_dividend = hd.calc_latest_finalized_dividend_sum(dividend_frame)
+                score_dividend = hd.calc_smoothed_dividend_sum(dividend_frame)
             else:
                 profile_dividend = float(company_profiles.loc[symbol, "lastDiv"])
                 last_dividend = (
@@ -300,6 +304,7 @@ def compute_div_score(
                     if hd.is_dividend_schedule_current(dividend_frame)
                     else 0.0
                 )
+                score_dividend = last_dividend
 
             one_year_sum, ten_year_sum = _safe_dividend_sums(dividend_frame)
             frame.loc[symbol, "div_sum_1y"] = one_year_sum
@@ -317,6 +322,7 @@ def compute_div_score(
             )
             price = float(frame.loc[symbol, "price"])
             frame.loc[symbol, "lastDiv"] = last_dividend
+            frame.loc[symbol, "scoreDiv"] = score_dividend
             frame.loc[symbol, "yield"] = last_dividend / price * 100 if price else np.nan
             frame.loc[symbol, "avgFlatAnnualDivIncrease"] = np.min(dividend_increases)
             frame.loc[symbol, "avgPctAnnualDivIncrease"] = dividend_stats["historical_mean_pct"]
@@ -353,6 +359,7 @@ def compute_div_score(
     features = [
         "price",
         "lastDiv",
+        "scoreDiv",
         "yield",
         "sector",
         "industry",
@@ -364,6 +371,7 @@ def compute_div_score(
         "netIncomeGrowth",
         "netIncomeGrowthTTM",
         "medianProfitMargin",
+        "recentProfitMargin",
         "earningTTM",
         "revenueTTM",
         "peRatio",

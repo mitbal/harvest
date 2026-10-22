@@ -113,6 +113,21 @@ def test_margin_spike_reduces_dividend_score_through_normalized_payout():
     assert result.loc['SPIKE.JK', 'DScore'] < result.loc['SUPPORTED.JK', 'DScore'] * 0.4
 
 
+def test_shrunken_recent_margin_tightens_the_payout_check():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 3)
+    comparison.index = ['STEADY.JK', 'SHRUNK.JK', 'LEGACY.JK']
+    comparison[['price', 'mktCap', 'yield', 'lastDiv']] = [5_000.0, 1e14, 8.0, 400.0]
+    comparison[['earningTTM', 'revenueTTM', 'medianProfitMargin']] = [1.2e13, 4e13, 20.0]
+    comparison['recentProfitMargin'] = [20.0, 10.0, np.nan]
+
+    result = sp.get_processed_df(comparison)
+
+    # Dividend cash is 8T: covered by 10T of earnings at 20%, but a 160% payout at 10%.
+    assert result.loc['SHRUNK.JK', 'DScore'] == pytest.approx(result.loc['STEADY.JK', 'DScore'] * 0.5)
+    assert result.loc['LEGACY.JK', 'DScore'] == pytest.approx(result.loc['STEADY.JK', 'DScore'])
+
+
 def test_unconfirmed_income_growth_does_not_increase_dividend_score():
     base = _raw_stock_df().loc[['AAA.JK']].copy()
     comparison = pd.concat([base.rename(index={'AAA.JK': 'CONFIRMED.JK'})] * 2)
@@ -124,6 +139,21 @@ def test_unconfirmed_income_growth_does_not_increase_dividend_score():
     result = sp.get_processed_df(comparison)
 
     assert result.loc['UNCONFIRMED.JK', 'DScore'] == result.loc['CONFIRMED.JK', 'DScore']
+
+
+def test_spiked_dividend_is_scored_at_its_smoothed_level():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 3)
+    comparison.index = ['NORMAL.JK', 'SPIKE.JK', 'LEGACY.JK']
+    comparison[['price', 'yield', 'lastDiv']] = [5_000.0, 4.0, 200.0]
+    comparison.loc['SPIKE.JK', ['yield', 'lastDiv']] = [10.0, 500.0]
+    comparison['scoreDiv'] = [200.0, 200.0, np.nan]
+
+    result = sp.get_processed_df(comparison)
+
+    assert result.loc['SPIKE.JK', 'DScore'] == pytest.approx(result.loc['NORMAL.JK', 'DScore'])
+    assert result.loc['LEGACY.JK', 'DScore'] == pytest.approx(result.loc['NORMAL.JK', 'DScore'])
+    assert result.loc['SPIKE.JK', 'yield'] == 10.0
 
 
 def test_sector_rating_is_unavailable_without_enough_valid_peers():

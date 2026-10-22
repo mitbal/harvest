@@ -1888,11 +1888,11 @@ _KEEP_COLS = [
     # Identifiers / display
     'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate',
     # Dividend
-    'yield', 'lastDiv', 'avgFlatAnnualDivIncrease', 'numDividendYear',
+    'yield', 'lastDiv', 'scoreDiv', 'avgFlatAnnualDivIncrease', 'numDividendYear',
     'positiveYear', 'numOfYear', 'maximumCutPct', 'max10CutPct',
     # Financial
     'peRatio', 'psRatio', 'revenueGrowth', 'netIncomeGrowth',
-    'medianProfitMargin', 'earningTTM', 'revenueTTM',
+    'medianProfitMargin', 'recentProfitMargin', 'earningTTM', 'revenueTTM',
     'revenueGrowthTTM', 'netIncomeGrowthTTM', 'beta',
     # Returns
     'return_7d', 'return_1m', 'return_1y', 'return_10y',
@@ -1948,13 +1948,18 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     # ------------------------------------------------------------------
     is_payer = df['yield'] > 0
 
+    # Score the smoothed dividend so a one-off spike paid as an ordinary dividend (e.g.
+    # disposal proceeds) doesn't count in full. Tables without scoreDiv fall back to lastDiv.
+    score_div = df['scoreDiv'].fillna(df['lastDiv']) if 'scoreDiv' in df.columns else df['lastDiv']
+    score_yield = df['yield'] * (score_div / df['lastDiv'].replace(0, np.nan)).fillna(1.0)
+
     # 1. Projected forward yield: fractional dividend growth capped at +5%/yr and
     #    floored at -20%/yr, so dividend cutters degrade gracefully instead of
     #    having the whole score clip to 0.
     reliability = (df['positiveYear'] / df['numOfYear'].replace(0, np.nan)).fillna(1.0)
-    growth_rate = (df['avgFlatAnnualDivIncrease'] / df['lastDiv'].replace(0, np.nan)).clip(
+    growth_rate = (df['avgFlatAnnualDivIncrease'] / score_div.replace(0, np.nan)).clip(
         hd.DIV_PROJECTION_MIN_GROWTH, hd.DIV_PROJECTION_MAX_GROWTH).fillna(0)
-    proj_div    = df['lastDiv'] * (1 + growth_rate * PROJECTION_HORIZON_YRS * reliability)
+    proj_div    = score_div * (1 + growth_rate * PROJECTION_HORIZON_YRS * reliability)
     fwd_yield   = (proj_div / df['price'].replace(0, np.nan) * 100).clip(lower=0)
 
     # 2. Single maturity factor (replaces the previous double-counted pair that
@@ -1963,11 +1968,17 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
 
     # 3. Normalize earnings when the current net margin materially exceeds its
     #    historical median. This prevents disposal gains and other one-off income from
-    #    making a proceeds-funded dividend appear sustainably covered.
+    #    making a proceeds-funded dividend appear sustainably covered. The 3-year median
+    #    is used when lower, so a company whose margins have shrunk isn't judged against
+    #    its old peak. Tables without recentProfitMargin use the 10-year median alone.
     reported_earnings = pd.to_numeric(df['earningTTM'], errors='coerce')
     revenue_ttm = pd.to_numeric(df['revenueTTM'], errors='coerce')
     historical_margin = pd.to_numeric(df['medianProfitMargin'], errors='coerce') / 100
-    margin_supported_earnings = revenue_ttm * historical_margin.clip(lower=0) * NORMAL_MARGIN_BUFFER
+    normal_margin = historical_margin
+    if 'recentProfitMargin' in df.columns:
+        recent_margin = pd.to_numeric(df['recentProfitMargin'], errors='coerce') / 100
+        normal_margin = np.fmin(historical_margin, recent_margin)
+    margin_supported_earnings = revenue_ttm * normal_margin.clip(lower=0) * NORMAL_MARGIN_BUFFER
     can_normalize = (reported_earnings > 0) & (revenue_ttm > 0) & (historical_margin > 0)
     organic_earnings = reported_earnings.where(
         ~can_normalize,
@@ -1975,7 +1986,7 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     )
 
     dividend_cash = (
-        pd.to_numeric(df['yield'], errors='coerce')
+        pd.to_numeric(score_yield, errors='coerce')
         / 100
         * pd.to_numeric(df['mktCap'], errors='coerce')
     )

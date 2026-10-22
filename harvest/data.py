@@ -551,26 +551,38 @@ def calc_fiscal_year_dividend_sum(div_df, fiscal_year, as_of=None, require_final
     return float(values[eligible].sum())
 
 
-def calc_latest_finalized_dividend_sum(div_df, as_of=None, grace_month=6):
-    """Return the latest finalized fiscal-year dividend within reporting grace."""
+def _latest_finalized_fiscal_year(div_df, end_date, grace_month=6):
+    """Return the latest fiscal year with a final dividend within reporting grace, or None."""
     required = {'date', 'adjDividend', 'fiscal_year', 'dividend_type'}
     if div_df is None or div_df.empty or not required.issubset(div_df.columns):
-        return 0.0
+        return None
 
-    end_date = pd.Timestamp.now() if as_of is None else pd.Timestamp(as_of)
-    if end_date.tzinfo is not None:
-        end_date = end_date.tz_convert('UTC').tz_localize(None)
-    end_date = end_date.normalize()
     dates = pd.to_datetime(div_df['date'], errors='coerce', utc=True).dt.tz_localize(None).dt.normalize()
     fiscal_years = pd.to_numeric(div_df['fiscal_year'], errors='coerce')
     dividend_types = div_df['dividend_type'].astype(str).str.strip().str.lower()
     finalized_years = fiscal_years[dates.le(end_date) & dividend_types.eq('final')].dropna()
     if finalized_years.empty:
-        return 0.0
+        return None
 
     latest_fiscal_year = int(finalized_years.max())
     minimum_fiscal_year = end_date.year - (2 if end_date.month <= grace_month else 1)
     if latest_fiscal_year < minimum_fiscal_year:
+        return None
+    return latest_fiscal_year
+
+
+def _normalized_end_date(as_of):
+    end_date = pd.Timestamp.now() if as_of is None else pd.Timestamp(as_of)
+    if end_date.tzinfo is not None:
+        end_date = end_date.tz_convert('UTC').tz_localize(None)
+    return end_date.normalize()
+
+
+def calc_latest_finalized_dividend_sum(div_df, as_of=None, grace_month=6):
+    """Return the latest finalized fiscal-year dividend within reporting grace."""
+    end_date = _normalized_end_date(as_of)
+    latest_fiscal_year = _latest_finalized_fiscal_year(div_df, end_date, grace_month)
+    if latest_fiscal_year is None:
         return 0.0
 
     return calc_fiscal_year_dividend_sum(
@@ -578,6 +590,38 @@ def calc_latest_finalized_dividend_sum(div_df, as_of=None, grace_month=6):
         fiscal_year=latest_fiscal_year,
         as_of=end_date,
     )
+
+
+# A latest fiscal-year dividend above this multiple of the prior years' median is a spike.
+DIV_SPIKE_MULTIPLE = 1.5
+
+
+def calc_smoothed_dividend_sum(div_df, as_of=None, grace_month=6, n_years=3):
+    """Return the latest finalized fiscal-year dividend, damped when it is a one-off spike.
+
+    One-off gains such as a business disposal are often paid out as ordinary interim and
+    final dividends, so excluding 'special' dividends doesn't catch them. When the latest
+    year exceeds DIV_SPIKE_MULTIPLE times the median of the paying years before it, the
+    median of the last n_years fiscal years is returned instead.
+    """
+    end_date = _normalized_end_date(as_of)
+    latest_fiscal_year = _latest_finalized_fiscal_year(div_df, end_date, grace_month)
+    if latest_fiscal_year is None:
+        return 0.0
+
+    latest = calc_fiscal_year_dividend_sum(div_df, fiscal_year=latest_fiscal_year, as_of=end_date)
+    prior = [
+        calc_fiscal_year_dividend_sum(
+            div_df, fiscal_year=latest_fiscal_year - offset, as_of=end_date, require_final=False
+        )
+        for offset in range(1, n_years)
+    ]
+    # Skipped years are already penalized through the cut statistics, and a new payer has
+    # no baseline to compare against, so only paying years set the normal level.
+    prior = [value for value in prior if value > 0]
+    if not prior or latest <= DIV_SPIKE_MULTIPLE * float(np.median(prior)):
+        return latest
+    return float(np.median([latest, *prior]))
 
 
 def is_dividend_schedule_current(div_df, as_of=None, grace_days=60):
@@ -807,6 +851,10 @@ def calc_growth_stats(fin_df, metric='revenue'):
     return stats
 
 
+# Trailing-twelve-month margins in the last three years, the "recent" profit margin.
+RECENT_MARGIN_QUARTERS = 12
+
+
 def calc_fin_stats(fin_df, target_currency='IDR'):
 
     stats = {}
@@ -818,6 +866,7 @@ def calc_fin_stats(fin_df, target_currency='IDR'):
     profit_margin = rolling_income['netIncome'] / rolling_revenue['revenue'] * 100
 
     stats['median_profit_margin'] = np.nanmedian(profit_margin)
+    stats['recent_profit_margin'] = np.nanmedian(profit_margin.tail(RECENT_MARGIN_QUARTERS))
     stats['earningTTM'] = rolling_income.loc[0, 'netIncome']
     stats['revenueTTM'] = rolling_revenue.loc[0, 'revenue']
     stats['marginTTM'] = (stats['earningTTM'] / stats['revenueTTM'] * 100) if stats['revenueTTM'] > 0 else 0
