@@ -164,6 +164,43 @@ def test_today_premium_shows_cards_with_levels(run_page):
     assert "No swing setup currently passes" not in text
 
 
+PANIC = {"strategy_type": "Panic Dip Limit", "param_a": 1.0, "param_b": 4.0, "param_c": 1.0, "param_d": 14.0,
+         "max_hold": 2, "profit_target": 0.0, "stop_loss": 0.0}
+
+
+def _limit_client():
+    fake = _client()
+    plan = {
+        "symbol": "ASII.JK", "status": "actionable", "entry_price": 4810.0, "stop_price": None, "target_price": None,
+        "exit_by": AS_OF + pd.Timedelta(days=4), "key_date": AS_OF + pd.Timedelta(days=1),
+        "key_date_estimated": False, "setup_scope": "global",
+        "detail": {
+            "company": "PT ASII Tbk", "setup": "Panic Dip Limit: Drop Lookback: 1", "params": PANIC,
+            "entry": "limit", "exit": "open", "close": 4950.0, "stop_pct": 0.0, "target_pct": 0.0,
+            "atr_pct": 2.8, "max_hold": 2, "rank": 1,
+            "price_limits": {"floor": 4210.0, "ceiling": 6180.0}, "stop_below_floor": False,
+            "market": {"regime": "bear", "share_down_3pct": 32.0, "flush": True},
+            "holdout": {"level": "global", "method": "walk_forward", "trades": 269, "wins": 161,
+                        "win_rate": 59.9, "avg_return": 1.59, "regime": {"trades": 93, "avg_trade": 0.71}},
+        },
+    }
+    store.write_signals(fake, "swing", AS_OF, [plan])
+    return fake
+
+
+def test_today_shows_a_limit_order_plan(run_page):
+    app = run_page("premium", client=_limit_client())
+
+    assert not app.exception
+    text = _texts(app)
+    assert "Plans for the next session" in text
+    assert "Buy limit Rp 4,810" in text and "Sell at the open" in text
+    assert "No stop: the plan's exit is time" in text
+    assert "Market-wide sell-off: 32% of the shortlist fell 3% or more" in text
+    assert "In bear markets this setup made 93 walk-forward trades averaging +0.71% after costs" in text
+    assert "the limit is 1 ATR below the Rp 4,950 close and is only good for that session" in text
+
+
 def test_today_sizes_positions_from_settings(run_page):
     app = run_page("premium", settings={"capital_idr": 100_000_000, "risk_pct": 1.0})
 

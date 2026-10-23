@@ -234,6 +234,10 @@ def dividend_play(client, as_of=None, opening_within: int = dp.DEFAULT_OPENING_W
 # How close an indicator must be to its trigger to make the watch list (as in the Lab scanner).
 SWING_WATCH_PROXIMITY = 5.0
 SWING_HISTORY_DAYS = 500
+# Plans published per session, best first; a market-wide sell-off can fire a hundred.
+MAX_SWING_PLANS = 5
+# A day counts as a market-wide flush when at least this share of the shortlist fell 3% or more.
+FLUSH_SHARE_PCT = 10.0
 
 
 def swing_signal(
@@ -248,12 +252,16 @@ def swing_signal(
     benchmark: pd.Series,
     breadth: pd.Series,
     momentum: Optional[pd.Series] = None,
+    market: Optional[dict] = None,
 ) -> Optional[dict]:
     """Today's swing signal for one stock: actionable when the setup fired at the latest close.
 
-    Entry is the next session's open, as in the backtest, so stop and target
-    are percentages of that fill; the card's reference prices use the latest
-    close, rounded to IDX ticks, with the next session's auto-reject band.
+    Entry follows the backtest: the next session's open, or for limit-entry
+    strategies a limit buy below the latest close that is only good for the
+    next session (stop and target then in ATRs, sold at an open). Stop and
+    target are percentages of the fill; the card's reference prices use the
+    entry reference, rounded to IDX ticks, with the next session's auto-reject
+    band. ``market`` is the day's market context for the card.
     """
     bars, _ = sw.ohlc_frame(frame)
     if bars.empty or bars.index[-1] != as_of:
@@ -262,7 +270,7 @@ def swing_signal(
     aligned = regime.reindex(bars.index, method="ffill").fillna("bear") if not regime.empty \
         else pd.Series("bear", index=bars.index)
     fired, _, indicator = sw.strategy_components(
-        bars["close"], aligned, benchmark, momentum, setup["strategy_type"], *params, breadth=breadth,
+        bars["close"], aligned, benchmark, momentum, setup["strategy_type"], *params, breadth=breadth, bars=bars,
     )
     indicator_now = float(indicator.iloc[-1]) if pd.notna(indicator.iloc[-1]) else np.nan
     if bool(fired.iloc[-1]):
@@ -277,26 +285,42 @@ def swing_signal(
     next_session = store.idx_trading_days(as_of + pd.Timedelta(days=1), as_of + pd.Timedelta(days=14))[0]
     sessions = store.idx_trading_days(next_session, next_session + pd.Timedelta(days=60))
     floor, ceiling = sw.price_limits(close, next_session)
-    stop = sw.round_to_tick(close * (1 - setup["stop_loss"] / 100), "down") if setup["stop_loss"] > 0 else None
-    target = sw.round_to_tick(close * (1 + setup["profit_target"] / 100), "down") if setup["profit_target"] > 0 else None
+    execution = sw.limit_execution(bars, setup["strategy_type"], params[2], params[3])
+    reference, stop_pct, target_pct, atr_pct = close, setup["stop_loss"], setup["profit_target"], None
+    if execution is not None:
+        limit, atr = execution
+        atr_pct = float(atr.iloc[-1])
+        if not np.isfinite(atr_pct) or not np.isfinite(limit.iloc[-1]):
+            return None
+        # Nothing trades below the auto-reject floor, so such a limit can't fill (nor did it in the backtest).
+        if status == "actionable" and limit.iloc[-1] < floor:
+            return None
+        reference = float(limit.iloc[-1])
+        stop_pct, target_pct = setup["stop_loss"] * atr_pct, setup["profit_target"] * atr_pct
+    stop = sw.round_to_tick(reference * (1 - stop_pct / 100), "down") if stop_pct > 0 else None
+    target = sw.round_to_tick(reference * (1 + target_pct / 100), "down") if target_pct > 0 else None
     trades = int(holdout.get("trades") or 0)
     win_rate = holdout.get("win_rate")
     detail = {
         "company": company.get("companyName"),
         "close": close,
         "price_date": as_of.date().isoformat(),
-        "entry": "next_open",
+        "entry": "limit" if execution is not None else "next_open",
+        "exit": "open" if execution is not None else "close",
         "entry_session": next_session.isoformat(),
         "setup": f"{setup['strategy_type']}: {sw.format_strategy_params(setup['strategy_type'], *params)}",
         "params": setup,
-        "stop_pct": setup["stop_loss"],
-        "target_pct": setup["profit_target"],
+        "stop_pct": _finite(stop_pct),
+        "target_pct": _finite(target_pct),
+        "atr_pct": _finite(atr_pct) if atr_pct is not None else None,
         "max_hold": int(setup["max_hold"]),
         "indicator": _finite(indicator_now) if np.isfinite(indicator_now) else None,
         "regime": str(aligned.iloc[-1]),
         "price_limits": {"floor": floor, "ceiling": ceiling},
         "stop_below_floor": bool(stop is not None and stop < floor),
         "daily_volatility": _finite(company.get("Daily Volatility", np.nan)),
+        "avg_value_traded": _finite(company.get("Avg Value Traded", np.nan)),
+        "market": market,
         "holdout": {
             "level": holdout.get("level"),
             "method": holdout.get("method"),
@@ -305,12 +329,14 @@ def swing_signal(
             "win_rate": win_rate,
             "avg_return": holdout.get("avg_trade"),
             "profit_factor": holdout.get("profit_factor"),
+            # The record in today's regime, when the setup has one.
+            "regime": (holdout.get("by_regime") or {}).get(str(aligned.iloc[-1])),
         },
     }
     return {
         "symbol": symbol,
         "status": status,
-        "entry_price": close if status == "actionable" else None,
+        "entry_price": reference if status == "actionable" else None,
         "stop_price": stop if status == "actionable" else None,
         "target_price": target if status == "actionable" else None,
         "exit_by": sessions[min(int(setup["max_hold"]), len(sessions) - 1)] if status == "actionable" else None,
@@ -321,8 +347,47 @@ def swing_signal(
     }
 
 
+def market_context(histories: dict[str, pd.DataFrame], breadth: pd.Series, regime: pd.Series, as_of) -> dict:
+    """The day's market for the cards: regime, breadth and how many shortlist stocks fell 3% or more."""
+    changes = [frame["close"].pct_change().loc[as_of] * 100 for frame in histories.values()
+               if as_of in frame.index and len(frame) > 1]
+    changes = [change for change in changes if np.isfinite(change)]
+    share = float(np.mean([change <= -3 for change in changes]) * 100) if changes else None
+    at = lambda series: _finite(series[series.index <= as_of].iloc[-1]) if not series[series.index <= as_of].empty else None
+    return {
+        "regime": str(regime[regime.index <= as_of].iloc[-1]) if not regime[regime.index <= as_of].empty else None,
+        "breadth": at(breadth) if not breadth.empty else None,
+        "share_down_3pct": share,
+        "flush": bool(share is not None and share >= FLUSH_SHARE_PCT),
+    }
+
+
+def rank_plans(signals: list[dict], order: dict[str, int], limit: int = MAX_SWING_PLANS) -> tuple[list[dict], int]:
+    """The best ``limit`` actionable plans and every watch-list entry, plus how many plans were cut.
+
+    Plans are ordered by their setup's place in the playbook (stock overrides
+    first), then by expected trade, then by liquidity, which fills limit
+    orders most reliably.
+    """
+    actionable = [s for s in signals if s["status"] == "actionable"]
+    actionable.sort(key=lambda s: (
+        order.get(s["setup_scope"], -1),
+        -((s["detail"]["holdout"] or {}).get("avg_return") or 0),
+        -(s["detail"].get("avg_value_traded") or 0),
+    ))
+    kept = actionable[:limit]
+    for rank, signal in enumerate(kept, start=1):
+        signal["detail"]["rank"] = rank
+    return kept + [s for s in signals if s["status"] != "actionable"], len(actionable) - len(kept)
+
+
 def swing(client, as_of=None) -> dict:
-    """Publish today's swing signals from the stored setups (latest price session by default)."""
+    """Publish today's swing plans from the stored setups (latest price session by default).
+
+    Every stock is checked against its own setup, if it has one, and then the
+    published playbook in order; the first setup that fires is its plan. The
+    best ``MAX_SWING_PLANS`` plans are published with the watch list.
+    """
     from pipeline.trading_optimize import swing_inputs
 
     started = time.monotonic()
@@ -346,36 +411,50 @@ def swing(client, as_of=None) -> dict:
              if p["params"]["strategy_type"] == sw.STRATEGY_CROSS_MOMENTUM},
         )
         counts = {"no_setup": 0, "stale_prices": 0, "not_signalled": 0}
+        global_setups = sw.playbook(setups)
+        order = {scope: rank for rank, (scope, _) in enumerate(global_setups)}
+        market = market_context({s: f[f.index <= as_of] for s, f in histories.items()}, breadth, regime, as_of)
         signals = []
         for symbol in shortlist["stock"]:
-            scope = symbol if symbol in setups else "global"
-            published = setups.get(scope)
+            candidates = ([(symbol, setups[symbol])] if symbol in setups else []) + global_setups
             frame = histories.get(symbol)
-            if published is None:
+            if not candidates:
                 counts["no_setup"] += 1
                 continue
             if frame is None or frame.empty or frame.index.max() < as_of:
                 counts["stale_prices"] += 1
                 continue
-            ranks = momentum.get(int(published["params"]["param_a"]))
-            signal = swing_signal(
-                symbol, frame[frame.index <= as_of], regime, published["params"], scope, published["holdout"],
-                companies.get(symbol, {}), as_of, benchmark, breadth,
-                momentum=ranks[symbol] if ranks is not None and symbol in ranks else None,
-            )
+            found = []
+            for scope, published in candidates:
+                ranks = momentum.get(int(published["params"]["param_a"]))
+                signal = swing_signal(
+                    symbol, frame[frame.index <= as_of], regime, published["params"], scope, published["holdout"],
+                    companies.get(symbol, {}), as_of, benchmark, breadth,
+                    momentum=ranks[symbol] if ranks is not None and symbol in ranks else None, market=market,
+                )
+                if signal is not None:
+                    found.append(signal)
+                    if signal["status"] == "actionable":
+                        break
+            # The first setup that fired, else the first one close to firing.
+            signal = next((s for s in found if s["status"] == "actionable"), found[0] if found else None)
             if signal is None:
                 counts["not_signalled"] += 1
             else:
                 signals.append(signal)
 
+        signals, cut = rank_plans(signals, order)
         store.write_signals(client, "swing", as_of, signals)
         stats = {
             "as_of": as_of.date().isoformat(),
             "setups": len(setups),
             "global_setup": "global" in setups,
+            "playbook": [published["params"]["strategy_type"] for _, published in global_setups],
             "shortlist": len(shortlist),
             "actionable": sum(s["status"] == "actionable" for s in signals),
+            "actionable_cut": cut,
             "watch": sum(s["status"] == "opening_soon" for s in signals),
+            "market": market,
             **counts,
             "duration_seconds": round(time.monotonic() - started, 1),
         }

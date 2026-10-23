@@ -475,3 +475,124 @@ def test_combo_setup_and_presets():
     assert len(combos) == len(sw.STRATEGY_TYPES)
     assert list(setup) == list(sw.SETUP_KEYS)
     assert setup["strategy_type"] == combos[0][0] and isinstance(setup["max_hold"], int)
+
+
+# ── Limit-entry strategies ──────────────────────────────────────────────── #
+
+def _limit_simulate(rows, limit, max_hold=2, stop=0.0, target=0.0):
+    frame = _bars(rows)
+    setup = pd.Series(False, index=frame.index)
+    setup.iloc[0] = True
+    limits = pd.Series(np.nan, index=frame.index)
+    limits.iloc[0] = limit
+    return sw.simulate_trades(frame, setup, pd.Series(False, index=frame.index), max_hold, target, stop,
+                              has_ohlc=True, entry_limit=limits, exit_at_open=True)
+
+
+def test_limit_entry_fills_only_below_the_limit_and_sells_at_the_open():
+    rows = [(100, 100, 100, 100), (99, 99.5, 94, 96), (97, 99, 96, 98), (101, 102, 100, 101)]
+
+    [trade] = _limit_simulate(rows, limit=95.0)
+    gap_down = _limit_simulate([(100, 100, 100, 100), (93, 96, 92, 95)] + rows[2:], limit=95.0)
+
+    assert trade["entry_i"] == 1 and trade["entry_price"] == 95.0
+    # Held two sessions after the entry day's close: sold at the open of bar 3, not its close.
+    assert trade["exit_i"] == 3 and trade["exit_price"] == 101 and trade["exit_reason"] == "Max hold"
+    assert gap_down[0]["entry_price"] == 93  # an open below the limit fills at the open
+    # Touching the limit is not enough, and an unfilled order is not carried to later sessions.
+    assert _limit_simulate([(100, 100, 100, 100), (99, 99.5, 95, 96), (94, 95, 90, 92), (97, 98, 96, 97)],
+                           limit=95.0) == []
+
+
+def test_per_setup_stop_percentages_are_read_at_the_setup_close():
+    frame = _bars([(100, 100, 100, 100), (100, 100.5, 96.5, 98), (98, 99, 97, 98)])
+    setup = pd.Series([True, False, False], index=frame.index)
+    stops = pd.Series([3.0, 50.0, 50.0], index=frame.index)
+
+    [trade] = sw.simulate_trades(frame, setup, pd.Series(False, index=frame.index), 5, 0.0, stops, has_ohlc=True)
+
+    assert trade["exit_reason"] == "Stop" and trade["exit_price"] == pytest.approx(97.0)
+
+
+def _ohlcv(close, volume=None, start="2024-01-01"):
+    close = np.asarray(close, dtype=float)
+    volume = np.full(len(close), 1e8) if volume is None else np.asarray(volume, dtype=float)
+    return pd.DataFrame({"open": close, "high": close * 1.01, "low": close * 0.99, "close": close, "volume": volume},
+                        index=pd.bdate_range(start, periods=len(close)))
+
+
+def _components(bars, strategy, params):
+    regime = pd.Series("bear", index=bars.index)
+    return sw.strategy_components(bars["close"], regime, None, None, strategy, *params, bars=bars)
+
+
+def test_panic_dip_needs_a_sharp_drop_in_a_liquid_stock():
+    close = np.r_[np.full(40, 1000.0), 950.0, 940.0]  # -5% then -1%
+    setup, _, drop = _components(_ohlcv(close), sw.STRATEGY_PANIC_DIP, (1, 4, 1.0, 14))
+    thin, _, _ = _components(_ohlcv(close, volume=np.full(len(close), 1e5)), sw.STRATEGY_PANIC_DIP, (1, 4, 1.0, 14))
+    penny, _, _ = _components(_ohlcv(close / 10), sw.STRATEGY_PANIC_DIP, (1, 4, 1.0, 14))
+
+    assert setup.tolist()[-2:] == [True, False] and drop.iloc[-2] == pytest.approx(-5.0)
+    assert not thin.any()   # Rp 100 million a day is too thin to buy a panic
+    assert not penny.any()  # under Rp 200 a tick is 1% or more
+
+
+def test_volume_breakout_needs_a_new_high_on_heavy_volume():
+    close = np.r_[np.linspace(900, 1000, 70), 1010.0, 1020.0]
+    volume = np.r_[np.full(70, 1e7), 3e7, 1e7]
+    setup, _, _ = _components(_ohlcv(close, volume), sw.STRATEGY_VOLUME_BREAKOUT, (60, 2, 1.0, 14))
+    no_volume, _, _ = _components(_ohlcv(close, volume).drop(columns="volume"), sw.STRATEGY_VOLUME_BREAKOUT,
+                                  (60, 2, 1.0, 14))
+
+    assert setup.tolist()[-2:] == [True, False]
+    assert not no_volume.any()
+
+
+def test_limit_execution_is_a_tick_rounded_atr_below_the_close():
+    bars = _ohlcv(np.full(30, 1000.0))  # true range 2% of the close every day
+    limit, atr = sw.limit_execution(bars, sw.STRATEGY_PANIC_DIP, 1.5, 14)
+
+    assert atr.iloc[-1] == pytest.approx(2.0)
+    assert limit.iloc[-1] == 970.0
+    assert sw.limit_execution(bars, sw.STRATEGY_REGIME_RSI, 1.5, 14) is None
+
+
+def test_backtest_scales_limit_exits_by_atr():
+    close = np.r_[np.full(40, 1000.0), 940.0]
+    bars = _ohlcv(close)
+    # The next session flushes through the limit and keeps falling to 3 ATRs below the fill.
+    bars.loc[bars.index[-1] + pd.offsets.BDay(1)] = [930.0, 935.0, 840.0, 860.0, 1e8]
+    bars.loc[bars.index[-1] + pd.offsets.BDay(1)] = [880.0, 890.0, 870.0, 880.0, 1e8]
+    regime = pd.Series("bear", index=bars.index)
+
+    trades, _ = sw.backtest_trades(bars, regime, sw.STRATEGY_PANIC_DIP, 1, 4, 1.0, 14, 2, 0.0, 3.0, 0.15, 0.15, 0.1)
+    no_stop, _ = sw.backtest_trades(bars, regime, sw.STRATEGY_PANIC_DIP, 1, 4, 1.0, 14, 2, 0.0, 0.0, 0.15, 0.15, 0.1)
+
+    assert trades.iloc[0]["exit_reason"] == "Stop" and trades.iloc[0]["sessions"] == 0
+    assert no_stop.iloc[0]["exit_reason"] == "End of data"
+
+
+def test_limit_strategies_search_their_own_exits():
+    combos = sw.preset_combos("Balanced", [sw.STRATEGY_PANIC_DIP])
+    exits = sw.strategy_exit_space(sw.STRATEGY_PANIC_DIP)
+
+    assert {c[5] for c in combos} == set(exits["hold_days"])
+    assert {(c[6], c[7]) for c in combos} == set(exits["exit_rules"])
+    assert sw.strategy_exit_space(sw.STRATEGY_REGIME_RSI)["hold_days"] == sw.SEARCH_PRESETS["Balanced"]["hold_days"]
+    assert sw.format_exit_rules(sw.STRATEGY_PANIC_DIP, 2, 0.0, 3.0) == "hold 2 (sell at the open), no target, stop 3 ATR"
+    assert sw.format_exit_rules(sw.STRATEGY_REGIME_RSI, 5, 5.0, 2.0) == "hold 5, target 5%, stop 2%"
+
+
+def test_walk_forward_playbook_keeps_every_family_that_passes():
+    combos = [("A", 1, 0, 0, 0, 2, 0, 0), ("B", 1, 0, 0, 0, 2, 0, 0), ("C", 1, 0, 0, 0, 2, 0, 0)]
+    trades = pd.concat([
+        _trades(0, "2016-01-01", "2025-12-31", 0.8, 11), _trades(1, "2016-01-01", "2025-12-31", 1.2, 12),
+        _trades(2, "2016-01-01", "2025-12-31", -0.5, 13),
+    ])
+
+    families = sw.walk_forward_playbook(trades, combos, "2022-01-01", "2025-12-31")
+
+    assert [f["strategy_type"] for f in families] == ["B", "A"]  # best average trade first; C loses
+    assert [sw.playbook_scope(rank) for rank in range(2)] == ["global", "global:2"]
+    published = {"global:2": {"n": 2}, "BBRI.JK": {}, "global": {"n": 1}}
+    assert [scope for scope, _ in sw.playbook(published)] == ["global", "global:2"]

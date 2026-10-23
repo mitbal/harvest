@@ -141,7 +141,11 @@ def test_scanner_plan_defaults_to_unvalidated_baseline_presets():
     plan = swing.scanner_strategy_plan(None, None)
 
     assert [item["strategy_type"] for item in plan] == swing.STRATEGY_TYPES
-    assert all(item["profit_target"] == 5.0 for item in plan)
+    percent_exits = [item for item in plan if item["strategy_type"] not in swing.LIMIT_ENTRY_STRATEGIES]
+    assert all(item["profit_target"] == 5.0 for item in percent_exits)
+    # Limit-entry baselines: no target, the ATR stop.
+    assert all((item["profit_target"], item["stop_loss"]) == (0.0, swing.LIMIT_STOP_ATR)
+               for item in plan if item["strategy_type"] in swing.LIMIT_ENTRY_STRATEGIES)
     assert all(item["parameter_source"] == "Baseline preset" for item in plan)
     assert not any(item["validated"] for item in plan)
 

@@ -1,9 +1,15 @@
 """Short-term swing trading engine: strategies, regime, costs, backtest and gates.
 
-Pure logic shared by the Swing Trading page and the pipeline jobs. Strategies
-work on daily closes: a setup completed at one close enters at the next
-session's close, and exits on profit target, stop loss, the strategy's own
-exit or the maximum hold, all checked on closes.
+Pure logic shared by the Swing Trading page and the pipeline jobs. A setup
+completed at one close enters in the next session, and exits on profit target,
+stop loss, the strategy's own exit or the maximum hold (see
+:func:`simulate_trades` for the fill rules).
+
+Most strategies buy at the next open and sell at a close. The limit-entry
+strategies (``LIMIT_ENTRY_STRATEGIES``) are built for falling markets instead:
+IDX stocks gain overnight (close to next open) and give it back during the
+session, so they rest a limit buy below the signal close for one session and
+sell at an open, with stop and target in multiples of the stock's ATR.
 
 Nothing here depends on Streamlit.
 """
@@ -14,11 +20,18 @@ import numpy as np
 import pandas as pd
 
 
-STRATEGY_ENGINE_VERSION = 11
+STRATEGY_ENGINE_VERSION = 12
 DEFAULT_PROFIT_TARGET = 5.0
 DEFAULT_STOP_LOSS = 2.0
 DEFAULT_MAX_HOLD = 5
 DEFAULT_SLIPPAGE_TICKS = 0.5
+# Limit-entry strategies' protective stop in ATRs below the fill (searched against
+# no stop: intraday stops tend to sell the flush right before the overnight
+# bounce), and they only trade stocks above this price with this much average
+# daily value traded (IDR).
+LIMIT_STOP_ATR = 3.0
+LIMIT_ENTRY_MIN_PRICE = 200
+LIMIT_ENTRY_MIN_VALUE_TRADED = 5_000_000_000
 
 # Absolute holdout gates a strategy must pass before it can be recommended.
 # Percentile scores only rank candidates; these stop a "best of the losers"
@@ -38,6 +51,12 @@ STRATEGY_RELATIVE_STRENGTH = "Relative-Strength Pullback"
 STRATEGY_CROSS_MOMENTUM = "Cross-Sectional Momentum"
 STRATEGY_SUPERTREND_PULLBACK = "Close-Based Supertrend Pullback"
 STRATEGY_BREADTH_RSI2 = "Breadth Capitulation RSI(2)"
+STRATEGY_PANIC_DIP = "Panic Dip Limit"
+STRATEGY_VOLUME_BREAKOUT = "Volume Breakout Pullback"
+
+# Rest a limit buy ``param_c`` ATRs below the signal close for one session, sell at
+# an open; ``param_d`` is the ATR period and stop/target are ATR multiples.
+LIMIT_ENTRY_STRATEGIES = (STRATEGY_PANIC_DIP, STRATEGY_VOLUME_BREAKOUT)
 
 STRATEGY_TYPES = [
     STRATEGY_REGIME_RSI,
@@ -50,6 +69,8 @@ STRATEGY_TYPES = [
     # STRATEGY_CROSS_MOMENTUM,
     STRATEGY_SUPERTREND_PULLBACK,
     STRATEGY_BREADTH_RSI2,
+    STRATEGY_PANIC_DIP,
+    STRATEGY_VOLUME_BREAKOUT,
 ]
 
 STRATEGY_PARAMETER_LABELS = {
@@ -63,6 +84,8 @@ STRATEGY_PARAMETER_LABELS = {
     STRATEGY_CROSS_MOMENTUM: ("Momentum Lookback", "Top Percentile", "RSI Period", "Recovery Level"),
     STRATEGY_SUPERTREND_PULLBACK: ("ATR Period", "ATR Multiplier", "Pullback Drop %", "Support Proximity %"),
     STRATEGY_BREADTH_RSI2: ("RSI Period", "RSI Buy <", "Breadth Max %", "Trend SMA"),
+    STRATEGY_PANIC_DIP: ("Drop Lookback", "Min Drop %", "Limit ATR Below", "ATR Period"),
+    STRATEGY_VOLUME_BREAKOUT: ("Breakout Window", "Min Volume x", "Limit ATR Below", "ATR Period"),
 }
 
 STRATEGY_PARAMETER_INPUTS = {
@@ -76,6 +99,8 @@ STRATEGY_PARAMETER_INPUTS = {
     STRATEGY_CROSS_MOMENTUM: ((2.0, 252.0, 5.0), (50.0, 100.0, 5.0), (2.0, 50.0, 1.0), (10.0, 70.0, 1.0)),
     STRATEGY_SUPERTREND_PULLBACK: ((2.0, 50.0, 1.0), (0.5, 10.0, 0.25), (0.25, 10.0, 0.25), (0.0, 10.0, 0.25)),
     STRATEGY_BREADTH_RSI2: ((2.0, 14.0, 1.0), (1.0, 40.0, 1.0), (1.0, 60.0, 1.0), (0.0, 250.0, 10.0)),
+    STRATEGY_PANIC_DIP: ((1.0, 20.0, 1.0), (1.0, 30.0, 0.5), (0.0, 5.0, 0.25), (2.0, 50.0, 1.0)),
+    STRATEGY_VOLUME_BREAKOUT: ((5.0, 250.0, 5.0), (1.0, 10.0, 0.25), (0.0, 5.0, 0.25), (2.0, 50.0, 1.0)),
 }
 
 
@@ -180,6 +205,37 @@ def close_supertrend(
     )
 
 
+def average_true_range_pct(bars: pd.DataFrame, period: int) -> pd.Series:
+    """Wilder ATR as a percent of the close; close-to-close moves when only closes are known."""
+    close = bars['close']
+    previous = close.shift(1)
+    true_range = pd.concat(
+        [bars['high'] - bars['low'], (bars['high'] - previous).abs(), (bars['low'] - previous).abs()], axis=1,
+    ).max(axis=1, skipna=False)
+    atr = true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    return atr / close * 100
+
+
+def limit_execution(
+    bars: pd.DataFrame,
+    strategy_type: str,
+    param_c: float,
+    param_d: float,
+) -> tuple[pd.Series, pd.Series] | None:
+    """Limit buy price for the session after each close, and the ATR % that scales stop and target.
+
+    None for strategies that buy at the next open with percentage exits.
+    """
+    if strategy_type not in LIMIT_ENTRY_STRATEGIES:
+        return None
+    atr_pct = average_true_range_pct(bars, int(param_d))
+    raw = bars['close'] * (1 - float(param_c) * atr_pct / 100)
+    # Orders sit on the IDX price grid, so the limit is rounded down to a valid tick.
+    tick = idx_tick_size(raw.fillna(0).to_numpy())
+    limit = pd.Series(np.floor(raw.to_numpy() / tick) * tick, index=bars.index).where(raw.notna())
+    return limit, atr_pct
+
+
 def dividend_adjust(close: pd.Series, dividends: pd.DataFrame | None) -> pd.Series:
     """Back-adjust closes for cash dividends so ex-dates are not price drops.
 
@@ -269,6 +325,27 @@ def _align_to_prices(series: pd.Series | None, index: pd.Index) -> pd.Series:
     return clean.reindex(index, method='ffill')
 
 
+def _volume(close: pd.Series, bars: pd.DataFrame | None) -> pd.Series:
+    if bars is None or 'volume' not in bars:
+        return pd.Series(np.nan, index=close.index)
+    return pd.to_numeric(bars['volume'], errors='coerce').reindex(close.index)
+
+
+def tradable_for_limit_entry(close: pd.Series, bars: pd.DataFrame | None) -> pd.Series:
+    """Liquid enough at the time, and priced above the 1%-tick band, to buy a panic.
+
+    Measured on that day's data, not today's shortlist: dips in thin or
+    sub-Rp 200 stocks kept falling (about -6% a trade after costs) while the
+    same setups in liquid names bounced. Without volume only the price is checked.
+    """
+    ok = close >= LIMIT_ENTRY_MIN_PRICE
+    volume = _volume(close, bars)
+    if volume.notna().any():
+        traded = (close * volume).rolling(20, min_periods=10).mean()
+        ok &= traded >= LIMIT_ENTRY_MIN_VALUE_TRADED
+    return ok.fillna(False)
+
+
 def strategy_components(
     close: pd.Series,
     regime: pd.Series,
@@ -280,8 +357,13 @@ def strategy_components(
     param_c: float,
     param_d: float,
     breadth: pd.Series | None = None,
+    bars: pd.DataFrame | None = None,
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Return closing setup, strategy exit, and a comparable display indicator."""
+    """Return closing setup, strategy exit, and a comparable display indicator.
+
+    ``bars`` (OHLC, optionally volume, by date) feeds the limit-entry
+    strategies; without it they fall back to closes and no volume.
+    """
     if strategy_type == STRATEGY_REGIME_RSI:
         period = int(param_a)
         bear_buy = float(param_b)
@@ -408,6 +490,23 @@ def strategy_components(
         # Mean reversion is complete once price recovers its 5-day average.
         strategy_exit = close > close.rolling(5, min_periods=5).mean()
         indicator = market_breadth
+    elif strategy_type == STRATEGY_PANIC_DIP:
+        # A sharp fall over a few sessions: forced selling that tends to overshoot
+        # intraday and bounce overnight, in bear markets as much as in bull ones.
+        drop = (close / close.shift(int(param_a)) - 1) * 100
+        setup = (drop <= -float(param_b)) & tradable_for_limit_entry(close, bars)
+        strategy_exit = pd.Series(False, index=close.index)
+        indicator = drop
+    elif strategy_type == STRATEGY_VOLUME_BREAKOUT:
+        # A new multi-week high on heavy volume: accumulation that keeps going for
+        # a few sessions; the limit buys the first pullback instead of the gap.
+        window = int(param_a)
+        prior_high = close.rolling(window, min_periods=window).max().shift(1)
+        volume = _volume(close, bars)
+        volume_ratio = volume / volume.rolling(20, min_periods=20).mean().shift(1)
+        setup = (close > prior_high) & (volume_ratio >= float(param_b)) & tradable_for_limit_entry(close, bars)
+        strategy_exit = pd.Series(False, index=close.index)
+        indicator = (close / prior_high - 1) * 100
     else:
         raise ValueError(f"Unknown swing strategy: {strategy_type}")
 
@@ -435,6 +534,8 @@ def strategy_warmup(
         return max(int(param_a) + 5, 20)
     if strategy_type == STRATEGY_BREADTH_RSI2:
         return max(int(param_a), int(param_d), 20) + 5
+    if strategy_type in LIMIT_ENTRY_STRATEGIES:
+        return max(int(param_a), int(param_d), 20) + 5
     return max(int(param_a), int(param_b), int(param_c), 50) + 5
 
 
@@ -445,7 +546,7 @@ TRADE_COLUMNS = [
 
 
 def ohlc_frame(prices: pd.Series | pd.DataFrame) -> tuple[pd.DataFrame, bool]:
-    """Clean ``open, high, low, close`` by date, and whether real OHLC data was given.
+    """Clean ``open, high, low, close`` (plus ``volume`` when given) by date, and whether real OHLC data was given.
 
     A close series (or a frame without opens) becomes a frame whose open, high
     and low equal the close, which keeps the original close-only rules.
@@ -468,7 +569,8 @@ def ohlc_frame(prices: pd.Series | pd.DataFrame) -> tuple[pd.DataFrame, bool]:
     # A few vendor bars have a high/low that doesn't bracket the open and close.
     bars = frame[['open', 'high', 'low', 'close']]
     frame['high'], frame['low'] = bars.max(axis=1), bars.min(axis=1)
-    return frame[['open', 'high', 'low', 'close']], bool(has_ohlc)
+    columns = ['open', 'high', 'low', 'close'] + (['volume'] if 'volume' in frame.columns else [])
+    return frame[columns], bool(has_ohlc)
 
 
 def simulate_trades(
@@ -476,19 +578,27 @@ def simulate_trades(
     setup: pd.Series,
     strategy_exit: pd.Series,
     max_hold: int,
-    profit_target_pct: float,
-    stop_loss_pct: float,
+    profit_target_pct: float | pd.Series,
+    stop_loss_pct: float | pd.Series,
     trade_start: pd.Timestamp | None = None,
     has_ohlc: bool = True,
+    entry_limit: pd.Series | None = None,
+    exit_at_open: bool = False,
 ) -> list[dict]:
     """Walk the bars and return each trade's entry and exit bar, prices and reason.
 
-    A setup at close *t* enters at the open of *t+1*. With OHLC data a stop or
-    target fills at its level, or at the open when the price gaps through it;
-    the stop wins when both are touched in one bar, and only the stop is
-    checked on the entry day. A strategy exit signalled at a close fills at the
-    next open. The position is closed at the close ``max_hold`` sessions after
-    the entry day at the latest.
+    A setup at close *t* enters at the open of *t+1*. With ``entry_limit`` (the
+    limit price set at each close) it instead buys only if *t+1* trades below
+    the limit, at the open or the limit, whichever is lower; an unfilled order
+    is dropped. With OHLC data a stop or target fills at its level, or at the
+    open when the price gaps through it; the stop wins when both are touched in
+    one bar, and only the stop is checked on the entry day. A strategy exit
+    signalled at a close fills at the next open. The position is closed
+    ``max_hold`` sessions after the entry day at the latest: at that session's
+    close, or at its open with ``exit_at_open``.
+
+    Target and stop are percentages of the entry price; a Series gives each
+    setup's own percentages, read at the setup's close.
 
     With close-only data every fill uses the close, as before OHLC existed.
     """
@@ -497,6 +607,14 @@ def simulate_trades(
     if trade_start is not None:
         entry_candidates &= (frame.index >= pd.Timestamp(trade_start))
     opens, highs, lows, closes = (frame[c].to_numpy(dtype=float) for c in ('open', 'high', 'low', 'close'))
+    limits = None if entry_limit is None else entry_limit.reindex(frame.index).shift(1).to_numpy(dtype=float)
+
+    def per_setup(value) -> np.ndarray:
+        if isinstance(value, pd.Series):
+            return value.reindex(frame.index).shift(1).to_numpy(dtype=float)
+        return np.full(len(frame), float(value))
+
+    target_pcts, stop_pcts = per_setup(profit_target_pct), per_setup(stop_loss_pct)
     trades = []
     in_pos = False
     entry_i, entry_price, stop, target, held = 0, 0.0, None, None, 0
@@ -516,6 +634,8 @@ def simulate_trades(
                     exit_price, reason = opens[i], 'Target (gap)'
                 elif exit_signal[i]:
                     exit_price, reason = opens[i], 'Strategy exit'
+                elif exit_at_open and held >= max_hold:
+                    exit_price, reason = opens[i], 'Max hold'
                 elif stop is not None and lows[i] <= stop:
                     exit_price, reason = stop, 'Stop'
                 elif target is not None and highs[i] >= target:
@@ -538,10 +658,19 @@ def simulate_trades(
                 continue
 
         if not in_pos and entry_candidates[i]:
+            if limits is not None:
+                # Filled only when the session trades through the limit, not merely touches it.
+                if not (np.isfinite(limits[i]) and lows[i] < limits[i]):
+                    continue
+                entry_price = float(min(opens[i], limits[i]))
+            else:
+                entry_price = float(opens[i] if has_ohlc else closes[i])
+            stop_pct, target_pct = stop_pcts[i], target_pcts[i]
+            if not (np.isfinite(stop_pct) and np.isfinite(target_pct)):
+                continue
             entry_i, held, in_pos = i, 0, True
-            entry_price = float(opens[i] if has_ohlc else closes[i])
-            stop = entry_price * (1 - stop_loss_pct / 100) if stop_loss_pct > 0 else None
-            target = entry_price * (1 + profit_target_pct / 100) if profit_target_pct > 0 else None
+            stop = entry_price * (1 - stop_pct / 100) if stop_pct > 0 else None
+            target = entry_price * (1 + target_pct / 100) if target_pct > 0 else None
             if has_ohlc and stop is not None and lows[i] <= stop:
                 close_trade(i, stop, 'Stop')
                 in_pos = False
@@ -567,9 +696,26 @@ def _signal_inputs(
         regime_aligned = regime_series.reindex(frame.index, method='ffill').fillna('bear')
     setup, strategy_exit, _ = strategy_components(
         frame['close'], regime_aligned, benchmark_close, momentum_percentile,
-        strategy_type, param_a, param_b, param_c, param_d, breadth=breadth,
+        strategy_type, param_a, param_b, param_c, param_d, breadth=breadth, bars=frame,
     )
     return frame, has_ohlc, regime_aligned, setup, strategy_exit
+
+
+def _simulate_strategy(
+    frame, has_ohlc, setup, strategy_exit, strategy_type, param_c, param_d,
+    max_hold, profit_target, stop_loss, trade_start=None,
+) -> list[dict]:
+    """:func:`simulate_trades` with the strategy's own entry and exit style."""
+    execution = limit_execution(frame, strategy_type, param_c, param_d)
+    if execution is None:
+        return simulate_trades(
+            frame, setup, strategy_exit, max_hold, profit_target, stop_loss, trade_start, has_ohlc,
+        )
+    limit, atr_pct = execution
+    return simulate_trades(
+        frame, setup, strategy_exit, max_hold, float(profit_target) * atr_pct, float(stop_loss) * atr_pct,
+        trade_start, has_ohlc, entry_limit=limit, exit_at_open=True,
+    )
 
 
 def build_regime_signals(
@@ -596,8 +742,9 @@ def build_regime_signals(
     if inputs is None:
         return None
     frame, has_ohlc, regime_aligned, setup, strategy_exit = inputs
-    trades = simulate_trades(
-        frame, setup, strategy_exit, max_hold, profit_target_pct, stop_loss_pct, trade_start, has_ohlc,
+    trades = _simulate_strategy(
+        frame, has_ohlc, setup, strategy_exit, strategy_type, param_c, param_d,
+        max_hold, profit_target_pct, stop_loss_pct, trade_start,
     )
     entries = np.zeros(len(frame), dtype=bool)
     exits = np.zeros(len(frame), dtype=bool)
@@ -635,8 +782,9 @@ def backtest_trades(
     """Trades of one strategy after fees, tax and tick slippage, plus the clean bars.
 
     Each fill pays its side's fee plus ``slippage_ticks`` IDX ticks at the fill
-    price. ``return_pct`` is the profit after costs over the entry value. None when history is
-    too short for the indicators.
+    price (limit fills too, which stays conservative). ``return_pct`` is the profit after costs
+    over the entry value. Target and stop are percentages, or ATR multiples for the
+    limit-entry strategies. None when history is too short for the indicators.
     """
     inputs = _signal_inputs(
         prices, regime_series, strategy_type, param_a, param_b, param_c, param_d,
@@ -645,8 +793,9 @@ def backtest_trades(
     if inputs is None:
         return None
     frame, has_ohlc, regime_aligned, setup, strategy_exit = inputs
-    raw = simulate_trades(
-        frame, setup, strategy_exit, max_hold, profit_target_pct, stop_loss_pct, trade_start, has_ohlc,
+    raw = _simulate_strategy(
+        frame, has_ohlc, setup, strategy_exit, strategy_type, param_c, param_d,
+        max_hold, profit_target_pct, stop_loss_pct, trade_start,
     )
     if not raw:
         return pd.DataFrame(columns=TRADE_COLUMNS), frame
@@ -756,9 +905,15 @@ SEARCH_PRESETS = {
             STRATEGY_CROSS_MOMENTUM: [(20, 80, 14, 40)],
             STRATEGY_SUPERTREND_PULLBACK: [(10, 3.0, 2.0, 0.5)],
             STRATEGY_BREADTH_RSI2: [(2, 10, 20, 200)],
+            STRATEGY_PANIC_DIP: [(5, 5, 1.5, 14)],
+            STRATEGY_VOLUME_BREAKOUT: [(60, 2, 1.0, 14)],
         },
         "hold_days": [5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
+        "strategy_exits": {
+            STRATEGY_PANIC_DIP: {"hold_days": [2], "exit_rules": [(0.0, LIMIT_STOP_ATR)]},
+            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [5], "exit_rules": [(0.0, LIMIT_STOP_ATR)]},
+        },
     },
     "Balanced": {
         "strategy_params": {
@@ -772,9 +927,15 @@ SEARCH_PRESETS = {
             STRATEGY_CROSS_MOMENTUM: [(20, 75, 14, 40), (60, 80, 14, 45)],
             STRATEGY_SUPERTREND_PULLBACK: [(10, 2.5, 1.5, 0.5), (10, 3.0, 2.0, 1.0)],
             STRATEGY_BREADTH_RSI2: [(2, 10, 20, 200), (2, 5, 15, 100)],
+            STRATEGY_PANIC_DIP: [(1, 3, 1.0, 14), (1, 4, 1.0, 14), (1, 4, 1.5, 14), (5, 5, 1.5, 14), (5, 7, 1.5, 14)],
+            STRATEGY_VOLUME_BREAKOUT: [(20, 2, 1.0, 14), (60, 2, 0.5, 14), (60, 2, 1.0, 14), (60, 3, 1.0, 14)],
         },
         "hold_days": [3, 5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
+        "strategy_exits": {
+            STRATEGY_PANIC_DIP: {"hold_days": [1, 2], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
+            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [3, 5], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
+        },
     },
     "Deep": {
         "strategy_params": {
@@ -788,9 +949,19 @@ SEARCH_PRESETS = {
             STRATEGY_CROSS_MOMENTUM: [(10, 70, 7, 40), (20, 75, 14, 40), (60, 80, 14, 45)],
             STRATEGY_SUPERTREND_PULLBACK: [(7, 2.0, 1.5, 0.5), (10, 2.5, 2.0, 0.75), (10, 3.0, 2.5, 1.0)],
             STRATEGY_BREADTH_RSI2: [(2, 5, 15, 200), (2, 10, 20, 200), (3, 15, 25, 200), (2, 10, 20, 100)],
+            STRATEGY_PANIC_DIP: [(1, 3, 1.0, 14), (1, 4, 1.0, 14), (1, 4, 1.5, 14), (1, 5, 1.5, 14),
+                                 (5, 5, 1.0, 14), (5, 5, 1.5, 14), (5, 7, 1.0, 14), (5, 7, 1.5, 14)],
+            STRATEGY_VOLUME_BREAKOUT: [(20, 2, 1.0, 14), (60, 2, 0.5, 14), (60, 2, 1.0, 14), (60, 3, 0.5, 14),
+                                       (60, 3, 1.0, 14)],
         },
         "hold_days": [3, 5, 7],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, 1.5), (DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
+        "strategy_exits": {
+            STRATEGY_PANIC_DIP: {"hold_days": [1, 2, 3], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
+                                                                        (3.0, LIMIT_STOP_ATR)]},
+            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [3, 5], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
+                                                                          (4.0, LIMIT_STOP_ATR)]},
+        },
     },
 }
 
@@ -801,6 +972,17 @@ def _weighted_mean(frame: pd.DataFrame, value_col: str, weight_col: str) -> floa
     if valid.empty:
         return np.nan
     return float(np.average(valid[value_col], weights=valid[weight_col]))
+
+
+def format_exit_rules(strategy_type: str, max_hold: int, profit_target: float, stop_loss: float) -> str:
+    """Hold, target and stop in the strategy's units: percent, or ATRs for limit-entry strategies."""
+    limit = strategy_type in LIMIT_ENTRY_STRATEGIES
+    unit = ' ATR' if limit else '%'
+    return ', '.join([
+        f"hold {int(max_hold)}" + (' (sell at the open)' if limit else ''),
+        f"target {profit_target:g}{unit}" if profit_target > 0 else 'no target',
+        f"stop {stop_loss:g}{unit}" if stop_loss > 0 else 'no stop',
+    ])
 
 
 def format_strategy_params(
@@ -842,14 +1024,15 @@ def scanner_strategy_plan(
             validated = True
         else:
             defaults = SEARCH_PRESETS['Quick']['strategy_params'][strategy_type][0]
+            exits = strategy_exit_space(strategy_type, 'Quick')
             source = {
                 'param_a': defaults[0],
                 'param_b': defaults[1],
                 'param_c': defaults[2],
                 'param_d': defaults[3],
-                'max_hold': DEFAULT_MAX_HOLD,
-                'profit_target': DEFAULT_PROFIT_TARGET,
-                'stop_loss': DEFAULT_STOP_LOSS,
+                'max_hold': exits['hold_days'][0],
+                'profit_target': exits['exit_rules'][0][0],
+                'stop_loss': exits['exit_rules'][0][1],
             }
             parameter_source = "Baseline preset"
             score = np.nan
@@ -1300,14 +1483,55 @@ def walk_forward(
     }
 
 
-def passes_walk_forward_gates(record: dict) -> bool:
+def passes_walk_forward_gates(record: dict, min_t_stat: float = MIN_T_STAT) -> bool:
     """Absolute requirements on the walk-forward record before a setup is published."""
     return bool(
         record['trades'] >= MIN_WALK_FORWARD_TRADES
         and record['avg_trade'] > 0
         and record['profit_factor'] >= MIN_PROFIT_FACTOR
-        and record['t_stat'] >= MIN_T_STAT
+        and record['t_stat'] >= min_t_stat
     )
+
+
+# ── Playbook: one published setup per strategy family ───────────────────── #
+# A single setup fires on too few days to give a plan every session, so each
+# strategy family gets its own walk-forward and every family that passes is
+# published. The best is stored as 'global', the rest as 'global:2', 'global:3'…
+
+GLOBAL_SCOPE = 'global'
+
+
+def playbook_scope(rank: int) -> str:
+    """Store scope of the published shortlist-wide setup at ``rank`` (0 is the best)."""
+    return GLOBAL_SCOPE if rank == 0 else f'{GLOBAL_SCOPE}:{rank + 1}'
+
+
+def is_global_scope(scope: str) -> bool:
+    return scope == GLOBAL_SCOPE or scope.startswith(f'{GLOBAL_SCOPE}:')
+
+
+def playbook(setups: dict[str, dict]) -> list[tuple[str, dict]]:
+    """The published shortlist-wide setups as ``(scope, setup)``, best first."""
+    order = lambda scope: 1 if scope == GLOBAL_SCOPE else int(scope.split(':', 1)[1])
+    return sorted(((scope, setup) for scope, setup in setups.items() if is_global_scope(scope)),
+                  key=lambda item: order(item[0]))
+
+
+def walk_forward_playbook(trades: pd.DataFrame, combos: list[tuple], start, end) -> list[dict]:
+    """Walk-forward each strategy family on its own; the families that pass, best average trade first.
+
+    Picking the families that pass out of several is itself a search, so the
+    t-stat bar is corrected for the number of families tried.
+    """
+    families = list(dict.fromkeys(combo[0] for combo in combos))
+    min_t_stat = required_t_stat(len(families))
+    passing = []
+    for family in families:
+        ids = [i for i, combo in enumerate(combos) if combo[0] == family]
+        forward = walk_forward(trades[trades['combo'].isin(ids)], start, end)
+        if forward['final_combo'] is not None and passes_walk_forward_gates(forward['record'], min_t_stat):
+            passing.append({'strategy_type': family, **forward})
+    return sorted(passing, key=lambda item: item['record']['avg_trade'], reverse=True)
 
 
 # ── IDX trading rules for position sizing ────────────────────────────────── #
@@ -1396,6 +1620,12 @@ def is_near_setup(
         return indicator >= param_b - proximity
     if strategy_type == STRATEGY_CROSS_MOMENTUM:
         return indicator >= param_b - proximity
+    if strategy_type == STRATEGY_PANIC_DIP:
+        # Indicator is the drop (negative); near when most of the required drop has happened.
+        return -param_b < indicator <= -param_b + min(proximity, param_b / 2)
+    if strategy_type == STRATEGY_VOLUME_BREAKOUT:
+        # Indicator is the distance to the prior high; volume can't be judged before the close.
+        return -min(proximity, 3.0) <= indicator <= 0
     return indicator <= proximity
 
 
@@ -1478,13 +1708,24 @@ def combo_setup(combo: tuple) -> dict:
                                  float(combo[6]), float(combo[7]))))
 
 
+def strategy_exit_space(strategy_type: str, preset: str = 'Balanced') -> dict:
+    """Hold days and (target, stop) rules a preset searches for one strategy."""
+    space = SEARCH_PRESETS[preset]
+    own = space.get('strategy_exits', {}).get(strategy_type, {})
+    return {'hold_days': own.get('hold_days', space['hold_days']),
+            'exit_rules': own.get('exit_rules', space['exit_rules'])}
+
+
 def preset_combos(preset: str = 'Balanced', strategy_types=None) -> list[tuple]:
     """Every (strategy, params, max hold, target, stop) combination of a search preset."""
     space = SEARCH_PRESETS[preset]
-    return [
-        (strategy_type, *params, hold, target, stop)
-        for strategy_type in (strategy_types or STRATEGY_TYPES)
-        for params in space['strategy_params'][strategy_type]
-        for hold in space['hold_days']
-        for target, stop in space['exit_rules']
-    ]
+    combos = []
+    for strategy_type in (strategy_types or STRATEGY_TYPES):
+        exits = strategy_exit_space(strategy_type, preset)
+        combos.extend(
+            (strategy_type, *params, hold, target, stop)
+            for params in space['strategy_params'][strategy_type]
+            for hold in exits['hold_days']
+            for target, stop in exits['exit_rules']
+        )
+    return combos

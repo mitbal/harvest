@@ -431,6 +431,119 @@ def test_swing_scan_publishes_from_stored_setups():
     assert stats["actionable"] == 1 and stats["as_of"] == AS_OF.date().isoformat()
 
 
+PANIC_SETUP = {"strategy_type": sw.STRATEGY_PANIC_DIP, "param_a": 1.0, "param_b": 4.0, "param_c": 1.0,
+               "param_d": 14.0, "max_hold": 2, "profit_target": 0.0, "stop_loss": 3.0}
+
+
+def _panic_bars(end=AS_OF):
+    """A liquid stock in a normal up-and-down range that falls 6% on the last session (RSI(14) 29)."""
+    calm = 1000 + 30 * np.sin(np.arange(59) / 2)
+    bars = _swing_bars(np.r_[calm, calm[-1] * 0.94], end=end)
+    return bars.assign(volume=1e8)
+
+
+def test_swing_signal_for_a_limit_entry_plan():
+    bars = _panic_bars()
+    regime = pd.Series("bear", index=bars.index)
+    holdout = {"level": "global", "trades": 269, "win_rate": 60.0, "avg_trade": 1.6,
+               "by_regime": {"bear": {"trades": 93, "avg_trade": 0.7}}}
+
+    signal = trading_scan.swing_signal(
+        "TEST.JK", bars, regime, PANIC_SETUP, "global", holdout, {"companyName": "PT Test Tbk"}, AS_OF,
+        bars["close"], pd.Series(dtype=float), market={"regime": "bear", "share_down_3pct": 25.0, "flush": True},
+    )
+
+    detail = signal["detail"]
+    atr = sw.average_true_range_pct(bars, 14).iloc[-1]
+    assert signal["status"] == "actionable"
+    close = bars["close"].iloc[-1]
+    assert signal["entry_price"] == sw.round_to_tick(close * (1 - atr / 100), "down")  # one ATR below the close
+    assert detail["entry"] == "limit" and detail["exit"] == "open" and detail["close"] == close
+    assert detail["stop_pct"] == pytest.approx(3 * atr) and detail["target_pct"] == 0.0
+    assert signal["stop_price"] == sw.round_to_tick(signal["entry_price"] * (1 - 3 * atr / 100), "down")
+    assert signal["target_price"] is None
+    assert signal["key_date"] == datetime.date(2026, 10, 6)   # the limit is good for the next session only
+    assert signal["exit_by"] == datetime.date(2026, 10, 8)    # sold at the open two sessions after the entry day
+    assert detail["holdout"]["regime"] == {"trades": 93, "avg_trade": 0.7}
+    assert detail["market"]["flush"]
+
+
+def test_swing_signal_skips_a_limit_below_the_auto_reject_floor():
+    bars = _panic_bars()
+    wild = bars.assign(high=bars["close"] * 1.12, low=bars["close"] * 0.88)  # ATR near 24% of the price
+
+    assert trading_scan.swing_signal(
+        "TEST.JK", wild, pd.Series("bear", index=wild.index), PANIC_SETUP, "global", {}, {}, AS_OF,
+        wild["close"], pd.Series(dtype=float),
+    ) is None
+
+
+def test_rank_plans_keeps_the_best_few_and_the_watch_list():
+    def plan(symbol, scope, avg, value, status="actionable"):
+        return {"symbol": symbol, "status": status, "setup_scope": scope,
+                "detail": {"holdout": {"avg_return": avg}, "avg_value_traded": value}}
+    signals = [plan("A", "global:2", 3.0, 1e9), plan("B", "global", 1.0, 1e9), plan("C", "global", 1.0, 5e9),
+               plan("D", "D", 0.5, 1e9), plan("E", "global", 2.0, 1e9), plan("W", "global", 1.0, 1e9, "opening_soon")]
+
+    kept, cut = trading_scan.rank_plans(signals, {"global": 0, "global:2": 1}, limit=3)
+
+    # Stock overrides first, then playbook order, expected trade and liquidity.
+    assert [s["symbol"] for s in kept] == ["D", "E", "C", "W"]
+    assert [s["detail"].get("rank") for s in kept] == [1, 2, 3, None]
+    assert cut == 2
+
+
+def test_swing_scan_draws_plans_from_the_whole_playbook():
+    client = FakeSupabase()
+    store.write_setups(client, "swing", [
+        {"scope": "global", "params": {**SWING_SETUP, "param_b": 20.0},  # RSI 29 doesn't fire this one
+         "holdout": {"level": "global", "trades": 50, "avg_trade": 0.9}},
+        {"scope": "global:2", "params": PANIC_SETUP, "holdout": {"level": "global", "trades": 269, "avg_trade": 1.6}},
+    ])
+    panic = _panic_bars()
+    flat = _swing_bars(np.full(120, 1000.0) + np.sin(np.arange(120))).assign(volume=1e8)
+    with patch.object(trading_optimize, "swing_inputs", return_value=(
+        pd.DataFrame({"stock": ["DIP.JK", "FLAT.JK"], "companyName": ["PT Dip", "PT Flat"]}),
+        {"DIP.JK": panic, "FLAT.JK": flat}, pd.Series("bear", index=panic.index),
+        pd.Series(dtype=float), panic["close"],
+    )):
+        stats = trading_scan.swing(client)
+
+    signals = store.read_signals(client, "swing")
+    assert signals["symbol"].tolist() == ["DIP.JK"]
+    assert signals.iloc[0]["setup_scope"] == "global:2"  # Regime RSI didn't fire; the second setup did
+    assert signals.iloc[0]["detail"]["rank"] == 1
+    assert stats["playbook"] == [sw.STRATEGY_REGIME_RSI, sw.STRATEGY_PANIC_DIP]
+    assert stats["market"]["share_down_3pct"] == 50.0
+
+
+def test_swing_optimize_publishes_every_family_that_passes():
+    client = FakeSupabase()
+    symbols = [f"S{i}.JK" for i in range(6)]
+    histories = {s: _cycles(i) for i, s in enumerate(symbols)}
+    families = [
+        {"strategy_type": sw.STRATEGY_PANIC_DIP, "final_combo": 1, "folds": [],
+         "record": {"trades": 80, "win_rate": 60.0, "avg_trade": 1.5, "profit_factor": 1.8, "t_stat": 3.5},
+         "trades": pd.DataFrame({"symbol": "S0.JK", "combo": 1, "entry_date": [AS_OF - pd.Timedelta(days=30)],
+                                 "exit_date": [AS_OF - pd.Timedelta(days=27)], "entry_price": [900.0],
+                                 "return_pct": [1.5]})},
+        {"strategy_type": sw.STRATEGY_REGIME_RSI, "final_combo": 0, "folds": [],
+         "record": {"trades": 60, "win_rate": 55.0, "avg_trade": 0.9, "profit_factor": 1.4, "t_stat": 2.6},
+         "trades": pd.DataFrame(columns=["symbol", "combo", "entry_date", "exit_date", "entry_price", "return_pct"])},
+    ]
+    combos = [(sw.STRATEGY_REGIME_RSI, 14, 30, 50, 45, 5, 5.0, 2.0), (sw.STRATEGY_PANIC_DIP, 1, 4, 1.0, 14, 2, 0.0, 0.0)]
+    with _patch_swing_inputs(pd.DataFrame({"stock": symbols}), histories), \
+            patch.object(sw, "preset_combos", return_value=combos), \
+            patch.object(sw, "walk_forward_playbook", return_value=families):
+        stats = trading_optimize.swing(client, as_of=AS_OF)
+
+    setups = store.read_setups(client, "swing")
+    assert setups["global"]["params"]["strategy_type"] == sw.STRATEGY_PANIC_DIP
+    assert setups["global:2"]["params"]["strategy_type"] == sw.STRATEGY_REGIME_RSI
+    assert setups["global"]["holdout"]["by_regime"]["bear"]["trades"] == 1
+    assert [entry["scope"] for entry in stats["playbook"]] == ["global", "global:2"]
+
+
 # ── Long Term ───────────────────────────────────────────────────────────── #
 
 import requests  # noqa: E402

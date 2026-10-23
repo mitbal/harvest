@@ -224,6 +224,19 @@ SWING_COSTS = tr.SWING_COSTS
 INDICATOR_WARMUP_DAYS = 400
 
 
+def regime_stats(trades: pd.DataFrame, regime: pd.Series) -> dict:
+    """Walk-forward trade statistics split by the market regime at entry ('bull' / 'bear')."""
+    if trades.empty:
+        return {}
+    labels = (regime.reindex(pd.to_datetime(trades["entry_date"]), method="ffill").fillna("bear").to_numpy()
+              if not regime.empty else np.full(len(trades), "bear"))
+    return {
+        str(label): {key: _number(value) if isinstance(value, float) else value
+                     for key, value in sw.trade_stats(group["return_pct"]).items()}
+        for label, group in trades.groupby(labels)
+    }
+
+
 def swing_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
     """Shortlist, dividend-adjusted OHLCV per stock, JKSE regime, breadth and the index close."""
     events = trading_data.load_dividend_events(client)
@@ -252,10 +265,12 @@ def swing_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
 def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
     """Search swing setups on the default shortlist and publish those that pass walk-forward.
 
-    The global setup is the walk-forward's latest choice, published only when
-    the walk-forward record passes the gates. Per-stock overrides must beat
-    the global setup on their own holdout with a t-stat corrected for the
-    number of combinations tried.
+    Each strategy family is walked forward on its own and every family whose
+    record passes the gates is published as a shortlist-wide setup (the
+    playbook, best first; see ``sw.walk_forward_playbook``), so the scan has
+    several setups to draw daily plans from. Per-stock overrides must beat the
+    best setup on their own holdout with a t-stat corrected for the number of
+    combinations tried.
     """
     as_of = pd.Timestamp(as_of or datetime.date.today()).normalize()
     run_id = store.start_run(client, "swing", "optimize", as_of)
@@ -287,19 +302,21 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
         results = pd.DataFrame(results)
         trades = pd.DataFrame(trades)
 
+        # Across every family: the honest record of the search, published or not.
         forward = sw.walk_forward(trades, split, as_of)
         record = forward["record"]
+        families = sw.walk_forward_playbook(trades, combos, split, as_of)
         published, stock_setups = [], {}
-        if forward["final_combo"] is not None and sw.passes_walk_forward_gates(record):
-            global_setup = sw.combo_setup(combos[forward["final_combo"]])
+        for rank, family in enumerate(families):
             published.append({
-                "scope": "global",
-                "params": global_setup,
-                "holdout": {"level": "global", "method": "walk_forward", **record,
-                            "folds": forward["folds"]},
+                "scope": sw.playbook_scope(rank),
+                "params": sw.combo_setup(combos[family["final_combo"]]),
+                "holdout": {"level": "global", "method": "walk_forward", **family["record"],
+                            "by_regime": regime_stats(family["trades"], regime), "folds": family["folds"]},
             })
+        if published:
             stock_setups = sw.select_stock_strategies(
-                results, global_setup, min_t_stat=sw.required_t_stat(len(combos)),
+                results, published[0]["params"], min_t_stat=sw.required_t_stat(len(combos)),
             )
             for symbol, chosen in stock_setups.items():
                 published.append({
@@ -315,10 +332,13 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
                     },
                 })
         store.write_setups(client, "swing", published, run_id)
-        # The walk-forward's trades, published setup or not: the honest record of the search.
+        # The published playbook's walk-forward trades taken as one account; without a
+        # playbook, the search-wide walk-forward's trades: the honest record of the search.
+        offered = (pd.concat([family["trades"] for family in families], ignore_index=True)
+                   if families else forward["trades"])
         portfolio = _portfolio_or_error(
-            lambda: ps.simulate_portfolio(forward["trades"], histories, benchmark=benchmark, start=split, end=as_of),
-        ) if not forward["trades"].empty else None
+            lambda: ps.simulate_portfolio(offered, histories, benchmark=benchmark, start=split, end=as_of),
+        ) if not offered.empty else None
 
         stats = {
             "preset": preset,
@@ -332,6 +352,12 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
             "walk_forward_choices": [fold["combo"] for fold in forward["folds"]],
             "global_setup": (sw.format_strategy_params(*[published[0]["params"][k] for k in SETUP_PARAM_KEYS])
                              if published else None),
+            "playbook": [
+                {"scope": setup["scope"], "strategy_type": setup["params"]["strategy_type"],
+                 **{key: setup["holdout"][key] for key in ("trades", "win_rate", "avg_trade", "profit_factor", "t_stat")}}
+                for setup in published if sw.is_global_scope(setup["scope"])
+            ],
+            "required_family_t_stat": round(sw.required_t_stat(len({c[0] for c in combos})), 2),
             "stock_setups": len(stock_setups),
             "required_stock_t_stat": round(sw.required_t_stat(len(combos)), 2),
             "portfolio": portfolio,

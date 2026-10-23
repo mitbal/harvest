@@ -1,4 +1,3 @@
-import itertools
 import hashlib
 import concurrent.futures
 import os
@@ -51,8 +50,8 @@ st.set_page_config(page_title='Swing Trading - Panen Dividen')
 hp.enable_chart_theme()
 ui.inject_styles()
 ui.hero('Trading · 1 to 10 sessions', 'Swing Trading',
-        'Short swings on liquid IDX stocks, confirmed at the close and bought at the next open. '
-        'Only setups that pass a walk-forward test are published.', 'bolt')
+        'Short swings on liquid IDX stocks, confirmed at the close and bought in the next session, at the open '
+        'or with a limit order below the close. Only setups that pass a walk-forward test are published.', 'bolt')
 # Initial values go through session state rather than `default`, because buttons below
 # also set them; a ?view= or ?stock= in the URL still wins.
 if 'view' not in st.session_state:
@@ -250,8 +249,10 @@ def render_swing_backtest(
     row.metric('Average trade', f"{metrics['avg_trade']:+.2f}%", help='After fees, tax and slippage')
     row.metric('Max drawdown', f"{metrics['max_drawdown']:.1f}%")
     reasons = trades['exit_reason'].value_counts()
+    entries = (f"Limit buys {setup['param_c']:g} ATR below the close, sold at the open"
+               if setup['strategy_type'] in sw.LIMIT_ENTRY_STRATEGIES else 'Entries at the next open')
     st.caption(
-        'Entries at the next open; exits: ' + ', '.join(f'{reason.lower()} {count}' for reason, count in reasons.items())
+        f'{entries}; exits: ' + ', '.join(f'{reason.lower()} {count}' for reason, count in reasons.items())
     )
 
     price_tab, equity_tab, log_tab = st.tabs(['Price and trades', 'Equity', 'Trade log'])
@@ -307,8 +308,7 @@ def render_swing_backtest(
 def _combo_label(combo: tuple | dict) -> str:
     if isinstance(combo, dict):
         combo = tuple(combo[k] for k in sw.SETUP_KEYS)
-    return (f"{combo[0]}: {sw.format_strategy_params(*combo[:5])}; hold {int(combo[5])}, "
-            f"target {combo[6]:g}%, stop {combo[7]:g}%")
+    return f"{combo[0]}: {sw.format_strategy_params(*combo[:5])}; {sw.format_exit_rules(combo[0], *combo[5:8])}"
 
 
 def render_walk_forward(trades: pd.DataFrame, combos: list[tuple], split, end) -> None:
@@ -397,8 +397,10 @@ def track_dialog(signal: pd.Series, lots: int) -> None:
     st.markdown(f"**{ui.short(signal['symbol'])}** · sell by {ui.day(signal['exit_by'])} at the latest")
     reference = float(signal['entry_price'])
     tick = float(sw.idx_tick_size([reference])[0])
+    bought_how = ('The plan buys with a limit order' if detail.get('entry') == 'limit'
+                  else 'The setup buys at the next open')
     entry_price = st.number_input('Your fill price (Rp)', min_value=tick, value=reference, step=tick, format='%.0f',
-                                  help='The setup buys at the next open; enter the price you actually got.')
+                                  help=f'{bought_how}; enter the price you actually got.')
     lot_count = st.number_input('Lots', min_value=1, value=max(int(lots), 1), step=1, help='1 lot is 100 shares')
     bought = st.date_input('Bought on', value=datetime.date.today(), max_value=datetime.date.today())
     stop = sw.round_to_tick(entry_price * (1 - detail['stop_pct'] / 100), 'down') if detail['stop_pct'] else None
@@ -425,38 +427,50 @@ def track_dialog(signal: pd.Series, lots: int) -> None:
 
 def render_signal_card(signal: pd.Series, settings: dict | None, can_track: bool) -> None:
     detail = signal['detail']
-    close = float(signal['entry_price'])
+    entry = float(signal['entry_price'])
+    limit = detail.get('entry') == 'limit'
     holdout = detail.get('holdout') or {}
     stop = None if signal['stop_price'] is None or pd.isna(signal['stop_price']) else float(signal['stop_price'])
     target = None if signal['target_price'] is None or pd.isna(signal['target_price']) else float(signal['target_price'])
     avg = holdout.get('avg_return')
     badge = ui.chip(f'{avg:+.2f}% avg', 'up lg' if avg > 0 else 'down lg', 'trending_up') if avg is not None else ''
-    tiles = [('Buy at open', ui.esc(ui.day(signal['key_date'])), 'next session')]
-    if stop is not None:
-        tiles.append(('Stop', f"−{detail['stop_pct']:g}%", f'about {ui.esc(ui.idr(stop))}', 'down'))
-    if target is not None:
-        tiles.append(('Target', f"+{detail['target_pct']:g}%", f'about {ui.esc(ui.idr(target))}', 'up'))
-    tiles.append(('Sell by', ui.esc(ui.day(signal['exit_by'])), f"{detail.get('max_hold')} sessions max"))
     parts = [
-        ui.card_head(signal['symbol'], detail.get('company'), badge, icon_name='bolt'),
+        ui.card_head(signal['symbol'], detail.get('company'), badge, rank=detail.get('rank'), icon_name='bolt'),
         f'<div class="hv-chips">{ui.chip(detail.get("setup", ""), "brand", "tune")}</div>',
-        ui.cells(tiles),
-        ui.ladder(close, stop, target),
+        ui.cells(ui.swing_plan_tiles(signal, stop, target)),
+        ui.ladder(entry, stop, target, 'Limit' if limit else 'Close'),
     ]
     lots = 0
     if settings and settings.get('capital_idr') and stop is not None:
-        size = sw.position_size(float(settings['capital_idr']), float(settings.get('risk_pct') or 1.0), close, stop)
+        size = sw.position_size(float(settings['capital_idr']), float(settings.get('risk_pct') or 1.0), entry, stop)
         lots = size['lots']
         parts.append(ui.strip(f"Size <b>{lots} lots</b> (about {ui.esc(ui.idr(size['cost_idr']))}), "
                               f"{ui.esc(ui.idr(size['risk_idr']))} at risk", icon_name='account_balance_wallet'))
+    elif stop is None:
+        parts.append(ui.strip(f"No stop: the plan's exit is time, at the open on {ui.esc(ui.day(signal['exit_by']))}. "
+                              'Size it for a loss you can carry until then.', 'plain', 'schedule'))
     elif can_track:
         parts.append(ui.strip('Set your capital and risk per trade in My Trades to see a position size.',
                               'plain', 'info'))
     notes = []
+    market = detail.get('market') or {}
+    if limit and detail.get('params', {}).get('strategy_type') == sw.STRATEGY_PANIC_DIP and market.get('share_down_3pct') is not None:
+        if market.get('flush'):
+            notes.append(f"Market-wide sell-off: {market['share_down_3pct']:.0f}% of the shortlist fell 3% or more. "
+                         'Dips bought on days like this have bounced more reliably than isolated drops.')
+        else:
+            notes.append(f"Mostly an isolated drop ({market['share_down_3pct']:.0f}% of the shortlist fell 3% or more): "
+                         'check the news first, stock-specific falls have the weakest record.')
+    regime_record = holdout.get('regime') or {}
+    if regime_record.get('trades') and market.get('regime'):
+        notes.append(f"In {market['regime']} markets this setup made {regime_record['trades']} walk-forward trades "
+                     f"averaging {regime_record['avg_trade']:+.2f}% after costs.")
     limits = detail.get('price_limits') or {}
     if limits:
+        source = (f"the limit is {detail['params']['param_c']:g} ATR below the {ui.esc(ui.idr(detail['close']))} close and "
+                  'is only good for that session' if limit else f"prices from the {ui.esc(ui.idr(entry))} close")
         notes.append(f"Next session limits {ui.esc(ui.idr(limits['floor']))} to {ui.esc(ui.idr(limits['ceiling']))}; "
-                     f"prices from the {ui.esc(ui.idr(close))} close.")
+                     f"{source}.")
     if detail.get('stop_below_floor'):
         notes.append('The stop is below the auto-reject floor, so a stop-out could take more than one session.')
     parts.append(ui.foot(ui.winbar(holdout.get('wins'), holdout.get('trades')) + ui.esc(_record_text(holdout))))
@@ -513,7 +527,9 @@ def render_today(access: bool) -> None:
 
     actionable = signals[signals['status'] == 'actionable'].copy()
     actionable['expected'] = actionable['detail'].map(lambda d: (d.get('holdout') or {}).get('avg_return') or 0)
-    actionable = actionable.sort_values('expected', ascending=False)
+    actionable['rank'] = actionable['detail'].map(lambda d: d.get('rank') or 0)
+    # The scan ranks the plans; older days without a rank fall back to the expected trade.
+    actionable = actionable.sort_values(['rank', 'expected'], ascending=[True, False])
     watch = signals[signals['status'] == 'opening_soon']
 
     email = current_email()
@@ -524,7 +540,7 @@ def render_today(access: bool) -> None:
         except Exception:
             logger.exception('Could not load settings')
     metrics = st.container(horizontal=True)
-    metrics.metric('Setups today', len(actionable))
+    metrics.metric('Plans today', len(actionable))
     metrics.metric('Watch list', len(watch))
     if email:
         try:
@@ -533,7 +549,7 @@ def render_today(access: bool) -> None:
             metrics.metric('Your swing positions', '–')
 
     if not actionable.empty:
-        ui.section('Buy at the next open', len(actionable), 'Ranked by out-of-sample average trade')
+        ui.section('Plans for the next session', len(actionable), 'Best first')
         shown = actionable if access else actionable.head(1)
         for start in range(0, len(shown), 2):
             for column, (_, signal) in zip(st.columns(2), shown.iloc[start:start + 2].iterrows()):
@@ -544,7 +560,8 @@ def render_today(access: bool) -> None:
     if not watch.empty:
         ui.section('Close to a setup', len(watch), 'Could trigger after the next close')
         ui.tickers(watch['symbol'])
-    st.caption('Historical backtest with next-open entries, intraday stops and IDX costs. Not financial advice.')
+    st.caption('Historical backtest with the same entries (next open or the limit), stops, exits and IDX costs. '
+               'Not financial advice.')
 
 
 def render_evidence(access: bool) -> None:
@@ -761,16 +778,8 @@ else:
         """Apply the page's price-adjustment setting to one OHLC frame."""
         return sw.dividend_adjust_ohlc(frame, dividend_events.get(symbol))
 
-    search_space = SEARCH_PRESETS[search_depth]
-    hold_days = search_space['hold_days']
-    exit_rules = search_space['exit_rules']
-    param_combos = []
-    for strategy_type in strategy_types:
-        param_combos.extend(
-            (strategy_type, *strategy_params, hold_d, profit_target, stop_loss)
-            for strategy_params, hold_d, (profit_target, stop_loss)
-            in itertools.product(search_space['strategy_params'][strategy_type], hold_days, exit_rules)
-        )
+    # Limit-entry strategies search their own holds and ATR exits.
+    param_combos = sw.preset_combos(search_depth, strategy_types) if strategy_types else []
     total_combos = len(param_combos) * len(shortlist_tickers)
 
     info_cols = st.columns(5)
@@ -1244,21 +1253,22 @@ else:
             st.info(
                 f"Using the {parameter_source} for **{stock}**: {single_strategy['strategy_type']} "
                 f"({sw.format_strategy_params(single_strategy['strategy_type'], single_strategy['param_a'], single_strategy['param_b'], single_strategy['param_c'], single_strategy['param_d'])}); "
-                f"target {single_strategy['profit_target']:.1f}%, stop {single_strategy['stop_loss']:.1f}%, "
-                f"hold up to {single_strategy['max_hold']} sessions."
+                f"{sw.format_exit_rules(single_strategy['strategy_type'], single_strategy['max_hold'], single_strategy['profit_target'], single_strategy['stop_loss'])}."
             )
 
         st.markdown("#### Exit Rules & Costs")
+        # Limit-entry strategies sell at the open and size target and stop in ATRs.
+        exit_unit = 'ATR' if bt_strategy_type in sw.LIMIT_ENTRY_STRATEGIES else '%'
         exit_cols = st.columns(3)
         bt_max_hold = exit_cols[0].number_input(
             "Max Hold Sessions", min_value=1, max_value=20, step=1, key="bt_max_hold",
         )
         bt_profit_target = exit_cols[1].number_input(
-            "Profit Target %", min_value=0.0, max_value=20.0,
+            f"Profit Target {exit_unit}", min_value=0.0, max_value=20.0,
             step=0.5, key="bt_pt",
         )
         bt_stop_loss = exit_cols[2].number_input(
-            "Stop Loss %", min_value=0.0, max_value=20.0, step=0.5, key="bt_sl",
+            f"Stop Loss {exit_unit}", min_value=0.0, max_value=20.0, step=0.5, key="bt_sl",
         )
         cost_cols = st.columns(4)
         bt_buy_fee = cost_cols[0].number_input(

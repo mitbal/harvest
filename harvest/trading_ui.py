@@ -340,7 +340,7 @@ def cells(items: list[tuple]) -> str:
     return f'<div class="hv-cells" style="--n:{len(out)}">{"".join(out)}</div>'
 
 
-def ladder(entry: float, stop: float | None, target: float | None) -> str:
+def ladder(entry: float, stop: float | None, target: float | None, entry_label: str = 'Close') -> str:
     """Stop, entry and target on one line, with the loss and gain zones shaded."""
     if stop is None and target is None:
         return ''
@@ -358,8 +358,27 @@ def ladder(entry: float, stop: float | None, target: float | None) -> str:
                      f'<div class="mark" style="left:{at(target):.1f}%"></div>'
                      f'<div class="lbl bot" style="left:{at(target):.1f}%">Target <b>{esc(idr(target))}</b></div>')
     parts.append(f'<div class="mark entry" style="left:{at(entry):.1f}%"></div>'
-                 f'<div class="lbl top" style="left:{at(entry):.1f}%">Close <b>{esc(idr(entry))}</b></div></div>')
+                 f'<div class="lbl top" style="left:{at(entry):.1f}%">{esc(entry_label)} <b>{esc(idr(entry))}</b></div></div>')
     return ''.join(parts)
+
+
+def swing_plan_tiles(signal: pd.Series, stop: float | None, target: float | None) -> list[tuple]:
+    """Entry, stop, target and exit tiles of a swing plan: a next-open buy or a one-session limit order."""
+    detail = signal['detail']
+    pct = lambda value: f'{value:.1f}'.removesuffix('.0')
+    if detail.get('entry') == 'limit':
+        tiles = [('Buy limit', esc(idr(signal['entry_price'])), f"{esc(day(signal['key_date']))} only")]
+    else:
+        tiles = [('Buy at open', esc(day(signal['key_date'])), 'next session')]
+    if stop is not None:
+        tiles.append(('Stop', f"−{pct(detail['stop_pct'])}%", f'about {esc(idr(stop))}', 'down'))
+    if target is not None:
+        tiles.append(('Target', f"+{pct(detail['target_pct'])}%", f'about {esc(idr(target))}', 'up'))
+    if detail.get('exit') == 'open':
+        tiles.append(('Sell at the open', esc(day(signal['exit_by'])), f"after {detail.get('max_hold')} sessions"))
+    else:
+        tiles.append(('Sell by', esc(day(signal['exit_by'])), f"{detail.get('max_hold')} sessions max"))
+    return tiles
 
 
 def progress(fraction: float, left: str, right: str = '', tone: str = '') -> str:

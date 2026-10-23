@@ -383,8 +383,8 @@ work; the gate behaves per tier with the flag on.
 
 ### 1.3 Launch checklist [ASK USER for each]
 
-- [ ] User runs the Supabase SQL, sets secrets, deploys pipeline and app.
-- [ ] User adds early supporters to `premium_users` manually.
+- [x] User runs the Supabase SQL, sets secrets, deploys pipeline and app.
+- [ ] User adds early supporters to `premium_users` manually. (Owner account added 2026-10-23.)
 - [ ] User turns on `PREMIUM_ENFORCED` in production.
 - [x] Update `tests/live/smoke.spec.js` to expect the paywall on trading pages for anonymous visitors.
 
@@ -397,7 +397,7 @@ Read first: `server.py` (Starlette routes and middleware), `harvest/trading_stor
 - [x] `apps/trading/my_trades.py`: open positions sorted by `exit_by` with countdown in sessions
       (use IDX trading days; `holidays` is already a dependency), closed positions with results,
       settings form (fees, Telegram link, alert preferences). Register in `main.py`.
-- [ ] Telegram:
+- [ ] Telegram (deferred to a later version, 2026-10-23; code is in place but unused):
   - Bot token in env/secrets (`TELEGRAM_BOT_TOKEN`). [ASK USER] to create the bot.
   - Linking: settings shows `https://t.me/<bot>?start=<token>`; `POST /webhooks/telegram` in
     `server.py` stores `chat_id` for the matching token.
@@ -882,3 +882,33 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     server with the gate on.
   - Open [ASK USER]: run the weekly optimize service once by hand before the first nightly scan;
     set the `PREMIUM_ENFORCED` GitHub variable when the gate goes on in production.
+- 2026-10-23: Launch status from the user: the Supabase SQL (including `trading_outcomes`) has been
+  run, production secrets are set, and the weekly optimize has been run once by hand.
+  - Added the owner account to `premium_users` (`source='manual'`, `expires_at` null = lifetime).
+  - Telegram alerts deferred to a later version; the bot isn't created yet.
+  - Still open [ASK USER]: other early supporters, turning on `PREMIUM_ENFORCED` in production and
+    the matching GitHub variable, BMC/Trakteer webhook registration, tier prices and durations,
+    and the real track-record numbers for the promo animation once outcomes exist.
+- 2026-10-23: Swing playbook for the bear market (engine version 12), at the user's request: at
+  least one or two swing plans every session.
+  - Why there were none: on the 167-stock shortlist every one of the 22 published-strategy combos
+    lost about 1% a trade after costs over the last three years, so nothing passed walk-forward.
+    IDX gains come overnight (close to next open, +0.22% a day on average) and leak during the
+    session (−0.15%); buying at the open and selling at a close paid for both sides of that.
+  - New limit-entry strategies (`LIMIT_ENTRY_STRATEGIES`): Panic Dip Limit (a sharp 1- or 5-day
+    drop) and Volume Breakout Pullback (60-day high on 2x volume). A limit buy rests N ATRs below
+    the close for the next session only (filled when the session trades through it), held a few
+    sessions and sold at an open; stop and target are ATR multiples, searched against no stop.
+    Both only trade stocks above Rp 200 with Rp 5bn a day traded at the time: panic dips in thin
+    or penny stocks lost about 6% a trade.
+  - Optimizer: each strategy family is walked forward on its own and every family that passes is
+    published (`global`, `global:2`, …), with a t-stat bar corrected for the number of families
+    and the record split by regime. Scan: each stock tries its own setup, then the playbook in
+    order; the best five plans are published. Cards show the limit, the sell-at-the-open date,
+    the market context (market-wide sell-off or isolated drop) and the record in today's regime.
+  - Track record: limit cards replay with the same fills; an unfilled order is `not_filled`.
+  - Offline run on production prices to 22 Oct: Panic Dip Limit passes (260 walk-forward trades,
+    +1.68% a trade after costs, PF 1.90, t 3.85; as one account +25.6% over three years against
+    a JKSE −20%, max drawdown −29%); Volume Breakout doesn't yet (t 1.74). Plans on 90% of
+    sessions over three years (2+ on 77%), 97% since September. In bear regimes alone the record
+    is weaker (93 trades, +0.71%, not significant) than in bull (+2.22%).

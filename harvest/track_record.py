@@ -11,7 +11,10 @@ card told the reader:
   loss), and a dividend whose ex-date falls inside the holding period is received after tax.
 - Swing: buy at the next open, stop and target as percentages of the fill, sell at the close
   after the maximum hold, with the backtest's fill rules (``swing.simulate_trades``), fees and
-  tick slippage. The strategy's own early exit is not on the card, so it is not used.
+  tick slippage. The strategy's own early exit is not on the card, so it is not used. A
+  limit-entry card buys only if the next session trades below its limit (at the open or the
+  limit, whichever is lower) and sells at the open after the maximum hold; an order the next
+  session doesn't fill counts as ``not_filled``.
 - Long Term: bought at the close of the day a company first appears on the screen, closed when
   the price reaches the valuation target on that first card; otherwise still open.
 
@@ -190,7 +193,7 @@ def swing_outcomes(
     benchmark: pd.Series | None = None,
     costs: dict | None = None,
 ) -> list[dict]:
-    """Outcomes of every actionable swing card, with the backtest's next-open fills."""
+    """Outcomes of every actionable swing card, with the backtest's fills (next open or the card's limit)."""
     costs = costs or SWING_COSTS
     outcomes = []
     for symbol, group in signals.assign(as_of=pd.to_datetime(signals['as_of'])).sort_values('as_of').groupby('symbol'):
@@ -207,17 +210,31 @@ def swing_outcomes(
                 continue  # No session after the card yet, or no bar on the signal day.
             detail = signal.detail or {}
             fired = pd.Series(window.index == as_of, index=window.index)
+            limit = None
+            if detail.get('entry') == 'limit':
+                limit = pd.Series(np.nan, index=window.index)
+                limit.iloc[0] = float(signal.entry_price)
             raw = sw.simulate_trades(
                 window, fired, pd.Series(False, index=window.index), int(detail.get('max_hold') or sw.DEFAULT_MAX_HOLD),
                 float(detail.get('target_pct') or 0), float(detail.get('stop_pct') or 0), has_ohlc=True,
+                entry_limit=limit, exit_at_open=detail.get('exit') == 'open',
             )
+            if limit is not None and not raw and not window['low'].iloc[1] < limit.iloc[0]:
+                outcomes.append(_outcome(
+                    'swing', symbol, as_of, 'not_filled', exit_reason='Limit not reached',
+                    detail={'limit': float(signal.entry_price), 'cards': 1, 'setup': detail.get('setup'),
+                            'expected': _expected(detail), 'session': _day(window.index[1])},
+                ))
+                continue
             if raw:
                 trade = raw[0]
                 entry_date, exit_date = window.index[trade['entry_i']], window.index[trade['exit_i']]
                 entry, exit_price, reason = trade['entry_price'], trade['exit_price'], trade['exit_reason']
-            else:  # Bought at the latest session's open and still held.
+            else:  # Bought in the latest session and still held.
                 entry_date = exit_date = window.index[1]
-                entry, exit_price, reason = float(window['open'].iloc[1]), float(window['close'].iloc[1]), 'End of data'
+                entry = float(window['open'].iloc[1]) if limit is None else min(float(window['open'].iloc[1]),
+                                                                                 float(limit.iloc[0]))
+                exit_price, reason = float(window['close'].iloc[1]), 'End of data'
             closed = reason != 'End of data'
             outcomes.append(_outcome(
                 'swing', symbol, as_of, 'closed' if closed else 'open',

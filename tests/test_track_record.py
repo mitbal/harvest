@@ -160,6 +160,41 @@ def test_swing_sells_after_the_maximum_hold_and_then_takes_the_next_card():
     ]
 
 
+def _limit_signal(day, limit, hold=2, stop=0.0):
+    signal = _swing_signal(day, stop=stop, target=0.0, hold=hold)
+    signal["entry_price"] = limit
+    signal["detail"].update({"entry": "limit", "exit": "open"})
+    return signal
+
+
+def test_swing_limit_card_fills_below_the_limit_and_sells_at_the_open():
+    bars = {"BMRI.JK": _bars([1000.0, 960.0, 980.0, 990.0, 990.0], open_=[1000.0, 990.0, 975.0, 1010.0, 990.0],
+                             low=[1000.0, 950.0, 970.0, 985.0, 985.0])}
+
+    [trade] = tr.swing_outcomes(_signals(_limit_signal(0, 970.0)), bars)
+
+    assert trade["entry_date"] == DAYS[1].date().isoformat() and trade["entry_price"] == 970.0
+    assert trade["exit_date"] == DAYS[3].date().isoformat() and trade["exit_price"] == 1010.0  # day 3's open
+    assert trade["exit_reason"] == "Max hold" and trade["return_pct"] > 3.0
+
+
+def test_swing_limit_card_not_reached_counts_as_not_filled():
+    bars = {"BMRI.JK": _bars([1000.0, 990.0, 1000.0], low=[1000.0, 970.0, 990.0])}
+
+    [outcome] = tr.swing_outcomes(_signals(_limit_signal(0, 970.0)), bars)
+
+    assert outcome["status"] == "not_filled" and outcome["entry_price"] is None
+    assert outcome["detail"]["limit"] == 970.0 and outcome["detail"]["cards"] == 1
+
+
+def test_swing_limit_card_filled_in_the_latest_session_is_open():
+    bars = {"BMRI.JK": _bars([1000.0, 965.0], open_=[1000.0, 990.0], low=[1000.0, 955.0])}
+
+    [trade] = tr.swing_outcomes(_signals(_limit_signal(0, 970.0)), bars)
+
+    assert trade["status"] == "open" and trade["entry_price"] == 970.0
+
+
 def test_swing_open_trade_and_new_card():
     bars = {"BMRI.JK": _bars([1000.0, 1000.0, 1010.0])}
 

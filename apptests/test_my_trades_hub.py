@@ -98,7 +98,7 @@ def test_supporters_see_signals_from_every_tool(run_page):
     assert any(card.startswith("long_term_") for card in cards)
     assert _metric(app, "Signals today") == "4"
     text = _texts(app)
-    assert "Dividend Play 2 Entry window open now" in text and "Swing Trading 2 Buy at the next open" in text
+    assert "Dividend Play 2 Entry window open now" in text and "Swing Trading 2 Plans for the next session" in text
     assert "Holdout 30 of 40 won, +5.0% average after costs" in text
     assert "Stop −2% about Rp 980" in text
     assert not any(b.label == "Unlock the trading lab" for b in app.button)

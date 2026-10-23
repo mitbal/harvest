@@ -23,7 +23,7 @@ TOOLS = {
     'dividend_play': {'label': 'Dividend Play', 'icon': 'payments', 'page': 'apps/trading/dividend_play.py',
                       'note': 'Entry window open now'},
     'swing': {'label': 'Swing Trading', 'icon': 'bolt', 'page': 'apps/trading/swing_trading.py',
-              'note': 'Buy at the next open'},
+              'note': 'Plans for the next session'},
     'long_term': {'label': 'Long Term', 'icon': 'trending_up', 'page': 'apps/trading/backtester.py',
                   'note': 'Top candidates of the valuation screen'},
 }
@@ -170,15 +170,9 @@ def _swing_parts(signal: pd.Series) -> list[str]:
     detail = signal['detail']
     holdout = detail.get('holdout') or {}
     stop, target = _price(signal['stop_price']), _price(signal['target_price'])
-    tiles = [('Buy at open', ui.esc(ui.day(signal['key_date'])), 'next session')]
-    if stop is not None:
-        tiles.append(('Stop', f"−{detail['stop_pct']:g}%", f'about {ui.esc(ui.idr(stop))}', 'down'))
-    if target is not None:
-        tiles.append(('Target', f"+{detail['target_pct']:g}%", f'about {ui.esc(ui.idr(target))}', 'up'))
-    tiles.append(('Sell by', ui.esc(ui.day(signal['exit_by'])), f"{detail.get('max_hold')} sessions max"))
     return [
         ui.card_head(signal['symbol'], detail.get('company'), _avg_badge(holdout), icon_name='bolt'),
-        ui.cells(tiles),
+        ui.cells(ui.swing_plan_tiles(signal, stop, target)),
         ui.foot(ui.winbar(holdout.get('wins'), holdout.get('trades')) + ui.esc(_record(holdout))),
     ]
 
@@ -465,7 +459,7 @@ events = coming_up(published, open_positions)
 
 metrics = st.container(horizontal=True)
 metrics.metric('Signals today', len(ranked['dividend_play']) + len(ranked['swing']),
-               help='Dividend Play entry windows open now plus swing setups for the next open')
+               help='Dividend Play entry windows open now plus swing plans for the next session')
 metrics.metric('Long term candidates', len(ranked['long_term']))
 if open_positions is None:
     metrics.metric('Your positions', '–', help='Log in to track your trades' if email is None else None)
