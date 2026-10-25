@@ -156,6 +156,19 @@ def test_spiked_dividend_is_scored_at_its_smoothed_level():
     assert result.loc['SPIKE.JK', 'yield'] == 10.0
 
 
+def test_repeated_dividend_cuts_score_below_a_single_cut():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 3)
+    comparison.index = ['ONCE.JK', 'REPEAT.JK', 'LEGACY.JK']
+    comparison['max10CutPct'] = -20.0
+    comparison['cum10CutPct'] = [-20.0, -36.0, np.nan]
+
+    result = sp.get_processed_df(comparison)
+
+    assert result.loc['REPEAT.JK', 'DScore'] == pytest.approx(result.loc['ONCE.JK', 'DScore'] * 0.64 / 0.8)
+    assert result.loc['LEGACY.JK', 'DScore'] == pytest.approx(result.loc['ONCE.JK', 'DScore'])
+
+
 def test_sector_rating_is_unavailable_without_enough_valid_peers():
     ranking_df = pd.DataFrame({
         'peRatio': [10.0, -2.0],

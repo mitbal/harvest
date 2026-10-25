@@ -265,6 +265,7 @@ def compute_div_score(
         "numOfYear": np.nan,
         "maximumCutPct": 0.0,
         "max10CutPct": 0.0,
+        "cum10CutPct": 0.0,
         "div_sum_1y": 0.0,
         "div_sum_10y": 0.0,
     }
@@ -331,6 +332,7 @@ def compute_div_score(
             frame.loc[symbol, "avgPctAnnualDivIncrease"] = dividend_stats["historical_mean_pct"]
             frame.loc[symbol, "maximumCutPct"] = dividend_stats["maximum_cut_pct"]
             frame.loc[symbol, "max10CutPct"] = dividend_stats["max_10y_cut_pct"]
+            frame.loc[symbol, "cum10CutPct"] = dividend_stats["cum_10y_cut_pct"]
             frame.loc[symbol, "numDividendYear"] = dividend_stats["num_dividend_year"]
             frame.loc[symbol, "positiveYear"] = dividend_stats["num_positive_year"]
         except Exception as exc:
@@ -389,6 +391,7 @@ def compute_div_score(
         "positiveYear",
         "maximumCutPct",
         "max10CutPct",
+        "cum10CutPct",
         "numOfYear",
         "DScore",
         "return_7d",

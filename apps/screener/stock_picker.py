@@ -1889,7 +1889,7 @@ _KEEP_COLS = [
     'price', 'changes', 'sector', 'industry', 'mktCap', 'ipoDate',
     # Dividend
     'yield', 'lastDiv', 'scoreDiv', 'avgFlatAnnualDivIncrease', 'numDividendYear',
-    'positiveYear', 'numOfYear', 'maximumCutPct', 'max10CutPct',
+    'positiveYear', 'numOfYear', 'maximumCutPct', 'max10CutPct', 'cum10CutPct',
     # Financial
     'peRatio', 'psRatio', 'revenueGrowth', 'netIncomeGrowth',
     'medianProfitMargin', 'recentProfitMargin', 'earningTTM', 'revenueTTM',
@@ -1937,6 +1937,12 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
 
     df['maximumCutPct'] = df['maximumCutPct'].apply(lambda x: min(x, 0) * -1)
     df['max10CutPct']   = df['max10CutPct'].apply(lambda x: min(x, 0) * -1)
+    # Score on every 10y cut compounded. Tables without cum10CutPct fall back to the worst cut.
+    if 'cum10CutPct' in df.columns:
+        df['cum10CutPct'] = df['cum10CutPct'].fillna(df['max10CutPct'] * -1).apply(lambda x: min(x, 0) * -1)
+        score_cut_pct = df['cum10CutPct']
+    else:
+        score_cut_pct = df['max10CutPct']
 
     return_cols = ['return_7d', 'return_1m', 'return_1y', 'return_10y', 'total_return_1y', 'total_return_10y']
     for col in return_cols:
@@ -2006,7 +2012,7 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     df['DScore'] = (
         np.minimum(fwd_yield, 12)
         * maturity
-        * (100 - df['max10CutPct']) / 100
+        * (100 - score_cut_pct) / 100
         * df['mc_penalty']
         * growth_adj
         * sustain
@@ -2202,7 +2208,7 @@ with full_table_section:
                 'Dividend Score',
                 help=('Risk-adjusted projected forward yield: projected 5y dividend yield (growth capped at '
                       '+5%/yr, decline floored at -20%/yr, yield capped at 12%), scaled by dividend-track-record '
-                      'maturity, worst 10y dividend cut, normalized payout sustainability (earnings are capped '
+                      'maturity, all 10y dividend cuts compounded, normalized payout sustainability (earnings are capped '
                       'at 125% of the historical median margin and payout above 80% is penalized), organic '
                       'revenue/income growth (reward up to +25%, decline to -100%), and market cap '
                       '(small caps are structurally discounted)'),

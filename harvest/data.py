@@ -699,7 +699,7 @@ def calc_div_stats(div_df_input):
 
     if div_df.empty:
         return {
-            'maximum_cut_pct': 0, 'max_10y_cut_pct': 0, 'historical_mean_flat': 0,
+            'maximum_cut_pct': 0, 'max_10y_cut_pct': 0, 'cum_10y_cut_pct': 0, 'historical_mean_flat': 0,
             'div_inc_2y_mean_flat': 0, 'div_inc_5y_mean_flat': 0, 'exponential_weighted_mean_flat': 0,
             'historical_mean_pct': 0, 'div_inc_2y_mean_pct': 0, 'div_inc_5y_mean_pct': 0,
             'exponential_weighted_mean_pct': 0, 'num_positive_year': 0, 'num_dividend_year': 0,
@@ -712,7 +712,12 @@ def calc_div_stats(div_df_input):
     div_df['inc_pct'] = div_df['inc_flat'] / div_df['adjDividend'].shift(1) * 100
 
     stats['maximum_cut_pct'] = div_df['inc_pct'].min()
-    stats['max_10y_cut_pct'] = div_df['inc_pct'][-10:-1].min()
+    # The current year is already dropped above, so the last row is a completed year and counts.
+    stats['max_10y_cut_pct'] = div_df['inc_pct'][-10:].min()
+    # Every cut in the same window compounded, so repeated cuts weigh more than the worst one alone.
+    cuts_10y = div_df['inc_pct'][-10:]
+    cuts_10y = cuts_10y[cuts_10y < 0]
+    stats['cum_10y_cut_pct'] = (np.prod(1 + cuts_10y / 100) - 1) * 100
 
     stats['historical_mean_flat'] = div_df['inc_flat'].mean()
     stats['div_inc_2y_mean_flat'] = div_df['inc_flat'][-2:].mean()

@@ -357,7 +357,7 @@ class TestCalcDivStats:
     def test_returns_expected_keys(self, div_df):
         stats = hd.calc_div_stats(div_df)
         expected = {
-            "maximum_cut_pct", "max_10y_cut_pct",
+            "maximum_cut_pct", "max_10y_cut_pct", "cum_10y_cut_pct",
             "historical_mean_flat", "div_inc_2y_mean_flat",
             "div_inc_5y_mean_flat", "exponential_weighted_mean_flat",
             "historical_mean_pct", "div_inc_2y_mean_pct",
@@ -372,6 +372,30 @@ class TestCalcDivStats:
         stats = hd.calc_div_stats(empty)
         assert stats["maximum_cut_pct"] == 0
         assert stats["num_positive_year"] == 0
+
+    def test_cum_10y_cut_compounds_every_cut(self):
+        """Two 20% cuts compound to 36%, while the worst-cut stat sees only 20%."""
+        df = pd.DataFrame({
+            "year": [2018, 2019, 2020, 2021, 2022],
+            "adjDividend": [100, 80, 100, 80, 80],
+        })
+        stats = hd.calc_div_stats(df)
+        assert stats["max_10y_cut_pct"] == pytest.approx(-20)
+        assert stats["cum_10y_cut_pct"] == pytest.approx(-36)
+
+    def test_cut_in_last_completed_year_counts(self):
+        last_year = datetime.date.today().year - 1
+        df = pd.DataFrame({
+            "year": [last_year - 2, last_year - 1, last_year],
+            "adjDividend": [100, 100, 90],
+        })
+        stats = hd.calc_div_stats(df)
+        assert stats["max_10y_cut_pct"] == pytest.approx(-10)
+        assert stats["cum_10y_cut_pct"] == pytest.approx(-10)
+
+    def test_cum_10y_cut_is_zero_without_cuts(self):
+        df = pd.DataFrame({"year": [2019, 2020, 2021, 2022], "adjDividend": [50, 60, 60, 70]})
+        assert hd.calc_div_stats(df)["cum_10y_cut_pct"] == 0
 
     def test_num_positive_year(self, div_df):
         stats = hd.calc_div_stats(div_df)
