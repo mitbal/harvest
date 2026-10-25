@@ -2,9 +2,10 @@
 
 Run with ``streamlit run server.py`` (Streamlit detects the ``st.App``).
 """
+import re
 import logging
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import streamlit as st
 from starlette.concurrency import run_in_threadpool
@@ -22,6 +23,18 @@ STATIC_DIR = Path(__file__).resolve().parent / 'static'
 
 # Pages the edge/browser may cache briefly; data only changes daily.
 _CACHE_HEADERS = {'Cache-Control': 'public, max-age=600'}
+
+# Crawlers, link-preview fetchers, AI agents and scripted clients; these pages draw far more of them than people.
+_BOT_UA = re.compile(
+    r'bot|crawl|spider|slurp|scrap|fetch|preview|headless|lighthouse|inspectiontool|externalhit|externalagent'
+    r'|whatsapp|chatgpt|anthropic|python|curl|wget|httpx|go-http|okhttp|java/|axios|node|libwww|uptime|monitor',
+    re.IGNORECASE,
+)
+
+
+def is_probable_bot(user_agent):
+    """Whether a request looks automated; an empty user agent counts, since browsers always send one."""
+    return not user_agent or bool(_BOT_UA.search(user_agent))
 
 
 async def robots_txt(request):
@@ -62,13 +75,32 @@ async def stock_page(request):
     if html is None:
         return HTMLResponse(seo.render_not_found(slug), status_code=404)
 
-    # Same shape as main.py's VISIT log; no session here, so log the user agent to tell crawlers apart.
-    log_msg = f'VISIT | page=stock_page/{symbol}'
-    if request.url.query:
-        log_msg += f' | {request.url.query.replace("&", " | ")}'
-    log_msg += f" | ua={request.headers.get('user-agent', '')}"
-    visit_logger.info(log_msg)
+    # The VISIT log comes from the page's beacon (visit_beacon), so HTML-only scrapers never reach it.
     return HTMLResponse(html, headers=_CACHE_HEADERS)
+
+
+async def visit_beacon(request):
+    """Log a stock page view, posted by the page's script once it runs in a browser.
+
+    The body is the page's own path and query, e.g. ``/stock_picker/bbca?utm_source=ig``.
+    Anyone can post here, so the input is checked and re-encoded before it reaches the log.
+    """
+    user_agent = request.headers.get('user-agent', '')
+    body = (await request.body())[:1024].decode('utf-8', 'replace')
+    url = urlsplit(body)
+    prefix = '/stock_picker/'
+    slug = url.path[len(prefix):] if url.path.startswith(prefix) else ''
+    if is_probable_bot(user_agent) or not (0 < len(slug) <= 12 and slug.isascii() and slug.isalnum()):
+        return Response(status_code=204)
+
+    # Same shape as main.py's VISIT log; no session here, so log the user agent to tell crawlers apart.
+    log_msg = f'VISIT | page=stock_page/{seo.slug_to_symbol(slug)}'
+    query = urlencode(parse_qsl(url.query))
+    if query:
+        log_msg += f' | {query.replace("&", " | ")}'
+    log_msg += f' | ua={user_agent}'
+    visit_logger.info(log_msg)
+    return Response(status_code=204)
 
 
 class StockCanonicalMiddleware:
@@ -111,6 +143,7 @@ app = st.App(
         # Old static sitemap URL, possibly already submitted to Search Console.
         Route('/sitemap_full.xml', sitemap_stocks_xml),
         Route('/stock_picker/{ticker}', stock_page),
+        Route('/visit/stock_page', visit_beacon, methods=['POST']),
         Route('/webhooks/bmc', webhooks.bmc_webhook, methods=['POST']),
         Route('/webhooks/trakteer', webhooks.trakteer_webhook, methods=['POST']),
         Route('/webhooks/telegram', webhooks.telegram_webhook, methods=['POST']),

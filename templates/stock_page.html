@@ -73,4 +73,8 @@
   {% endif %}
 
   <p><a class="cta" href="{{ app_url }}">Analisis lengkap {{ ticker }} di Panen Dividen →</a></p>
+  <script>
+    // Visits are logged from here, not when the HTML is served, so scrapers that never run scripts stay out of the log.
+    navigator.sendBeacon && navigator.sendBeacon('/visit/stock_page', location.pathname + location.search);
+  </script>
 {% endblock %}

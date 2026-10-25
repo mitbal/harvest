@@ -63,6 +63,7 @@ def client():
             Route('/sitemap_stocks.xml', server.sitemap_stocks_xml),
             Route('/stock_picker/{ticker}', server.stock_page),
             Route('/stock_picker', streamlit_stub),
+            Route('/visit/stock_page', server.visit_beacon, methods=['POST']),
         ],
         middleware=[Middleware(server.StockCanonicalMiddleware)],
     )
@@ -158,3 +159,64 @@ class TestRoutes:
     @pytest.mark.parametrize('query', ['', '?stock=AAPL&market=US', '?stock=D05.SI'])
     def test_no_canonical_header_without_idx_stock(self, client, query):
         assert 'link' not in client.get(f'/stock_picker{query}').headers
+
+
+class TestVisitLog:
+
+    @pytest.mark.parametrize('ua', [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
+    ])
+    def test_browser_is_not_a_bot(self, ua):
+        assert not server.is_probable_bot(ua)
+
+    @pytest.mark.parametrize('ua', [
+        '',
+        'Mozilla/5.0 (compatible; Googlebot/2.0; +http://www.google.com/bot.html)',
+        'Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)',
+        'Mozilla/5.0 (Linux; Android 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Mobile Safari/537.36 (compatible; Bytespider; spider-feedback@bytedance.com)',
+        'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        'WhatsApp/2.23.20.0',
+        'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/120.0.0.0 Safari/537.36',
+        'python-requests/2.32.3',
+        'curl/8.7.1',
+    ])
+    def test_crawlers_and_scripts_are_bots(self, ua):
+        assert server.is_probable_bot(ua)
+
+    BROWSER = {'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36'}
+
+    def test_serving_the_page_does_not_log(self, client):
+        with patch.object(server.visit_logger, 'info') as log:
+            response = client.get('/stock_picker/bbca', headers=self.BROWSER)
+        assert response.status_code == 200
+        assert "sendBeacon('/visit/stock_page'" in response.text
+        log.assert_not_called()
+
+    def test_beacon_from_browser_is_logged(self, client):
+        with patch.object(server.visit_logger, 'info') as log:
+            response = client.post('/visit/stock_page', content='/stock_picker/bbca?utm_source=ig&utm_campaign=sept', headers=self.BROWSER)
+        assert response.status_code == 204
+        log.assert_called_once_with(
+            f"VISIT | page=stock_page/BBCA.JK | utm_source=ig | utm_campaign=sept | ua={self.BROWSER['user-agent']}")
+
+    def test_beacon_from_bot_is_not_logged(self, client):
+        with patch.object(server.visit_logger, 'info') as log:
+            response = client.post('/visit/stock_page', content='/stock_picker/bbca', headers={'user-agent': 'Googlebot/2.1'})
+        assert response.status_code == 204
+        log.assert_not_called()
+
+    @pytest.mark.parametrize('body', ['', '/', '/porto', '/stock_picker/', '/stock_picker/bb%0Aca', '/stock_picker/' + 'a' * 50])
+    def test_beacon_ignores_other_paths(self, client, body):
+        with patch.object(server.visit_logger, 'info') as log:
+            client.post('/visit/stock_page', content=body, headers=self.BROWSER)
+        log.assert_not_called()
+
+    def test_beacon_query_cannot_inject_log_lines(self, client):
+        with patch.object(server.visit_logger, 'info') as log:
+            client.post('/visit/stock_page', content='/stock_picker/bbca?x=1%0AVISIT | page=fake', headers=self.BROWSER)
+        assert '\n' not in log.call_args.args[0]
+
+    def test_robots_keeps_crawlers_off_the_beacon(self, client):
+        assert 'Disallow: /visit/' in client.get('/robots.txt').text

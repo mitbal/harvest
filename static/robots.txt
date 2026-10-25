@@ -15,6 +15,7 @@ Disallow: /
 
 User-agent: *
 Allow: /
+Disallow: /visit/
 
 Sitemap: https://panendividen.com/sitemap.xml
 Sitemap: https://panendividen.com/sitemap_stocks.xml
