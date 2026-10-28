@@ -25,12 +25,29 @@ st.set_page_config(page_title='Best Timing - Panen Dividen')
 hp.enable_chart_theme()
 
 st.title('Best Timing')
-sl = st.segmented_control('Stock List', ['JKSE', 'S&P500'], default='JKSE', required=True)
+
+# URL params keep the view shareable: ?market=jkse|sp500&start=YYYY&end=YYYY&sector=<name>
+_MARKET_QP_MAP = {'jkse': 'JKSE', 'sp500': 'S&P500'}
+_qp_market = str(st.query_params.get('market', 'jkse')).lower()
+sl = st.segmented_control(
+    'Stock List', ['JKSE', 'S&P500'],
+    default=_MARKET_QP_MAP.get(_qp_market, 'JKSE'), required=True,
+)
 
 if sl is None:
     st.stop()
 
 exch = 'jkse' if sl == 'JKSE' else 'sp500'
+if st.query_params.get('market') != exch:
+    st.query_params['market'] = exch
+
+
+def _qp_year(name, options, fallback):
+    try:
+        value = int(st.query_params.get(name, ''))
+    except ValueError:
+        return fallback
+    return value if value in options else fallback
 
 div_years_key = f'div_cal_years_{exch}'
 div_score_key = f'div_score_{exch}'
@@ -697,6 +714,14 @@ else:
     _year_range = list(range(2015, current_year + 1))
     _default_end_year = max(2015, current_year - 1)
     _default_start_year = max(2015, _default_end_year - 1)
+    _default_start_year = _qp_year('start', _year_range, _default_start_year)
+    _default_end_year = _qp_year('end', _year_range, _default_end_year)
+    _qp_sector = st.query_params.get('sector', 'All')
+    if _qp_sector not in _sector_options:
+        _qp_sector = 'All'
+        st.query_params.pop('sector', None)
+    # A link that names the year range runs the analysis on arrival instead of waiting for a submit.
+    _url_requests_analysis = 'start' in st.query_params or 'end' in st.query_params
     with st.form('cal_seasonality_inputs'):
         _yr_col1, _yr_col2, _sector_col, _submit_col = st.columns(4)
         _start_year = _yr_col1.selectbox(
@@ -713,7 +738,7 @@ else:
             'Sector',
             _sector_options,
             key='cal_input_sector',
-            index=0,
+            index=_sector_options.index(_qp_sector),
             help='Only stocks in this sector will be downloaded and analysed.',
         )
         _calculate_submitted = _submit_col.form_submit_button(
@@ -759,8 +784,15 @@ else:
         exch, selected_year, _start_year, _end_year, _input_sector,
         _data_version, 'compact_summary_v5',
     )
-    if _calculate_submitted:
+    if _calculate_submitted or (
+        _url_requests_analysis and st.session_state.get('cal_seasonality_request') is None
+    ):
         st.session_state['cal_seasonality_request'] = _request_key
+        st.query_params.update({'start': str(_start_year), 'end': str(_end_year)})
+        if _input_sector == 'All':
+            st.query_params.pop('sector', None)
+        else:
+            st.query_params['sector'] = _input_sector
 
     _active_request = st.session_state.get('cal_seasonality_request')
     if _active_request is not None and _active_request != _request_key:
