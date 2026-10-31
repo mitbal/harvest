@@ -790,8 +790,24 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
     else:
         st.warning('No dividend history available for this stock.')
 
+def has_income_statements(fin):
+    """ETFs and funds have no income statements, so their financial data comes back empty."""
+    return (
+        fin is not None
+        and not fin.empty
+        and {'date', 'revenue', 'netIncome', 'reportedCurrency'}.issubset(fin.columns)
+    )
+
+
 def render_financial_info(fin, currency, stock_name, filtered_df):
     """Redesigned financial section with Hero KPI row, polished charts, and rich context."""
+
+    if not has_income_statements(fin):
+        st.info(
+            f'No financial statements are available for {stock_name}. '
+            'ETFs and funds do not report revenue or net income.'
+        )
+        return
 
     # ── Column selection & currency conversion ──────────────────────────── #
     cols_needed = [c for c in ['date', 'calendarYear', 'revenue', 'netIncome', 'reportedCurrency',
@@ -996,6 +1012,13 @@ def cached_calc_fin_stats(stock_name, data_version, _fin, target_currency):
     return hd.calc_fin_stats(_fin, target_currency=target_currency)
 
 def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=None, sdf=None):
+    if not has_income_statements(fin):
+        st.info(
+            f'P/E and P/S valuation is unavailable for {stock_name} because it has no financial '
+            'statements. ETFs and funds do not report earnings or revenue.'
+        )
+        return
+
     cols = st.columns(2, gap='large')
     year = cols[0].slider('Select Number of Year', min_value=1, max_value=15, key=f"val_year_{stock_name}")
     val_metric = cols[1].radio('Valuation Metric', ['Price-to-Earnings (P/E) Ratio', 'Price-to-Sales (P/S) Ratio'], index=0, horizontal=True, key=f"val_metric_{stock_name}")
