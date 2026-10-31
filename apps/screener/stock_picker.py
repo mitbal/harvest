@@ -735,8 +735,11 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
         # st.markdown('#### 💸 Dividend Performance Summary')
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         
-        k1.metric('Est. Next Div', f"{next_div:,.1f}", 
-                  delta=f"{next_change:+.1f} YoY" if next_change != 0 else None,
+        # US dividends are fractions of a dollar (e.g. 0.2625), so they need more decimals than IDR.
+        div_decimals = 1 if currency == 'IDR' else 4
+
+        k1.metric('Est. Next Div', f"{next_div:,.{min(div_decimals, 2)}f}", 
+                  delta=f"{next_change:+.{min(div_decimals, 2)}f} YoY" if next_change != 0 else None,
                   delta_color='normal')
                   
         k2.metric('Dividend Yield', f"{next_yield:.2f}%")
@@ -782,10 +785,11 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
                 sdf[['date', 'adjDividend']],
                 column_config={
                     'date': st.column_config.DateColumn('Ex-Date'),
-                    'adjDividend': st.column_config.NumberColumn('Dividend', format='%,.1f'),
+                    'adjDividend': st.column_config.NumberColumn('Dividend', format=f'%,.{div_decimals}f'),
                 },
                 hide_index=True,
-                height=400
+                height=400,
+                width='stretch',
             )
     else:
         st.warning('No dividend history available for this stock.')
