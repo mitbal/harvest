@@ -4,6 +4,7 @@ Server-rendered stock pages (harvest/seo.py) and their routes in server.py.
 
 Redis and the dividend/profile downloads are patched, so this runs offline.
 """
+from datetime import date
 from unittest.mock import patch
 
 import pandas as pd
@@ -163,12 +164,27 @@ class TestRoutes:
 
 class TestVisitLog:
 
+    # Chrome 153 was stable here; current_chrome_major estimates 155.
+    TODAY = date(2026, 10, 31)
+
     @pytest.mark.parametrize('ua', [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36',
         'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
+        # Browsers and WebViews that ship an older Chromium on purpose.
+        'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0',
     ])
     def test_browser_is_not_a_bot(self, ua):
-        assert not server.is_probable_bot(ua)
+        assert not server.is_probable_bot(ua, today=self.TODAY)
+
+    @pytest.mark.parametrize('ua', [
+        'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    ])
+    def test_stale_chrome_is_a_bot(self, ua):
+        assert server.is_probable_bot(ua, today=self.TODAY)
 
     @pytest.mark.parametrize('ua', [
         '',
@@ -183,9 +199,9 @@ class TestVisitLog:
         'curl/8.7.1',
     ])
     def test_crawlers_and_scripts_are_bots(self, ua):
-        assert server.is_probable_bot(ua)
+        assert server.is_probable_bot(ua, today=self.TODAY)
 
-    BROWSER = {'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36'}
+    BROWSER = {'user-agent': f'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{server.current_chrome_major() - 2}.0.0.0 Mobile Safari/537.36'}
 
     def test_serving_the_page_does_not_log(self, client):
         with patch.object(server.visit_logger, 'info') as log:

@@ -4,6 +4,7 @@ Run with ``streamlit run server.py`` (Streamlit detects the ``st.App``).
 """
 import re
 import logging
+from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
@@ -32,9 +33,25 @@ _BOT_UA = re.compile(
 )
 
 
-def is_probable_bot(user_agent):
+# A plain Chrome UA, with nothing between "Gecko)" and "Chrome/" or after "Safari/", so Samsung Internet, Edge, Opera
+# and in-app WebViews, whose Chromium can lag by design, don't match.
+_PLAIN_CHROME_UA = re.compile(r'\(KHTML, like Gecko\) Chrome/(\d+)\.[\d.]+ (?:Mobile )?Safari/537\.36$')
+
+# Chrome auto-updates every four weeks, so one this many versions behind is almost always a scraper pinned to an old build.
+_STALE_CHROME_VERSIONS = 8
+
+
+def current_chrome_major(today=None):
+    """Estimate of the stable Chrome major version: 140 shipped on 2025-09-02, then one release every four weeks."""
+    return 140 + ((today or date.today()) - date(2025, 9, 2)).days // 28
+
+
+def is_probable_bot(user_agent, today=None):
     """Whether a request looks automated; an empty user agent counts, since browsers always send one."""
-    return not user_agent or bool(_BOT_UA.search(user_agent))
+    if not user_agent or _BOT_UA.search(user_agent):
+        return True
+    chrome = _PLAIN_CHROME_UA.search(user_agent)
+    return bool(chrome) and int(chrome.group(1)) < current_chrome_major(today) - _STALE_CHROME_VERSIONS
 
 
 async def robots_txt(request):
