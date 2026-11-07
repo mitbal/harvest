@@ -1,8 +1,10 @@
 import os
 import io
+import re
 import time
 import random
 import tarfile
+import threading
 import datetime
 import tempfile
 import contextlib
@@ -22,6 +24,75 @@ _DAGUERREO_TARBALL_URL = 'https://codeload.github.com/mitbal/daguerreo-data/tar.
 _DAG_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _dag_not_found_cache: set = set()
 _FMP_TIMEOUT = (10, 30)
+_FMP_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_FMP_RETRIES = 4
+_FMP_RETRY_BASE_DELAY = 1.5
+_FMP_MAX_RETRY_AFTER = 30.0
+_API_KEY_PATTERN = re.compile(r'(apikey=)[^&\s]+', re.IGNORECASE)
+# Indirection so tests can skip real waits without patching time.sleep globally.
+_fmp_sleep = time.sleep
+
+
+def redact_api_key(text):
+    """``text`` with the value of every ``apikey=`` query parameter replaced."""
+    return _API_KEY_PATTERN.sub(r'\1REDACTED', str(text))
+
+
+class RateLimiter:
+    """Spaces calls at least ``60 / per_minute`` seconds apart across threads."""
+
+    def __init__(self, per_minute):
+        self.interval = 60.0 / per_minute if per_minute > 0 else 0.0
+        self.lock = threading.Lock()
+        self.next_call = 0.0
+
+    def wait(self):
+        if self.interval <= 0:
+            return
+        with self.lock:
+            now = time.monotonic()
+            slot = max(now, self.next_call)
+            self.next_call = slot + self.interval
+        _fmp_sleep(max(0.0, slot - now))
+
+
+# One budget for every FMP request in this process (SEO routes, Streamlit pages,
+# pipeline workers). FMP answers 429 when calls exceed the plan's per-minute quota.
+fmp_limiter = RateLimiter(int(os.environ.get('FMP_CALLS_PER_MINUTE', '240')))
+
+
+def _fmp_retry_delay(response, attempt):
+    """Seconds to wait before retrying: FMP's ``Retry-After`` when given, else exponential backoff."""
+    retry_after = response.headers.get('Retry-After') if response is not None else None
+    if isinstance(retry_after, str):
+        try:
+            return min(float(retry_after), _FMP_MAX_RETRY_AFTER)
+        except ValueError:
+            pass
+    return _FMP_RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
+
+
+def _fmp_get(url, check=True, timeout=_FMP_TIMEOUT, retries=_FMP_RETRIES):
+    """GET an FMP URL under the shared rate limit, retrying 429 and 5xx responses.
+
+    With ``check``, a status that is still an error after the retries raises
+    ``HTTPError`` whose message has the API key redacted (the original quotes the URL).
+    """
+    r = None
+    for attempt in range(retries):
+        fmp_limiter.wait()
+        r = requests.get(url, timeout=timeout)
+        if r.status_code not in _FMP_RETRYABLE_STATUS or attempt == retries - 1:
+            break
+        _fmp_sleep(_fmp_retry_delay(r, attempt))
+    if check:
+        try:
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as exc:
+            raise requests.exceptions.HTTPError(
+                redact_api_key(exc), response=exc.response, request=exc.request
+            ) from None
+    return r
 
 
 def _dag_fetch_with_retry(url, retries=4, base_delay=0.8):
@@ -99,8 +170,7 @@ def get_all_idx_stocks(api_key=None):
         raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}'
-    r = requests.get(url, timeout=_FMP_TIMEOUT)
-    r.raise_for_status()
+    r = _fmp_get(url)
     sl = r.json()
 
     sdf = pd.DataFrame(sl)
@@ -121,8 +191,7 @@ def get_all_sp500_stocks(api_key=None):
         raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/sp500_constituent?apikey={api_key}'
-    r = requests.get(url, timeout=_FMP_TIMEOUT)
-    r.raise_for_status()
+    r = _fmp_get(url)
     
     sp_df = pd.DataFrame(r.json())
     return sp_df
@@ -142,8 +211,7 @@ def get_company_profile(stocks, api_key=None):
     
     stock_param = ','.join(stocks)
     url = f'https://financialmodelingprep.com/api/v3/profile/{stock_param}?apikey={api_key}'
-    r = requests.get(url, timeout=_FMP_TIMEOUT)
-    r.raise_for_status()
+    r = _fmp_get(url)
     cp = r.json()
 
     cp_df = pd.DataFrame(cp).set_index('symbol')
@@ -159,8 +227,7 @@ def get_daily_stock_price(stock, api_key=None, n_days=365, start_from=None):
     else:
         start_date = start_from
     url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{stock}?apikey={api_key}&from={start_date}'
-    r = requests.get(url, timeout=_FMP_TIMEOUT)
-    r.raise_for_status()
+    r = _fmp_get(url)
     intraday  = r.json()
 
     return pd.DataFrame(intraday.get('historical', []))
@@ -222,8 +289,8 @@ def get_sector_industry_pe(date=None, api_key=None):
     sector_url = f'https://financialmodelingprep.com/api/v4/sector_price_earning_ratio?date={date}&exchange=JKT&apikey={api_key}'
     industry_url = f'https://financialmodelingprep.com/api/v4/industry_price_earning_ratio?date={date}&exchange=JKT&apikey={api_key}'
 
-    sector = requests.get(sector_url).json()
-    industry = requests.get(industry_url).json()
+    sector = _fmp_get(sector_url, check=False).json()
+    industry = _fmp_get(industry_url, check=False).json()
 
     sector_df = pd.DataFrame(sector)
     industry_df = pd.DataFrame(industry)
@@ -234,7 +301,7 @@ def get_sector_industry_pe(date=None, api_key=None):
 def get_company_ratio(stock, api_key):
     
     url = f'https://financialmodelingprep.com/api/v3/ratios/{stock}?period=quarter&apikey={api_key}'
-    ratio = requests.get(url).json()
+    ratio = _fmp_get(url, check=False).json()
     return pd.DataFrame(ratio)
 
 
@@ -271,8 +338,7 @@ def get_dividend_history_single_stock_fmp(stock, api_key=None, raise_errors=Fals
 
     dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stock}?apikey={api_key}'
     try:
-        dr = requests.get(dividend_history_url, timeout=_FMP_TIMEOUT)
-        dr.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        dr = _fmp_get(dividend_history_url)
         drj = dr.json()
     except requests.exceptions.RequestException as e:
         status = e.response.status_code if e.response is not None else 'network error'
@@ -345,7 +411,7 @@ def get_dividend_history(stocks, api_key=None):
         stock_list = [s for s in stocks[i*5:(i+1)*5]]
         stocks_param = ','.join(stock_list)
         dividend_history_url = f'https://financialmodelingprep.com/api/v3/historical-price-full/stock_dividend/{stocks_param}?apikey={api_key}'
-        dr = requests.get(dividend_history_url)
+        dr = _fmp_get(dividend_history_url, check=False)
         drj = dr.json()
         
         if len(stock_list) > 1:
@@ -380,8 +446,7 @@ def get_financial_data_fmp(stock, period='quarter', api_key=None):
         api_key = os.environ['FMP_API_KEY']
 
     url = f'https://financialmodelingprep.com/api/v3/income-statement/{stock}?period={period}&apikey={api_key}'
-    r = requests.get(url, timeout=_FMP_TIMEOUT)
-    r.raise_for_status()
+    r = _fmp_get(url)
     fs = r.json()
     return pd.DataFrame(fs)
 
@@ -436,8 +501,7 @@ def get_fmp_statement(stock, statement, period='quarter', limit=80, api_key=None
         raise ValueError("FMP_API_KEY not found in environment or st.secrets")
 
     url = f'https://financialmodelingprep.com/api/v3/{statement}/{stock}?period={period}&limit={limit}&apikey={api_key}'
-    r = requests.get(url, timeout=_FMP_TIMEOUT)
-    r.raise_for_status()
+    r = _fmp_get(url)
     return pd.DataFrame(r.json())
 
 
@@ -447,7 +511,7 @@ def get_shares_outstanding(stock, api_key=None):
         api_key = os.environ['FMP_API_KEY']
 
     url = f'https://financialmodelingprep.com/api/v4/shares_float?symbol={stock}&apikey={api_key}'
-    r = requests.get(url)
+    r = _fmp_get(url, check=False)
     fs = r.json()
     return pd.DataFrame(fs)
 
@@ -456,7 +520,7 @@ def get_company_logo(stock, api_key=None):
     if api_key is None:
         api_key = os.environ['FMP_API_KEY']
     url = f'https://financialmodelingprep.com/image-stock/{stock}.png?apikey={api_key}'
-    r = requests.get(url)
+    r = _fmp_get(url, check=False)
     img = Image.open(io.BytesIO(r.content))
 
     return img
@@ -501,8 +565,7 @@ def get_usd_idr_rate(api_key=None, fallback=None, cache_ttl_seconds=3600):
 
     try:
         url = f'https://financialmodelingprep.com/api/v3/quote/USDIDR?apikey={api_key}'
-        r = requests.get(url, timeout=5)
-        r.raise_for_status()
+        r = _fmp_get(url, timeout=5, retries=1)
         data = r.json()
         if data and isinstance(data, list) and 'price' in data[0]:
             rate = float(data[0]['price'])

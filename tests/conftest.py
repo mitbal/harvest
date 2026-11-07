@@ -284,3 +284,10 @@ def universe_df():
         "total_return_10y":        [2.5,   2.0,  3.5],
         "is_syariah":              [False, False, True],
     }).set_index("stock")
+
+
+@pytest.fixture(autouse=True)
+def _no_fmp_waits(monkeypatch):
+    """FMP calls are rate-limited and retried with sleeps; tests mock the HTTP layer, so skip the waits."""
+    import harvest.data as hd
+    monkeypatch.setattr(hd, "_fmp_sleep", lambda seconds: None)

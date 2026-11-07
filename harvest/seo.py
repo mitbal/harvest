@@ -34,6 +34,18 @@ _env = Environment(
 )
 
 
+# Upstream failures (FMP 429s, CDN blips) are retried after this long, not after the full TTL.
+_FAILURE_TTL_SECONDS = 5 * 60
+
+
+class _Unavailable(Exception):
+    """Raised by a cache loader to serve ``fallback`` while keeping it only briefly."""
+
+    def __init__(self, fallback):
+        super().__init__()
+        self.fallback = fallback
+
+
 class _TTLCache:
     """Tiny thread-safe TTL cache; route handlers run in a thread pool."""
 
@@ -46,11 +58,14 @@ class _TTLCache:
         now = time.monotonic()
         with self._lock:
             hit = self._data.get(key)
-            if hit and now - hit[0] < self.ttl:
+            if hit and now < hit[0]:
                 return hit[1]
-        value = loader()
+        try:
+            value, ttl = loader(), self.ttl
+        except _Unavailable as unavailable:
+            value, ttl = unavailable.fallback, min(self.ttl, _FAILURE_TTL_SECONDS)
         with self._lock:
-            self._data[key] = (now, value)
+            self._data[key] = (now + ttl, value)
         return value
 
 
@@ -114,7 +129,7 @@ def load_dividend_history(symbol):
             return hd.get_dividend_history_single_stock_dag(symbol)
         except Exception:
             logger.exception('dividend history failed for %s', symbol)
-            return None
+            raise _Unavailable(None)
 
     return _dividend_cache.get_or_set(symbol, _load)
 
@@ -127,7 +142,7 @@ def load_company_profile(symbol):
             return cp.loc[symbol].to_dict() if symbol in cp.index else {}
         except Exception:
             logger.exception('company profile failed for %s', symbol)
-            return {}
+            raise _Unavailable({})
 
     return _profile_cache.get_or_set(symbol, _load)
 

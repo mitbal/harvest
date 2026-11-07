@@ -45,6 +45,9 @@ DIVIDENDS = pd.DataFrame({
 })
 
 
+# Kept before fake_data patches it, so the cache behaviour can be tested.
+_load_company_profile = seo.load_company_profile
+
 @pytest.fixture(autouse=True)
 def fake_data():
     with patch.object(seo, 'load_score_table', return_value=(TABLE, None)), \
@@ -236,3 +239,42 @@ class TestVisitLog:
 
     def test_robots_keeps_crawlers_off_the_beacon(self, client):
         assert 'Disallow: /visit/' in client.get('/robots.txt').text
+
+
+class TestCacheFailures:
+
+    def test_failed_profile_is_retried_after_failure_ttl(self):
+        cache = seo._TTLCache(60 * 60 * 24)
+        profile = pd.DataFrame({'companyName': ['PT Bank Central Asia Tbk']},
+                               index=pd.Index(['BBCA.JK'], name='symbol'))
+        clock = [1000.0]
+
+        with patch.object(seo, '_profile_cache', cache), \
+             patch.object(seo.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(seo.hd, 'get_company_profile',
+                          side_effect=[RuntimeError('429 Too Many Requests'), profile]) as get:
+            assert _load_company_profile('BBCA.JK') == {}
+            clock[0] += 60
+            assert _load_company_profile('BBCA.JK') == {}  # failure still cached briefly
+            clock[0] += seo._FAILURE_TTL_SECONDS
+            assert _load_company_profile('BBCA.JK') == {'companyName': 'PT Bank Central Asia Tbk'}
+
+        assert get.call_count == 2
+
+    def test_successful_value_keeps_full_ttl(self):
+        cache = seo._TTLCache(100)
+        clock = [0.0]
+        loader_calls = []
+
+        def loader():
+            loader_calls.append(1)
+            return 'value'
+
+        with patch.object(seo.time, 'monotonic', side_effect=lambda: clock[0]):
+            cache.get_or_set('k', loader)
+            clock[0] = 99
+            cache.get_or_set('k', loader)
+            clock[0] = 101
+            cache.get_or_set('k', loader)
+
+        assert len(loader_calls) == 2

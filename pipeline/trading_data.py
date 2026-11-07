@@ -8,7 +8,6 @@ signals from a stale local copy.
 import logging
 import os
 import pickle
-import threading
 import time
 from typing import Callable, Iterable, Optional
 
@@ -96,27 +95,6 @@ def load_ohlcv_histories(symbols: Iterable[str], start, exchange: str = "jkse") 
 
 
 RETRY_STATUS = {429, 500, 502, 503, 504}
-# FMP answers 429 when the scan's workers call it faster than the plan allows.
-FMP_CALLS_PER_MINUTE = int(os.environ.get("FMP_CALLS_PER_MINUTE", "240"))
-
-
-class RateLimiter:
-    """Spaces calls at least ``60 / per_minute`` seconds apart across threads."""
-
-    def __init__(self, per_minute: int):
-        self.interval = 60.0 / per_minute
-        self.lock = threading.Lock()
-        self.next_call = 0.0
-
-    def wait(self) -> None:
-        with self.lock:
-            now = time.monotonic()
-            slot = max(now, self.next_call)
-            self.next_call = slot + self.interval
-        time.sleep(max(0.0, slot - now))
-
-
-fmp_limiter = RateLimiter(FMP_CALLS_PER_MINUTE)
 
 
 def with_retries(fetch: Callable, *args, attempts: int = 4, base_delay: float = 5.0, **kwargs):
@@ -146,9 +124,6 @@ def load_long_term_fundamentals(symbol: str) -> tuple[Optional[pd.DataFrame], pd
     """Daguerreo quarterly income statements and FMP statements for one stock; FMP errors propagate."""
     financials = with_retries(hd.get_financial_data, symbol, period="quarter", source="dag")
 
-    def statement(name: str) -> pd.DataFrame:
-        fmp_limiter.wait()
-        return hd.get_fmp_statement(symbol, name)
-
-    frames = [with_retries(statement, name) for name in pos.STATEMENT_FIELDS]
+    # hd.get_fmp_statement already waits on the shared FMP rate limiter (FMP_CALLS_PER_MINUTE).
+    frames = [with_retries(hd.get_fmp_statement, symbol, name) for name in pos.STATEMENT_FIELDS]
     return financials, pos.prepare_statements(*frames)

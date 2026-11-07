@@ -47,6 +47,52 @@ class TestMarketDataSources:
             actions=True,
         )
 
+    def test_fmp_profile_retries_rate_limit_then_succeeds(self):
+        """A 429 from /profile is retried (honouring Retry-After) instead of failing the caller."""
+        ok = self._response(200, '[{"symbol": "BBCA.JK", "price": 9500}]')
+        limited = self._response(429)
+        limited.headers["Retry-After"] = "2"
+        sleeps = []
+
+        with patch("harvest.data.requests.get", side_effect=[limited, ok]) as get, \
+                patch.object(hd, "_fmp_sleep", sleeps.append):
+            result = hd.get_company_profile(["BBCA.JK"], api_key="secret")
+
+        assert get.call_count == 2
+        assert 2.0 in sleeps
+        assert result.loc["BBCA.JK", "price"] == 9500
+
+    def test_fmp_persistent_rate_limit_raises_redacted_http_error(self):
+        limited = self._response(429)
+        limited.url = "https://financialmodelingprep.com/api/v3/profile/BBCA.JK?apikey=secret"
+        limited.reason = "Too Many Requests"
+
+        with patch("harvest.data.requests.get", return_value=limited) as get:
+            with pytest.raises(hd.requests.exceptions.HTTPError) as raised:
+                hd.get_company_profile(["BBCA.JK"], api_key="secret")
+
+        assert get.call_count == hd._FMP_RETRIES
+        assert raised.value.response.status_code == 429
+        assert "secret" not in str(raised.value)
+        assert "apikey=REDACTED" in str(raised.value)
+
+    def test_fmp_client_error_is_not_retried(self):
+        with patch("harvest.data.requests.get", return_value=self._response(403)) as get:
+            with pytest.raises(hd.requests.exceptions.HTTPError):
+                hd.get_company_profile(["BBCA.JK"], api_key="secret")
+
+        assert get.call_count == 1
+
+    def test_fmp_limiter_spaces_calls(self):
+        limiter = hd.RateLimiter(60)  # one call per second
+        sleeps = []
+        with patch.object(hd, "_fmp_sleep", sleeps.append), \
+                patch("harvest.data.time.monotonic", return_value=100.0):
+            limiter.wait()
+            limiter.wait()
+
+        assert sleeps == [0.0, 1.0]
+
     def test_fmp_dividend_error_does_not_print_api_key(self, capsys):
         response = MagicMock(status_code=429)
         error = hd.requests.exceptions.HTTPError(
