@@ -66,9 +66,9 @@ pages = st.navigation(
             ],
         'Trading': [
                 page_my_trades,
+                page_dividend_play,
                 page_backtester,
                 page_swing_trading,
-                page_dividend_play,
                 page_track_record,
         ]
     }

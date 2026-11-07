@@ -721,6 +721,153 @@ def next_play_event(divs: pd.DataFrame, setup: dict, as_of) -> pd.Series | None:
     return event
 
 
+# --------------------------------------------------------------------------- #
+# Announced dividends: the short trade from announcement to ex-date            #
+# --------------------------------------------------------------------------- #
+# Announced ex-dates this far ahead are listed; companies announce a few weeks out.
+ANNOUNCED_HORIZON_DAYS = 60
+# A past ex-date whose first session after it is this late is a gap in the price data.
+MAX_EX_SESSION_GAP_DAYS = 7
+SHORT_MIN_TRADES = 4
+SHORT_EXIT_CUM = 'cum'
+SHORT_EXIT_HOLD = 'hold'
+SHORT_EXIT_LABELS = {
+    SHORT_EXIT_CUM: 'Sell on cum date',
+    SHORT_EXIT_HOLD: 'Hold through ex-date',
+}
+VERDICT_ENTER = 'Enter'
+VERDICT_MIXED = 'Mixed'
+VERDICT_SKIP = 'Skip'
+VERDICT_FEW = 'Too few trades'
+SHORT_TRADE_COLUMNS = [
+    'ex_date', 'dividend', 'entry_date', 'entry_price', 'cum_price', 'ex_price',
+    'runup_return', 'hold_return', 'ex_drop',
+]
+
+
+def announced_dividends(events: dict, as_of, horizon_days: int = ANNOUNCED_HORIZON_DAYS) -> pd.DataFrame:
+    """Ex-dates after ``as_of`` (already declared) within ``horizon_days``, soonest first.
+
+    ``events`` maps symbol to a prepared dividend frame (``date``, ``dividend``).
+    Returns ``symbol``, ``ex_date`` and ``dividend``.
+    """
+    as_of = pd.Timestamp(as_of).normalize()
+    limit = as_of + pd.Timedelta(days=int(horizon_days))
+    rows = [
+        {'symbol': symbol, 'ex_date': row.date, 'dividend': float(row.dividend)}
+        for symbol, divs in events.items() if divs is not None and not divs.empty
+        for row in divs[(divs['date'] > as_of) & (divs['date'] <= limit)].itertuples()
+    ]
+    if not rows:
+        return pd.DataFrame(columns=['symbol', 'ex_date', 'dividend'])
+    return pd.DataFrame(rows).sort_values(['ex_date', 'symbol']).reset_index(drop=True)
+
+
+def short_play_trades(
+    prices: pd.DataFrame,
+    divs: pd.DataFrame,
+    sessions_to_ex: int,
+    as_of,
+    start=DEFAULT_START,
+    buy_fee_pct: float = 0.0,
+    sell_fee_pct: float = 0.0,
+    dividend_tax_pct: float = 0.0,
+) -> pd.DataFrame:
+    """Replay the announced-dividend trade on every past ex-date of one stock.
+
+    Each trade buys at the close ``sessions_to_ex`` sessions before the
+    ex-date's first session, then either sells at the cum-date close
+    (``runup_return``, no dividend) or holds to the ex-date close and collects
+    the dividend (``hold_return``). ``runup_return`` is NaN when the entry is
+    the cum date itself. ``ex_drop`` is the ex-date close versus the cum close.
+    Returns are percentages net of fees and dividend tax.
+    """
+    prices = prepare_prices(prices)
+    divs = prepare_dividends(divs)
+    sessions_to_ex = int(sessions_to_ex)
+    as_of = pd.Timestamp(as_of).normalize()
+    divs = divs[(divs['date'] >= pd.Timestamp(start)) & (divs['date'] < as_of)]
+    if prices.empty or divs.empty or sessions_to_ex < 1:
+        return pd.DataFrame(columns=SHORT_TRADE_COLUMNS)
+
+    dates = prices['date'].to_numpy(dtype='datetime64[D]')
+    close = prices['close'].to_numpy(dtype=float)
+    buy_cost = 1 + buy_fee_pct / 100
+    sell_keep = 1 - sell_fee_pct / 100
+    div_keep = 1 - dividend_tax_pct / 100
+    rows = []
+    for ex_date, dividend in zip(divs['date'].to_numpy(dtype='datetime64[D]'), divs['dividend']):
+        ex_idx = int(np.searchsorted(dates, ex_date, 'left'))
+        entry_idx = ex_idx - sessions_to_ex
+        if ex_idx >= len(dates) or entry_idx < 0:
+            continue
+        if (dates[ex_idx] - ex_date).astype(int) > MAX_EX_SESSION_GAP_DAYS:
+            continue
+        cost_basis = close[entry_idx] * buy_cost
+        cum_price, ex_price = close[ex_idx - 1], close[ex_idx]
+        runup = (cum_price * sell_keep / cost_basis - 1) * 100 if ex_idx - 1 > entry_idx else np.nan
+        hold = (ex_price * sell_keep / cost_basis - 1) * 100 + dividend * div_keep / cost_basis * 100
+        rows.append({
+            'ex_date': ex_date,
+            'dividend': float(dividend),
+            'entry_date': dates[entry_idx],
+            'entry_price': float(close[entry_idx]),
+            'cum_price': float(cum_price),
+            'ex_price': float(ex_price),
+            'runup_return': float(runup),
+            'hold_return': float(hold),
+            'ex_drop': float((ex_price / cum_price - 1) * 100),
+        })
+    frame = pd.DataFrame(rows, columns=SHORT_TRADE_COLUMNS)
+    for column in ('ex_date', 'entry_date'):
+        frame[column] = pd.to_datetime(frame[column])
+    return frame.sort_values('ex_date', ascending=False).reset_index(drop=True)
+
+
+def _exit_stats(returns: pd.Series) -> dict:
+    returns = returns.dropna()
+    if returns.empty:
+        return {'trades': 0, 'wins': 0, 'win_rate': np.nan, 'avg_return': np.nan}
+    return {
+        'trades': int(len(returns)),
+        'wins': int((returns > 0).sum()),
+        'win_rate': float((returns > 0).mean() * 100),
+        'avg_return': float(returns.mean()),
+    }
+
+
+def short_play_verdict(
+    trades: pd.DataFrame,
+    min_trades: int = SHORT_MIN_TRADES,
+    min_win_rate: float = MIN_STOCK_VALIDATION_WIN_RATE,
+) -> dict:
+    """Whether to enter an announced dividend, from :func:`short_play_trades`.
+
+    Picks the exit with the higher average return among those with at least
+    ``min_trades`` trades. ``Enter`` needs a positive average and a win rate of
+    at least ``min_win_rate``; ``Mixed`` has a positive average but wins less
+    often; ``Skip`` loses on average with either exit.
+    """
+    stats = {
+        SHORT_EXIT_CUM: _exit_stats(trades['runup_return'] if not trades.empty else pd.Series(dtype=float)),
+        SHORT_EXIT_HOLD: _exit_stats(trades['hold_return'] if not trades.empty else pd.Series(dtype=float)),
+    }
+    candidates = {key: value for key, value in stats.items() if value['trades'] >= int(min_trades)}
+    result = {'exits': stats, 'best_exit': None, 'verdict': VERDICT_FEW}
+    if not candidates:
+        return result
+    best = max(candidates, key=lambda key: candidates[key]['avg_return'])
+    best_stats = candidates[best]
+    result['best_exit'] = best
+    if best_stats['avg_return'] <= 0:
+        result['verdict'] = VERDICT_SKIP
+    elif best_stats['win_rate'] >= float(min_win_rate):
+        result['verdict'] = VERDICT_ENTER
+    else:
+        result['verdict'] = VERDICT_MIXED
+    return result
+
+
 def scan_signal(status: dict, entry_rule: str, opening_within: int) -> str:
     """Scanner signal for an :func:`entry_status` result."""
     in_window = status['status'] in ('In entry window', 'Buy zone - dip active')

@@ -25,6 +25,7 @@ from tests.fake_supabase import FakeSupabase
 REPO = Path(__file__).resolve().parents[1]
 PAGE = str(REPO / "apps" / "trading" / "dividend_play.py")
 AS_OF = pd.Timestamp.today().normalize()
+ANNOUNCED_EX = AS_OF + pd.Timedelta(days=12)
 SYMBOLS = ["BBRI.JK", "TLKM.JK", "ASII.JK", "UNVR.JK"]
 SETUP = {
     "entry_start_days": 90, "entry_end_days": 30, "entry_rule": "dip", "dip_ma_days": 20,
@@ -73,6 +74,10 @@ def client():
         })
         for symbol in SYMBOLS
     }
+    # TLKM has declared its next dividend.
+    dividends["TLKM.JK"] = pd.concat([dividends["TLKM.JK"], pd.DataFrame({
+        "date": [ANNOUNCED_EX.date().isoformat()], "adjDividend": [80.0],
+    })], ignore_index=True)
     fake.auth = MagicMock()
     fake.client = types.SimpleNamespace(storage=types.SimpleNamespace(
         from_=lambda bucket: types.SimpleNamespace(download=lambda path: pickle.dumps(dividends)),
@@ -149,6 +154,11 @@ def _metric(app, label):
     return next(m.value for m in app.metric if m.label == label)
 
 
+def _dataframe(app, column):
+    """The first table on the page with ``column``, or None."""
+    return next((df.value for df in app.dataframe if column in df.value.columns), None)
+
+
 def _evidence_buttons(app):
     return [b for b in app.button if b.label == "See evidence"]
 
@@ -170,7 +180,7 @@ def test_today_premium_shows_every_card_and_the_opening_list(run_page):
     assert "Dip rule active, 2.5% below its 20-day average" in text
     assert "holdout 30 of 40 won on all shortlist stocks, +5.0% average after costs" in text
     assert "Not financial advice." in text
-    assert app.dataframe[0].value["Stock"].tolist() == ["ASII"]
+    assert _dataframe(app, "Window opens")["Stock"].tolist() == ["ASII"]
     assert "Unlock the trading lab" not in [b.label for b in app.button]
 
 
@@ -184,10 +194,39 @@ def test_today_free_shows_one_card_and_names_only(run_page, tier):
     text = _texts(app)
     assert "Also open: TLKM" in text
     assert "ASII" in text
-    assert not app.dataframe
+    assert _dataframe(app, "Window opens") is None
     assert "Unlock the trading lab" in [b.label for b in app.button]
     if tier == "logged_out":
         assert _metric(app, "Your positions") == "–"
+
+
+def test_today_premium_judges_announced_dividends(run_page):
+    app = run_page("premium")
+
+    assert not app.exception
+    assert "Announced dividends" in _texts(app)
+    table = _dataframe(app, "Verdict")
+    assert table["Stock"].tolist() == ["TLKM"]
+    row = table.iloc[0]
+    assert row["Dividend"] == 80.0
+    assert row["Yield"] == pytest.approx(80.0 / row["Price"] * 100)
+    assert row["Verdict"] in {"Enter", "Mixed", "Skip"}
+    assert row["Best exit"] in {"Sell on cum date", "Hold through ex-date"}
+    assert row["Won"].endswith(f"of {AS_OF.year - 2015}")
+    # The detail below the table replays every past ex-date.
+    trades = _dataframe(app, "hold_return")
+    assert len(trades) == AS_OF.year - 2015
+
+
+@pytest.mark.parametrize("tier", ["free", "logged_out"])
+def test_today_free_lists_announced_dividends_without_the_verdict(run_page, tier):
+    app = run_page(tier)
+
+    table = _dataframe(app, "Yield")
+    assert table["Stock"].tolist() == ["TLKM"]
+    assert "Verdict" not in table.columns
+    assert _dataframe(app, "hold_return") is None
+    assert "Supporters see whether buying now has paid off" in _texts(app)
 
 
 def test_today_marks_estimated_cum_dates(run_page):

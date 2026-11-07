@@ -262,3 +262,90 @@ def test_scan_signal_maps_entry_status():
     assert dp.scan_signal(status('Buy zone - dip active'), dp.ENTRY_DIP, 45) == dp.SIGNAL_BUY
     assert dp.scan_signal(status('Waiting', 30), dp.ENTRY_DIP, 45) == dp.SIGNAL_SOON
     assert dp.scan_signal(status('Waiting', 60), dp.ENTRY_DIP, 45) == dp.SIGNAL_LATER
+
+
+# ── Announced dividends ─────────────────────────────────────────────────── #
+
+def _runup_prices(ex_dates, start='2018-01-01', end='2024-12-31', drop=8.0):
+    """Flat at 100, rising 1 a session over the 5 sessions to each ex-date, then dropping ``drop``."""
+    dates = pd.bdate_range(start, end)
+    close = pd.Series(100.0, index=dates)
+    for ex in pd.to_datetime(list(ex_dates)):
+        ex_idx = dates.searchsorted(ex)
+        for k in range(1, 6):
+            close.iloc[ex_idx - k] = 100 + (5 - k + 1)
+        close.iloc[ex_idx] = 105 - drop
+    return pd.DataFrame({'date': dates, 'close': close.values})
+
+
+def test_announced_dividends_lists_only_declared_future_ex_dates():
+    events = {
+        'AAAA.JK': dp.prepare_dividends(pd.DataFrame({'date': ['2024-06-14', '2024-11-20'], 'dividend': [5, 6]})),
+        'BBBB.JK': dp.prepare_dividends(pd.DataFrame({'date': ['2024-11-12', '2025-03-01'], 'dividend': [7, 8]})),
+    }
+
+    upcoming = dp.announced_dividends(events, '2024-11-07', horizon_days=60)
+
+    assert upcoming['symbol'].tolist() == ['BBBB.JK', 'AAAA.JK']
+    assert upcoming['dividend'].tolist() == [7.0, 6.0]
+
+
+def test_short_play_trades_replays_both_exits_from_the_same_session_count():
+    ex_dates = ['2021-06-15', '2022-06-15', '2023-06-15', '2024-06-14']
+    prices = _runup_prices(ex_dates)
+    divs = pd.DataFrame({'date': ex_dates, 'dividend': 5.0})
+
+    trades = dp.short_play_trades(prices, divs, sessions_to_ex=5, as_of='2024-11-07')
+
+    assert len(trades) == 4
+    first = trades.iloc[0]
+    assert first['entry_price'] == 101 and first['cum_price'] == 105 and first['ex_price'] == 97
+    assert np.isclose(first['runup_return'], (105 / 101 - 1) * 100)
+    assert np.isclose(first['hold_return'], (97 / 101 - 1) * 100 + 5 / 101 * 100)
+    assert np.isclose(first['ex_drop'], (97 / 105 - 1) * 100)
+
+
+def test_short_play_trades_has_no_runup_when_bought_on_the_cum_date():
+    ex_dates = ['2023-06-15']
+    trades = dp.short_play_trades(_runup_prices(ex_dates), pd.DataFrame({'date': ex_dates, 'dividend': 5.0}),
+                                  sessions_to_ex=1, as_of='2024-11-07')
+
+    assert np.isnan(trades.iloc[0]['runup_return'])
+    assert np.isfinite(trades.iloc[0]['hold_return'])
+
+
+def test_short_play_trades_ignores_the_announced_date_and_older_than_start():
+    ex_dates = ['2014-06-16', '2023-06-15', '2024-11-20']
+    prices = _runup_prices(ex_dates, start='2014-01-01')
+    trades = dp.short_play_trades(prices, pd.DataFrame({'date': ex_dates, 'dividend': 5.0}),
+                                  sessions_to_ex=3, as_of='2024-11-07')
+
+    assert trades['ex_date'].tolist() == [pd.Timestamp('2023-06-15')]
+
+
+def test_short_play_verdict_picks_the_better_exit():
+    ex_dates = ['2020-06-15', '2021-06-15', '2022-06-15', '2023-06-15', '2024-06-14']
+    divs = pd.DataFrame({'date': ex_dates, 'dividend': 5.0})
+
+    # The ex-date drop (8) is larger than the dividend (5), so selling on the cum date wins.
+    trades = dp.short_play_trades(_runup_prices(ex_dates), divs, 5, '2024-11-07')
+    verdict = dp.short_play_verdict(trades)
+    assert verdict['verdict'] == dp.VERDICT_ENTER
+    assert verdict['best_exit'] == dp.SHORT_EXIT_CUM
+    assert verdict['exits'][dp.SHORT_EXIT_CUM]['wins'] == 5
+
+    # A tiny drop makes holding through the ex-date the better trade.
+    trades = dp.short_play_trades(_runup_prices(ex_dates, drop=1.0), divs, 5, '2024-11-07')
+    assert dp.short_play_verdict(trades)['best_exit'] == dp.SHORT_EXIT_HOLD
+
+
+def test_short_play_verdict_skips_losers_and_needs_enough_trades():
+    ex_dates = ['2020-06-15', '2021-06-15', '2022-06-15', '2023-06-15']
+    dates = pd.bdate_range('2019-01-01', '2024-12-31')
+    falling = pd.DataFrame({'date': dates, 'close': np.linspace(200, 100, len(dates))})
+    divs = pd.DataFrame({'date': ex_dates, 'dividend': 0.01})
+
+    trades = dp.short_play_trades(falling, divs, 5, '2024-11-07', buy_fee_pct=0.15, sell_fee_pct=0.25)
+    assert dp.short_play_verdict(trades)['verdict'] == dp.VERDICT_SKIP
+    assert dp.short_play_verdict(trades.head(2))['verdict'] == dp.VERDICT_FEW
+    assert dp.short_play_verdict(trades.iloc[0:0])['verdict'] == dp.VERDICT_FEW

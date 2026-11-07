@@ -44,6 +44,8 @@ VIEW_TODAY, VIEW_EVIDENCE, VIEW_LAB = 'Today', 'Evidence', 'Lab'
 # The one stock whose evidence is open to everyone.
 FREE_EVIDENCE_TICKER = 'BBRI.JK'
 SOON_METRIC_DAYS = 14
+# An announced dividend whose stock's latest close is older than this gets no verdict.
+MAX_ANNOUNCED_PRICE_AGE_DAYS = 7
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title='Dividend Play - Panen Dividen')
@@ -616,16 +618,214 @@ def render_alert_picker(symbols: list[str]) -> None:
         st.caption('Alerts arrive on Telegram. Link it under Settings in My Trades.')
 
 
+@st.cache_data(ttl=6 * 60 * 60, max_entries=256, show_spinner=False)
+def cached_live_prices(symbol: str, start: str) -> pd.DataFrame:
+    return fetch_live_prices(symbol, start)
+
+
+def cum_date(ex_date) -> datetime.date:
+    """IDX cum date: the last trading day before the ex-date."""
+    ex_date = pd.Timestamp(ex_date).date()
+    return store.idx_trading_days(ex_date - datetime.timedelta(days=14), ex_date - datetime.timedelta(days=1))[-1]
+
+
+def build_announced(as_of: pd.Timestamp) -> tuple[pd.DataFrame, dict]:
+    """One row per announced ex-date with its yield and verdict, plus each row's past trades."""
+    events = load_dividend_events()
+    upcoming = dp.announced_dividends(events, as_of)
+    if upcoming.empty:
+        return pd.DataFrame(), {}
+    symbols = sorted(set(upcoming['symbol']))
+    start = pd.Timestamp(dp.DEFAULT_START).strftime('%Y-%m-%d')
+    stored = load_stored_prices(tuple(symbols), start)
+    histories = {symbol: dp.prepare_prices(group) for symbol, group in stored.groupby('symbol')}
+    for symbol in symbols:
+        if histories.get(symbol) is None or histories[symbol].empty:
+            histories[symbol] = cached_live_prices(symbol, start)
+
+    universe = load_dividend_universe()
+    universe = universe.set_index('stock') if 'stock' in universe.columns else pd.DataFrame()
+    costs = dp.trade_costs()
+    rows, trades_by_row = [], {}
+    for index, event in upcoming.iterrows():
+        symbol, prices = event['symbol'], histories.get(event['symbol'], pd.DataFrame())
+        cum = cum_date(event['ex_date'])
+        row = {
+            'symbol': symbol, 'cum_date': cum, 'ex_date': event['ex_date'].date(),
+            'dividend': event['dividend'], 'close': np.nan, 'yield': np.nan, 'sessions_left': None,
+            'verdict': 'No price data', 'best_exit': None, 'wins': None, 'trades': None, 'avg_return': np.nan,
+            'value_traded': np.nan, 'exits': {},
+        }
+        if symbol in universe.index and {'volAvg', 'price'}.issubset(universe.columns):
+            row['value_traded'] = float(universe.at[symbol, 'volAvg'] * universe.at[symbol, 'price'])
+        if not prices.empty:
+            last_date = prices['date'].iloc[-1]
+            row['close'] = float(prices['close'].iloc[-1])
+            row['yield'] = event['dividend'] / row['close'] * 100
+            # Sessions from the next one through the cum date; buying on any of them qualifies.
+            sessions = len(store.idx_trading_days(last_date + pd.Timedelta(days=1), cum))
+            row['sessions_left'] = sessions
+            if (as_of - last_date).days > MAX_ANNOUNCED_PRICE_AGE_DAYS:
+                row['verdict'] = 'Price data stale'
+            elif sessions < 1:
+                row['verdict'] = 'Cum date passed'
+            else:
+                trades = dp.short_play_trades(prices, events[symbol], sessions, as_of, **costs)
+                verdict = dp.short_play_verdict(trades)
+                trades_by_row[index] = trades
+                row['verdict'], row['best_exit'], row['exits'] = (
+                    verdict['verdict'], verdict['best_exit'], verdict['exits'])
+                best = verdict['exits'].get(verdict['best_exit'])
+                if best:
+                    row['wins'], row['trades'], row['avg_return'] = best['wins'], best['trades'], best['avg_return']
+        rows.append(row)
+    return pd.DataFrame(rows), trades_by_row
+
+
+VERDICT_TONES = {
+    dp.VERDICT_ENTER: 'color: #15803d; font-weight: 600',
+    dp.VERDICT_MIXED: 'color: #b45309; font-weight: 600',
+    dp.VERDICT_SKIP: 'color: #c2410c; font-weight: 600',
+}
+
+
+def render_announced_detail(row: pd.Series, trades: pd.DataFrame | None) -> None:
+    """Both exits' record for one announced dividend, and every past trade behind it."""
+    st.markdown(f"**{ui.short(row['symbol'])}** · if bought {row['sessions_left']} sessions before the ex-date "
+                f"in past years, with costs and {DEFAULT_DIVIDEND_TAX:g}% dividend tax")
+    if trades is None or trades.empty:
+        st.info('No past ex-date of this stock has the price history to replay this trade.')
+        return
+    cols = st.columns(3)
+    for col, key in zip(cols, (dp.SHORT_EXIT_CUM, dp.SHORT_EXIT_HOLD)):
+        stats = row['exits'].get(key) or {}
+        best = ' (best)' if key == row['best_exit'] else ''
+        col.metric(
+            dp.SHORT_EXIT_LABELS[key] + best,
+            _pct(stats.get('avg_return', np.nan)) if stats.get('trades') else 'N/A',
+            help='Average net return per trade',
+        )
+        if stats.get('trades'):
+            col.caption(f"Won {stats['wins']} of {stats['trades']}")
+    cols[2].metric('Median ex-date drop', _pct(trades['ex_drop'].median()),
+                   help='Ex-date close versus the cum-date close')
+    cols[2].caption(f"vs {row['yield']:.1f}% yield now" if np.isfinite(row['yield']) else '')
+
+    long = pd.concat([
+        trades.assign(Exit=dp.SHORT_EXIT_LABELS[dp.SHORT_EXIT_CUM], Return=trades['runup_return']),
+        trades.assign(Exit=dp.SHORT_EXIT_LABELS[dp.SHORT_EXIT_HOLD], Return=trades['hold_return']),
+    ], ignore_index=True).dropna(subset=['Return'])
+    long['Ex-date'] = long['ex_date'].dt.strftime('%b %Y')
+    order = trades.sort_values('ex_date')['ex_date'].dt.strftime('%b %Y').tolist()
+    labels = list(dp.SHORT_EXIT_LABELS.values())
+    chart = alt.Chart(long).mark_bar().encode(
+        x=alt.X('Ex-date:N', sort=order, title=None),
+        xOffset=alt.XOffset('Exit:N', sort=labels),
+        y=alt.Y('Return:Q', title='Net return (%)'),
+        color=alt.Color('Exit:N', scale=alt.Scale(domain=labels, range=[cs.CHART_PRIMARY, cs.CHART_AMBER]),
+                        legend=alt.Legend(title=None, orient='top')),
+        tooltip=[alt.Tooltip('ex_date:T', title='Ex-date'), 'Exit:N',
+                 alt.Tooltip('Return:Q', title='Net return %', format='+.2f'),
+                 alt.Tooltip('dividend:Q', title='Dividend', format=',.2f')],
+    )
+    st.altair_chart(chart.properties(height=260), width='stretch', theme=None)
+    # Bought on the cum date itself, there is no run-up to sell into.
+    shown = trades.dropna(axis=1, how='all')
+    st.dataframe(
+        shown,
+        column_config={
+            'ex_date': st.column_config.DateColumn('Ex-date'),
+            'dividend': st.column_config.NumberColumn('Dividend', format='%.2f'),
+            'entry_date': st.column_config.DateColumn('Bought'),
+            'entry_price': st.column_config.NumberColumn('Buy Price', format='%.0f'),
+            'cum_price': st.column_config.NumberColumn('Cum Close', format='%.0f'),
+            'ex_price': st.column_config.NumberColumn('Ex Close', format='%.0f'),
+            'runup_return': st.column_config.NumberColumn('Sell on Cum', format='%+.1f%%'),
+            'hold_return': st.column_config.NumberColumn('Hold Through', format='%+.1f%%'),
+            'ex_drop': st.column_config.NumberColumn('Ex-date Drop', format='%+.1f%%'),
+        },
+        hide_index=True, width='stretch',
+    )
+
+
+def render_announced(access: bool) -> None:
+    """Dividends already declared: their yield at today's price and whether the short trade pays."""
+    as_of = pd.Timestamp(datetime.date.today())
+    try:
+        with st.spinner('Checking announced dividends...'):
+            table, trades_by_row = build_announced(as_of)
+    except Exception:
+        logger.exception('Could not build the announced dividends')
+        table, trades_by_row = pd.DataFrame(), {}
+    ui.section('Announced dividends', len(table), 'Buy before the cum date, judged on past ex-dates')
+    if table.empty:
+        ui.empty_state('No ex-date has been announced yet',
+                       'Companies announce their ex-dates a few weeks ahead.', 'event_note')
+        return
+
+    display = pd.DataFrame({
+        'Stock': table['symbol'].map(ui.short),
+        'Buy by': table['cum_date'].map(ui.day),
+        'Ex-date': table['ex_date'].map(ui.day),
+        'Sessions': table['sessions_left'],
+        'Dividend': table['dividend'],
+        'Price': table['close'],
+        'Yield': table['yield'],
+        'Verdict': table['verdict'],
+        'Best exit': table['best_exit'].map(lambda key: dp.SHORT_EXIT_LABELS.get(key, '')),
+        'Won': [f'{int(w)} of {int(n)}' if n == n and n else '' for w, n in zip(table['wins'], table['trades'])],
+        'Avg return': table['avg_return'],
+        'Value traded': table['value_traded'],
+    })
+    if not access:
+        display = display.drop(columns=['Verdict', 'Best exit', 'Won', 'Avg return'])
+    config = {
+        'Buy by': st.column_config.TextColumn(help='Cum date: the last session that still qualifies for the dividend'),
+        'Sessions': st.column_config.NumberColumn(help='Trading sessions left through the cum date'),
+        'Dividend': st.column_config.NumberColumn(format='%.2f', help='Announced dividend per share'),
+        'Price': st.column_config.NumberColumn(format='%.0f', help='Latest close'),
+        'Yield': st.column_config.NumberColumn(format='%.2f%%', help='Announced dividend over the latest close'),
+        'Verdict': st.column_config.TextColumn(
+            help=f'Enter: the best exit made money on average and won at least '
+                 f'{MIN_STOCK_VALIDATION_WIN_RATE:.0f}% of past ex-dates. Mixed: it made money but won less often. '
+                 f'Skip: both exits lost on average. Needs {dp.SHORT_MIN_TRADES} past ex-dates.'),
+        'Best exit': st.column_config.TextColumn(help='The exit with the higher average return in past years'),
+        'Won': st.column_config.TextColumn(help='Past ex-dates where the best exit made money'),
+        'Avg return': st.column_config.NumberColumn(format='%+.1f%%', help='Best exit, per trade, after costs and tax'),
+        'Value traded': st.column_config.NumberColumn(format='compact', help='Average daily value traded (Rp)'),
+    }
+    styled = display.style.map(lambda value: VERDICT_TONES.get(value, ''), subset=['Verdict']) if access else display
+    event = st.dataframe(
+        styled, hide_index=True, width='stretch', column_config=config, key='announced_table',
+        on_select='rerun' if access else 'ignore', selection_mode='single-row',
+    )
+    if not access:
+        st.caption('Supporters see whether buying now has paid off on each stock\'s past ex-dates.')
+        return
+
+    selected = list(getattr(getattr(event, 'selection', None), 'rows', []) or [])
+    if selected:
+        position = selected[0]
+    else:
+        candidates = [i for i, index in enumerate(table.index) if index in trades_by_row]
+        position = candidates[0] if candidates else 0
+    if not selected:
+        st.caption('Select a row to see its past trades.')
+    render_announced_detail(table.iloc[position], trades_by_row.get(table.index[position]))
+
+
 def render_today(access: bool) -> None:
     if 'dp_toast' in st.session_state:
         st.toast(st.session_state.pop('dp_toast'), icon=':material/bookmark_added:')
     published = load_published()
     if published is None:
         st.warning('Signals are unavailable right now. Please try again in a few minutes.')
+        render_announced(access)
         return
     run, signals = published['run'], published['signals']
     if run is None:
         st.info('Signals have not been published yet. The first update arrives after the next market close.')
+        render_announced(access)
         return
     ui.status_line(run, published['stale'])
 
@@ -667,6 +867,8 @@ def render_today(access: bool) -> None:
                     render_signal_card(signal, can_track=access)
         if not access and len(actionable) > 1:
             ui.unlock_prompt(list(actionable['symbol'].iloc[1:]), noun='entry window', lead='Also open')
+
+    render_announced(access)
 
     ui.section('Opening soon', len(soon), 'Next 45 days')
     if soon.empty:
