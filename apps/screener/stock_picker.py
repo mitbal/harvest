@@ -2105,15 +2105,15 @@ with full_table_section:
             'Sector', sector_options, placeholder='All sectors', key=f'filter_sector_{sl}',
         )
         min_yield = st.number_input(
-            'Min. yield (%)', min_value=0.0, max_value=30.0, value=0.0, step=0.5,
+            'Min. yield (%)', min_value=0.0, max_value=30.0, value=0.01, step=0.5,
             key=f'filter_yield_{sl}', width=150,
         )
         min_div_years = st.number_input(
-            'Min. years paid', min_value=0, max_value=50, value=0, step=1,
+            'Min. years paid', min_value=0, max_value=50, value=1, step=1,
             key=f'filter_years_{sl}', width=150,
         )
         max_pe = st.number_input(
-            'Max. P/E', min_value=0.0, value=0.0, step=1.0, key=f'filter_pe_{sl}', width=150,
+            'Max. P/E', min_value=0.0, value=20.0, step=1.0, key=f'filter_pe_{sl}', width=150,
             help='0 means no limit. Loss-making stocks (P/E of 0 or below) are hidden when a limit is set.',
         )
 
