@@ -1,4 +1,5 @@
 import logging
+import sys
 import streamlit as st
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
@@ -12,9 +13,12 @@ def setup_logging(name, level=logging.INFO):
     if logger.handlers:
         return logger
 
-    handler = logging.StreamHandler()
+    # Railway marks every stderr line as an error, so log to stdout and name the
+    # level key "level", which Railway reads from JSON lines.
+    handler = logging.StreamHandler(sys.stdout)
     formatter = JsonFormatter(fmt='{asctime}{name}{levelname}{message}',
-                              style='{')
+                              style='{',
+                              rename_fields={'levelname': 'level'})
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 

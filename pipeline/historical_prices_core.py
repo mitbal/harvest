@@ -1,7 +1,6 @@
 import argparse
 import datetime as dt
 import logging
-import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -203,8 +202,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    from pipeline.log_setup import configure_logging
+
+    configure_logging()
     sys.exit(main())
