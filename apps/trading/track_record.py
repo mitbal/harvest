@@ -118,17 +118,31 @@ def results_chart(closed: pd.DataFrame) -> None:
         'Outcome': (_num(data['return_pct']) > 0).map({True: 'Won', False: 'Lost'}),
         'Reason': data['exit_reason'],
     })
-    bars = alt.Chart(data).mark_bar(cornerRadiusEnd=4).encode(
-        x=alt.X('Trade:O', title='Closed trades, oldest first', axis=alt.Axis(labels=False, ticks=False)),
-        y=alt.Y('Result:Q', title='Result after costs (%)'),
+    data['Label'] = data['Result'].map(lambda value: f'{value:+.1f}%')
+    data['Tick'] = data['Trade'].astype(str) + '|' + data['Stock']  # unique per trade, shown as the stock
+    few = len(data) <= 24
+    # A handful of trades would otherwise draw slabs across the whole width.
+    bar_size = {'size': 34} if len(data) <= 8 else {'width': alt.RelativeBandSize(0.7)}
+    base = alt.Chart(data).encode(
+        x=alt.X('Tick:N', sort=None, title=None,
+                axis=alt.Axis(labelExpr="split(datum.label, '|')[1]", labelAngle=0, ticks=False, domain=False,
+                              labelColor=cs.CHART_TEXT, labelFontWeight='bold', labels=few, labelPadding=8)),
+        y=alt.Y('Result:Q', title='Result after costs (%)',
+                axis=alt.Axis(grid=True, gridColor='#E2E8E5', domain=False, ticks=False, labelColor=cs.CHART_MUTED_TEXT,
+                              titleColor=cs.CHART_MUTED_TEXT, titleFontWeight='normal', labelExpr="datum.value + '%'")),
         color=alt.Color('Outcome:N', scale=alt.Scale(domain=['Won', 'Lost'],
                                                      range=[cs.CHART_POSITIVE, cs.CHART_NEGATIVE]),
-                        legend=alt.Legend(title=None, orient='top')),
+                        legend=alt.Legend(title=None, orient='top', symbolType='circle', labelColor=cs.CHART_TEXT)),
         tooltip=['Stock:N', alt.Tooltip('Sold:T', format='%a %-d %b %Y'),
                  alt.Tooltip('Result:Q', format='+.2f', title='Result (%)'), 'Reason:N'],
     )
-    zero = alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(color=cs.CHART_NEUTRAL).encode(y='y:Q')
-    st.altair_chart((zero + bars).properties(height=260), width='stretch', theme=None)
+    bars = base.mark_bar(cornerRadiusEnd=5, **bar_size)
+    layers = [alt.Chart(pd.DataFrame({'y': [0]})).mark_rule(color=cs.CHART_NEUTRAL).encode(y='y:Q'), bars]
+    if few:
+        offset = alt.expr('datum.Result >= 0 ? -8 : 8')
+        layers.append(base.mark_text(fontSize=11, fontWeight='bold', dy=offset).encode(text='Label:N'))
+    chart = alt.layer(*layers).properties(height=260).configure_view(strokeWidth=0)
+    st.altair_chart(chart, width='stretch', theme=None)
 
 
 def trades_table(rows: pd.DataFrame, long_term: bool = False) -> None:
@@ -150,13 +164,19 @@ def trades_table(rows: pd.DataFrame, long_term: bool = False) -> None:
     if long_term:
         table = table.drop(columns='First card').rename(columns={'Bought': 'Listed', 'Buy price': 'Price then',
                                                                 'Sell price': 'Exit or now'})
+    elif open_.all():
+        # Nothing is sold yet: no empty Sold column, and the status would repeat on every row.
+        table = table.drop(columns=['Sold', 'Status']).rename(columns={'Sell price': 'Last close'})
+    tone = lambda value: ('' if pd.isna(value) else
+                          f"color: {cs.CHART_POSITIVE if value > 0 else cs.CHART_NEGATIVE}; font-weight: 600")
+    styled = table.iloc[::-1].style.map(tone, subset=[c for c in ('Result', 'JKSE') if c in table])
     st.dataframe(
-        table.iloc[::-1], hide_index=True, width='stretch',
+        styled, hide_index=True, width='stretch',
         column_config={
             **{c: st.column_config.DateColumn(format='D MMM YYYY')
                for c in ('First card', 'Bought', 'Sold', 'Listed') if c in table},
             **{c: st.column_config.NumberColumn(format='%,.0f')
-               for c in ('Buy price', 'Sell price', 'Price then', 'Exit or now') if c in table},
+               for c in ('Buy price', 'Sell price', 'Last close', 'Price then', 'Exit or now') if c in table},
             'Result': st.column_config.NumberColumn(format='%+.2f%%', help='After costs'),
             'JKSE': st.column_config.NumberColumn(format='%+.2f%%', help='The JKSE price index over the same days'),
         },

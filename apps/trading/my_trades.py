@@ -120,6 +120,23 @@ def coming_up(published: dict, positions: pd.DataFrame | None, today: datetime.d
     return frame.sort_values(['date', 'symbol']).reset_index(drop=True)
 
 
+ESTIMATED_SUFFIX = ' (ex-date estimated)'
+OWN_SUFFIX = ', your position'
+
+
+def timeline_event(event: pd.Series) -> dict:
+    """A ``coming_up`` row as a timeline entry: estimated ex-dates become a chip note, own dates are marked."""
+    what, note = event['event'], ''
+    if what.endswith(ESTIMATED_SUFFIX):
+        what, note = what.removesuffix(ESTIMATED_SUFFIX), 'est.'
+    mine = what.endswith(OWN_SUFFIX)
+    if mine:
+        what = what.removesuffix(OWN_SUFFIX) + ' · your position'
+    return {'date': event['date'], 'symbol': event['symbol'], 'what': what, 'note': note, 'mine': mine,
+            'label': TOOLS.get(event['tool'], {}).get('label', event['tool']),
+            'icon': 'bookmark' if mine else TOOLS.get(event['tool'], {}).get('icon', 'event')}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CARDS
 # Short versions of each tool's Today cards. The full card, with Track this trade,
@@ -505,23 +522,14 @@ if events.empty:
     ui.empty_state('Nothing scheduled', 'Entry windows, near-setups and your sell-by dates show up here.',
                    'event_upcoming')
 else:
-    st.dataframe(
-        pd.DataFrame({
-            'Date': pd.to_datetime(events['date']),
-            'Stock': events['symbol'].map(ui.short),
-            'What': events['event'],
-            'Tool': events['tool'].map(lambda t: TOOLS.get(t, {}).get('label', t)),
-        }),
-        hide_index=True, width='stretch',
-        column_config={'Date': st.column_config.DateColumn(format='ddd D MMM')},
-    )
+    ui.timeline([timeline_event(event) for _, event in events.iterrows()])
 
 # ── Your trades ─────────────────────────────────────────────────────────── #
 if email is None:
     ui.section('Your trades')
-    ui.empty_state('Log in to track your trades',
-                   'Track a trade from any tool and it shows up here with its sell-by countdown.', 'login')
-    st.button('Log in with Google', icon=':material/login:', type='primary', on_click=st.login, args=('google',))
+    with ui.cta('login', 'Log in to track your trades',
+                'Track a trade from any tool and it shows up here with its sell-by countdown.', 'login'):
+        st.button('Log in with Google', icon=':material/login:', type='primary', on_click=st.login, args=('google',))
 else:
     require_premium()
     if positions is None:

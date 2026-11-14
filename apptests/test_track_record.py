@@ -116,7 +116,7 @@ def test_dividend_play_record_for_supporters(run_page):
     assert _metric(app, "Backtest said") == "+3.0%"
     closed, held, missed = (frame.value for frame in app.dataframe)
     assert closed["Stock"].tolist() == ["TLKM", "BBRI"]
-    assert held["Stock"].tolist() == ["ASII"] and held["Sell price"].iloc[0] == 1020.0
+    assert held["Stock"].tolist() == ["ASII"] and held["Last close"].iloc[0] == 1020.0
     assert missed["Stock"].tolist() == ["UNVR"]
     assert app.get("arrow_vega_lite_chart") or app.get("vega_lite_chart")
     assert "Cards since Mon 3 Aug 2026" in _texts(app)

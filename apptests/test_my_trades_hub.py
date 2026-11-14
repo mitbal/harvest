@@ -1,5 +1,7 @@
 """My Trades as the hub: signals from every tool, what is coming up and your positions, per access tier."""
 import datetime
+import html
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -89,6 +91,13 @@ def _cards(app) -> list[str]:
     return [b.key.removeprefix("open_") for b in app.button if (b.key or "").startswith("open_")]
 
 
+
+def _timeline(app) -> str:
+    """Visible text of the Coming up timeline."""
+    body = next(e.proto.body for e in app.get("html") if "hv-timeline" in e.proto.body)
+    text = re.sub(r'<span class="icon".*?</span>|<[^>]+>', " ", body, flags=re.S)
+    return " ".join(html.unescape(text).split())
+
 def test_supporters_see_signals_from_every_tool(run_page):
     app = run_page()
 
@@ -120,12 +129,13 @@ def test_positions_and_coming_up(run_page):
 
     assert "UNVR Dividend Play · bought" in _texts(app)
     assert _metric(app, "Your positions") == "1"
-    events = app.dataframe[0].value
-    assert set(events["Stock"]) == {"ASII", "GOTO", "UNVR"}
-    assert "Sell by, your position" in events["What"].tolist()
-    assert "Cum date, your position" in events["What"].tolist()
+    events = _timeline(app)
+    assert {"ASII", "GOTO", "UNVR"} <= set(events.split())
+    assert "Sell by · your position UNVR" in events
+    assert "Cum date · your position UNVR" in events
     assert "ICBP" not in _texts(app)
-    assert events["Date"].is_monotonic_increasing
+    days = [int(day) for day in re.findall(r"(?:Today|Tomorrow|In (\d+) days)", events) if day]
+    assert days == sorted(days)
 
 
 def test_logged_out_visitors_are_asked_to_log_in_for_positions(run_page):
@@ -134,8 +144,8 @@ def test_logged_out_visitors_are_asked_to_log_in_for_positions(run_page):
     assert not app.exception
     assert "Log in to track your trades" in _texts(app)
     assert any(b.label == "Log in with Google" for b in app.button)
-    events = app.dataframe[0].value
-    assert set(events["Stock"]) == {"ASII", "GOTO"}
+    events = _timeline(app)
+    assert {"ASII", "GOTO"} <= set(events.split()) and "UNVR" not in events
 
 
 def test_nothing_published_yet(run_page):

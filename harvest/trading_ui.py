@@ -151,7 +151,11 @@ STYLES = """
 .hv-tool .note { font-size: .84rem; color: var(--hv-muted); }
 .hv-tool .hv-status { margin-left: auto; padding: .15rem .65rem .15rem .55rem; font-size: .76rem; }
 
-/* Metric tiles (native st.metric) */
+/* Metric tiles (native st.metric). A row of them is an even grid, so a tile that wraps
+   keeps its width instead of stretching across the page on its own. */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stElementContainer"] > [data-testid="stMetric"]) {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; }
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stElementContainer"] > [data-testid="stMetric"]) > * { width: auto; min-width: 0; }
 [data-testid="stMetric"] { background: var(--hv-card); border: 1px solid var(--hv-line); border-radius: 14px;
   padding: .8rem 1rem .75rem; box-shadow: 0 1px 2px rgba(16,35,28,.04); position: relative; overflow: hidden; }
 [data-testid="stMetric"]::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
@@ -166,12 +170,13 @@ STYLES = """
 [class*="st-key-hv-card"]:hover { box-shadow: 0 1px 2px rgba(16,35,28,.05), 0 14px 32px -14px rgba(16,35,28,.25); }
 [class*="st-key-hv-card-urgent"] { border-color: #f5c08a !important; }
 .hv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .8rem; }
-.hv-ticker { display: flex; align-items: center; gap: .7rem; min-width: 0; }
+.hv-ticker { display: flex; align-items: flex-start; gap: .7rem; min-width: 0; }
 .hv-avatar { flex: none; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
   font-size: 1.35rem; color: var(--hv-brand);
   background: linear-gradient(140deg, #d1fae5, #a7f3d0); }
 .hv-symbol { font-size: 1.22rem; font-weight: 800; letter-spacing: .01em; line-height: 1.1; }
-.hv-company { font-size: .85rem; color: var(--hv-muted); }
+.hv-company { font-size: .85rem; color: var(--hv-muted); display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .hv-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .55rem; }
 .hv-chip { display: inline-flex; align-items: center; gap: .25rem; font-size: .76rem; font-weight: 600;
   padding: .16rem .55rem; border-radius: 999px; background: var(--hv-soft); color: var(--hv-muted);
@@ -185,9 +190,15 @@ STYLES = """
   padding: .12rem .45rem; vertical-align: .15em; }
 
 .hv-cells { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); gap: .45rem; margin-top: .85rem; }
-@container (max-width: 430px) { .hv-cells { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.hv-cell { background: var(--hv-soft); border-radius: 11px; padding: .5rem .6rem; min-width: 0; }
-.hv-cell .k { font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--hv-faint); }
+/* Four tiles go two by two on a narrow card; three stay in one row until the card is very narrow.
+   A lone last tile spans the row instead of leaving an empty slot. */
+@container (max-width: 430px) { .hv-cells.n4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 330px) { .hv-cells { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hv-cells .hv-cell:last-child:nth-child(odd) { grid-column: span 2; } }
+.hv-cell { background: var(--hv-soft); border-radius: 11px; padding: .5rem .6rem; min-width: 0;
+  display: flex; flex-direction: column; }
+/* The label takes the spare height, so values line up across a row when one label wraps. */
+.hv-cell .k { flex: 1 0 auto; font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--hv-faint); }
 .hv-cell .v { font-size: 1.05rem; font-weight: 750; margin-top: .1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hv-cell .s { font-size: .78rem; color: var(--hv-muted); }
 .hv-cell.up .v { color: var(--hv-up); } .hv-cell.down .v { color: var(--hv-down); }
@@ -266,6 +277,31 @@ STYLES = """
 .hv-empty h4 { margin: 0; padding: 0; font-size: 1rem; font-weight: 700; color: var(--hv-ink); }
 .hv-empty p { margin: .2rem 0 0; font-size: .88rem; color: var(--hv-muted); }
 
+/* Empty state with its action inside (st.container(key='hv-cta-...')) */
+[class*="st-key-hv-cta"] { padding: 1rem 1.1rem !important; border-radius: 14px; gap: .75rem;
+  background: var(--hv-card); border: 1px dashed #c6d3cd; }
+[class*="st-key-hv-cta"] .hv-empty { padding: 0; border: 0; background: none; }
+[class*="st-key-hv-cta"] .stButton { padding-left: calc(1.6rem + .9rem); }
+
+/* Coming up timeline */
+.hv-timeline { display: grid; gap: .5rem; }
+.hv-day { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: .9rem; align-items: start;
+  padding: .75rem .9rem; border-radius: 14px; background: var(--hv-card); border: 1px solid var(--hv-line); }
+.hv-day .date { text-align: center; border-radius: 11px; padding: .35rem 0 .4rem; background: var(--hv-soft); line-height: 1.1; }
+.hv-day .date .dow { display: block; font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--hv-faint); }
+.hv-day .date .d { display: block; font-size: 1.35rem; font-weight: 800; color: var(--hv-ink); }
+.hv-day .date .m { display: block; font-size: .72rem; font-weight: 600; color: var(--hv-muted); }
+.hv-day.soon .date { background: var(--hv-mint); } .hv-day.soon .date .d { color: var(--hv-brand); }
+.hv-day .when { font-size: .74rem; font-weight: 700; color: var(--hv-teal); margin-bottom: .15rem; }
+.hv-day .items { display: grid; gap: .55rem; min-width: 0; }
+.hv-event .what { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .45rem; font-size: .88rem; color: var(--hv-muted); }
+.hv-event .what b { color: var(--hv-ink); display: inline-flex; align-items: center; gap: .3rem; }
+.hv-event .what .icon { color: var(--hv-teal); }
+.hv-event.mine .what .icon { color: var(--hv-amber); }
+.hv-event .hv-tickers { margin-top: .35rem; gap: .3rem; }
+.hv-event .hv-tickers .t { font-size: .8rem; padding: .18rem .55rem; border-radius: 8px; background: var(--hv-soft); }
+.hv-event.mine .hv-tickers .t { background: var(--hv-amber-soft); border-color: #f5d28a; color: #7c4a03; }
+
 .hv-setup { display: flex; gap: .8rem; align-items: flex-start; padding: .85rem 1rem; border-radius: 14px;
   background: var(--hv-card); border: 1px solid var(--hv-line); border-left: 4px solid var(--hv-teal); }
 .hv-setup > .icon { font-size: 1.5rem; color: var(--hv-teal); margin-top: .15rem; }
@@ -326,7 +362,7 @@ def card_head(symbol: str, company: str | None, right: str = '', rank: int | Non
     return (
         f'<div class="hv-head"><div class="hv-ticker"><div class="hv-avatar">{icon(icon_name)}</div>'
         f'<div style="min-width:0"><div class="hv-symbol">{rank_html}{esc(code)}</div>'
-        f'<div class="hv-company">{esc(company or symbol)}</div></div></div>{right}</div>'
+        f'<div class="hv-company" title="{esc(company or symbol)}">{esc(company or symbol)}</div></div></div>{right}</div>'
     )
 
 
@@ -337,7 +373,7 @@ def cells(items: list[tuple]) -> str:
         label, value, sub, tone = (*item, '')[:4]
         out.append(f'<div class="hv-cell {tone}"><div class="k">{esc(label)}</div><div class="v">{value}</div>'
                    + (f'<div class="s">{sub}</div>' if sub else '') + '</div>')
-    return f'<div class="hv-cells" style="--n:{len(out)}">{"".join(out)}</div>'
+    return f'<div class="hv-cells n{len(out)}" style="--n:{len(out)}">{"".join(out)}</div>'
 
 
 def ladder(entry: float, stop: float | None, target: float | None, entry_label: str = 'Close') -> str:
@@ -411,6 +447,41 @@ def tickers(symbols, notes: dict | None = None) -> None:
 def empty_state(title: str, body: str = '', icon_name: str = 'search_off') -> None:
     render(f'<div class="hv-empty">{icon(icon_name)}<div><h4>{esc(title)}</h4>'
            + (f'<p>{esc(body)}</p>' if body else '') + '</div></div>')
+
+
+def cta(key: str, title: str, body: str = '', icon_name: str = 'search_off'):
+    """An empty-state card with room for its action button inside; use as a context manager."""
+    box = st.container(key=f'hv-cta-{key}')
+    with box:
+        empty_state(title, body, icon_name)
+    return box
+
+
+def timeline(events: list[dict], today: datetime.date | None = None) -> None:
+    """Dated events grouped by day, then by what happens, with the stocks as chips.
+
+    Each event has ``date``, ``what``, ``label``, ``icon``, ``symbol`` and optional
+    ``note`` (a short suffix on the chip) and ``mine`` (the visitor's own position).
+    """
+    today = today or datetime.date.today()
+    days = []
+    for date, group in pd.DataFrame(events).groupby('date', sort=True):
+        date = pd.Timestamp(date).date()
+        gap = (date - today).days
+        when = 'Today' if gap == 0 else 'Tomorrow' if gap == 1 else f'In {gap} days'
+        rows = []
+        for (label, what, icon_name, mine), items in group.groupby(['label', 'what', 'icon', 'mine'], sort=False):
+            chips = ''.join(
+                f'<span class="t">{esc(short(item.symbol))}'
+                + (f'<small>{esc(item.note)}</small>' if item.note else '') + '</span>'
+                for item in items.itertuples())
+            rows.append(f'<div class="hv-event{" mine" if mine else ""}"><div class="what">'
+                        f'<b>{icon(icon_name)}{esc(label)}</b><span>{esc(what)}</span></div>'
+                        f'<div class="hv-tickers">{chips}</div></div>')
+        days.append(f'<div class="hv-day{" soon" if gap <= 1 else ""}"><div class="date">'
+                    f'<span class="dow">{date:%a}</span><span class="d">{date.day}</span><span class="m">{date:%b}</span></div>'
+                    f'<div><div class="when">{when}</div><div class="items">{"".join(rows)}</div></div></div>')
+    render(f'<div class="hv-timeline">{"".join(days)}</div>')
 
 
 def card(key: str, urgent: bool = False):
