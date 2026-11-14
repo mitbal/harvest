@@ -485,17 +485,18 @@ else:
         st.altair_chart(yield_histogram(stats_df), width='stretch', theme=None)
         st.caption(':orange[Dashed line]: average yield.')
 
-# Frequency covers the whole year, so it shows even when the selected month has no dividends
-freq_summary = payout_frequency(df)
+if view_control == 'Full Year':
+    # Frequency covers the whole year, so it is only shown in the Full Year view
+    freq_summary = payout_frequency(df)
 
-st.subheader('Payout frequency per year')
-st.dataframe(
-    freq_summary,
-    hide_index=True,
-    width='stretch',
-    column_config={
-        'frequency': st.column_config.TextColumn('Frequency'),
-        'count': st.column_config.NumberColumn('Companies', format='%d'),
-        'stocks': st.column_config.TextColumn('Stocks')
-    }
-)
+    st.subheader('Payout frequency per year')
+    st.dataframe(
+        freq_summary,
+        hide_index=True,
+        width='stretch',
+        column_config={
+            'frequency': st.column_config.TextColumn('Frequency'),
+            'count': st.column_config.NumberColumn('Companies', format='%d'),
+            'stocks': st.column_config.TextColumn('Stocks')
+        }
+    )
