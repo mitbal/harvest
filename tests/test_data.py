@@ -384,6 +384,68 @@ class TestDividendFreshness:
 
         assert hd.calc_smoothed_dividend_sum(dividends, as_of="2026-10-01") == 0
 
+    @staticmethod
+    def _interim_only_dividends():
+        # EAST-like history: finals stop after FY2023, later years pay interims only.
+        return pd.DataFrame({
+            "date": [
+                "2026-08-11", "2026-05-08", "2026-01-07", "2025-07-25",
+                "2024-12-13", "2024-09-24", "2024-06-05", "2024-04-25",
+                "2023-11-16", "2023-08-14", "2023-05-29", "2023-04-04",
+            ],
+            "adjDividend": [2.0, 3.8, 5.6, 2.2, 3.5, 1.25, 1.5, 2.45, 2.5, 1.8, 1.953, 2.355],
+            "fiscal_year": [2026, 2026, 2025, 2025, 2024, 2024, 2024, 2023, 2023, 2023, 2023, 2022],
+            "dividend_type": ["interim"] * 7 + ["final", "interim", "interim", "interim", "final"],
+        })
+
+    def test_interim_only_year_counts_once_reporting_grace_passes(self):
+        dividends = self._interim_only_dividends()
+
+        assert hd.calc_latest_finalized_dividend_sum(
+            dividends, as_of="2026-11-14"
+        ) == pytest.approx(7.8)
+        assert hd.calc_latest_finalized_dividend_sum(
+            dividends, as_of="2026-03-01"
+        ) == pytest.approx(6.25)
+        assert hd.calc_latest_finalized_dividend_sum(
+            dividends, as_of="2027-07-15"
+        ) == pytest.approx(5.8)
+
+    def test_unfinalized_interim_does_not_displace_finalized_year_during_grace(self):
+        dividends = pd.DataFrame({
+            "date": ["2024-11-01", "2025-05-01", "2025-11-01"],
+            "adjDividend": [30, 70, 40],
+            "fiscal_year": [2024, 2024, 2025],
+            "dividend_type": ["interim", "final", "interim"],
+        })
+
+        assert hd.calc_latest_finalized_dividend_sum(
+            dividends, as_of="2026-03-01"
+        ) == 100
+
+    def test_special_only_year_is_never_settled(self):
+        dividends = pd.DataFrame({
+            "date": ["2025-05-01", "2026-05-01"],
+            "adjDividend": [100, 500],
+            "fiscal_year": [2024, 2025],
+            "dividend_type": ["final", "special"],
+        })
+
+        assert hd.calc_latest_finalized_dividend_sum(
+            dividends, as_of="2026-03-01"
+        ) == 100
+        assert hd.calc_latest_finalized_dividend_sum(
+            dividends, as_of="2026-08-01"
+        ) == 0
+
+    def test_smoothing_scores_an_interim_only_latest_year(self):
+        dividends = self._interim_only_dividends()
+
+        # FY2025 = 7.8 against prior FY2024 = 6.25 and FY2023 = 8.703: not a spike.
+        assert hd.calc_smoothed_dividend_sum(
+            dividends, as_of="2026-11-14"
+        ) == pytest.approx(7.8)
+
     def test_schedule_detects_an_overdue_dividend(self):
         dividends = pd.DataFrame({
             "date": ["2024-01-15", "2024-04-15", "2024-07-15", "2024-10-15"],

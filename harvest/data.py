@@ -623,21 +623,32 @@ def calc_fiscal_year_dividend_sum(div_df, fiscal_year, as_of=None, require_final
     return float(values[eligible].sum())
 
 
-def _latest_finalized_fiscal_year(div_df, end_date, grace_month=6):
-    """Return the latest fiscal year with a final dividend within reporting grace, or None."""
+def _latest_settled_fiscal_year(div_df, end_date, grace_month=6):
+    """Return the latest settled fiscal year within reporting grace, or None.
+
+    A year is settled once it has a final dividend, or once its reporting grace has
+    passed with ordinary dividends but no final (the interims are then the whole year).
+    """
     required = {'date', 'adjDividend', 'fiscal_year', 'dividend_type'}
     if div_df is None or div_df.empty or not required.issubset(div_df.columns):
         return None
 
     dates = pd.to_datetime(div_df['date'], errors='coerce', utc=True).dt.tz_localize(None).dt.normalize()
+    values = pd.to_numeric(div_df['adjDividend'], errors='coerce').fillna(0)
     fiscal_years = pd.to_numeric(div_df['fiscal_year'], errors='coerce')
     dividend_types = div_df['dividend_type'].astype(str).str.strip().str.lower()
-    finalized_years = fiscal_years[dates.le(end_date) & dividend_types.eq('final')].dropna()
-    if finalized_years.empty:
+    paid = dates.le(end_date)
+    minimum_fiscal_year = end_date.year - (2 if end_date.month <= grace_month else 1)
+    # A year's final-dividend window has closed exactly when it is at or before the
+    # freshness minimum, i.e. its reporting grace has passed.
+    window_closed = fiscal_years.le(minimum_fiscal_year)
+    ordinary = paid & values.gt(0) & ~dividend_types.eq('special')
+    settled = (paid & dividend_types.eq('final')) | (ordinary & window_closed)
+    settled_years = fiscal_years[settled].dropna()
+    if settled_years.empty:
         return None
 
-    latest_fiscal_year = int(finalized_years.max())
-    minimum_fiscal_year = end_date.year - (2 if end_date.month <= grace_month else 1)
+    latest_fiscal_year = int(settled_years.max())
     if latest_fiscal_year < minimum_fiscal_year:
         return None
     return latest_fiscal_year
@@ -651,9 +662,12 @@ def _normalized_end_date(as_of):
 
 
 def calc_latest_finalized_dividend_sum(div_df, as_of=None, grace_month=6):
-    """Return the latest finalized fiscal-year dividend within reporting grace."""
+    """Return the latest settled fiscal-year dividend within reporting grace.
+
+    A year without a final counts once its reporting grace has passed with interims paid.
+    """
     end_date = _normalized_end_date(as_of)
-    latest_fiscal_year = _latest_finalized_fiscal_year(div_df, end_date, grace_month)
+    latest_fiscal_year = _latest_settled_fiscal_year(div_df, end_date, grace_month)
     if latest_fiscal_year is None:
         return 0.0
 
@@ -661,6 +675,7 @@ def calc_latest_finalized_dividend_sum(div_df, as_of=None, grace_month=6):
         div_df,
         fiscal_year=latest_fiscal_year,
         as_of=end_date,
+        require_final=False,
     )
 
 
@@ -669,7 +684,7 @@ DIV_SPIKE_MULTIPLE = 1.5
 
 
 def calc_smoothed_dividend_sum(div_df, as_of=None, grace_month=6, n_years=3):
-    """Return the latest finalized fiscal-year dividend, damped when it is a one-off spike.
+    """Return the latest settled fiscal-year dividend, damped when it is a one-off spike.
 
     One-off gains such as a business disposal are often paid out as ordinary interim and
     final dividends, so excluding 'special' dividends doesn't catch them. When the latest
@@ -677,11 +692,13 @@ def calc_smoothed_dividend_sum(div_df, as_of=None, grace_month=6, n_years=3):
     median of the last n_years fiscal years is returned instead.
     """
     end_date = _normalized_end_date(as_of)
-    latest_fiscal_year = _latest_finalized_fiscal_year(div_df, end_date, grace_month)
+    latest_fiscal_year = _latest_settled_fiscal_year(div_df, end_date, grace_month)
     if latest_fiscal_year is None:
         return 0.0
 
-    latest = calc_fiscal_year_dividend_sum(div_df, fiscal_year=latest_fiscal_year, as_of=end_date)
+    latest = calc_fiscal_year_dividend_sum(
+        div_df, fiscal_year=latest_fiscal_year, as_of=end_date, require_final=False
+    )
     prior = [
         calc_fiscal_year_dividend_sum(
             div_df, fiscal_year=latest_fiscal_year - offset, as_of=end_date, require_final=False
