@@ -14,12 +14,13 @@ from starlette.middleware import Middleware
 from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from harvest import seo, webhooks
+from harvest import memwatch, seo, webhooks
 from harvest.utils import setup_logging
 
 
 logger = logging.getLogger('seo')
 visit_logger = setup_logging('tracking')
+memwatch.start()  # Timed MEMORY lines in the logs to track down the slow RSS growth in production.
 STATIC_DIR = Path(__file__).resolve().parent / 'static'
 
 # Pages the edge/browser may cache briefly; data only changes daily.
