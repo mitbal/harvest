@@ -2423,59 +2423,72 @@ with full_table_section:
 
 
 
+# The ticker box keeps a fixed key. Without one, Streamlit derives the widget's identity
+# from its default value, so changing that default rebuilt the box and threw away
+# whatever was typed, and a new ticker had to be entered twice. The box now owns the
+# selection; a newly clicked table row or an outside change to ?stock= is pushed into it.
+is_jkse = sl == 'JKSE'
+input_key = 'stock_picker_input_jkse' if is_jkse else 'stock_picker_input_us'
+
+
+def _normalize_ticker(ticker):
+    ticker = ticker.strip().upper()
+    if is_jkse and '.JK' not in ticker:
+        ticker += '.JK'
+    return ticker
+
+
+row_stock = None
 if len(event.selection['rows']) > 0:
-    row_idx = event.selection['rows'][0]
-    stock = display_df.iloc[row_idx]
-    stock_name = stock.name
-elif 'stock' in st.query_params:
-    stock_name = st.query_params['stock']
-else:
-    stock_name = None
+    row_stock = display_df.iloc[event.selection['rows'][0]].name
+url_stock = st.query_params.get('stock')
 
-if sl == 'JKSE':
-    if stock_name:
-        stock_name = stock_name.upper()
-        if '.JK' not in stock_name:
-            stock_name += '.JK'
+incoming = None
+if row_stock is not None and row_stock != st.session_state.get('_stock_picker_row'):
+    incoming = row_stock
+elif url_stock and (
+    input_key not in st.session_state
+    or url_stock != st.session_state.get('_stock_picker_url')
+):
+    incoming = url_stock
+st.session_state['_stock_picker_row'] = row_stock
 
+if is_jkse:
     ticker_options = sorted(final_df.index.tolist())
-    try:
-        default_idx = ticker_options.index(stock_name) if stock_name else None
-    except ValueError:
-        default_idx = None
+    if incoming is not None:
+        incoming = _normalize_ticker(incoming)
+        st.session_state[input_key] = incoming if incoming in ticker_options else None
 
     select_stock = st.selectbox(
         label='Selected stock',
         options=ticker_options,
-        index=default_idx,
+        index=None,
+        key=input_key,
         placeholder='Select a row above or search by ticker...',
         help='Selecting a table row updates this field automatically.',
     )
-
-    if select_stock:
-        stock_name = select_stock
-    else:
-        st.query_params.pop('stock', None)
-        st.session_state['_stock_picker_viewed'] = None
-        st.stop()
 else:
+    if incoming is not None:
+        st.session_state[input_key] = _normalize_ticker(incoming)
+
     select_stock = st.text_input(
         label='Selected stock',
-        value=stock_name or '',
+        key=input_key,
         placeholder='Enter a ticker, for example AAPL or D05.SI',
         help='Selecting a table row updates this field automatically.',
     )
 
-    if select_stock:
-        stock_name = select_stock.strip().upper()
-    else:
-        st.query_params.pop('stock', None)
-        st.session_state['_stock_picker_viewed'] = None
-        st.stop()
+stock_name = _normalize_ticker(select_stock) if select_stock and select_stock.strip() else None
+if not stock_name:
+    st.query_params.pop('stock', None)
+    st.session_state['_stock_picker_url'] = None
+    st.session_state['_stock_picker_viewed'] = None
+    st.stop()
 
 # Mirror the selection into the URL so the page can be shared or bookmarked.
 if st.query_params.get('stock') != stock_name:
     st.query_params['stock'] = stock_name
+st.session_state['_stock_picker_url'] = stock_name
 
 try:
     with st.spinner(f'Loading data for {stock_name}...'):
