@@ -193,6 +193,11 @@ def test_table_presets_keep_the_default_view_focused():
     assert {'Rank', 'sector', 'industry', 'yield', 'DScore', 'peRatio'} <= set(sp._TABLE_PRESETS['Essentials'])
 
 
+def test_short_control_labels_map_existing_options():
+    assert set(sp._TABLE_PRESET_LABELS) <= set(sp._TABLE_PRESETS)
+    assert set(sp._STOCK_LIST_LABELS) <= set(sp.stock_options)
+
+
 def test_last_dividend_sits_between_price_and_yield():
     for preset in ('Essentials', 'Dividend income'):
         columns = sp._TABLE_PRESETS[preset]
@@ -221,6 +226,101 @@ def test_small_idx_caps_are_still_discounted():
     result = sp.get_processed_df(comparison, currency='IDR')
 
     assert result.loc['SMALL.JK', 'DScore'] < result.loc['LARGE.JK', 'DScore'] * 0.3
+
+
+def test_dividend_history_older_than_the_ipo_date_does_not_inflate_the_score():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['LISTED.JK', 'RELISTED.JK']
+    comparison['positiveYear'] = 20
+    comparison['numOfYear'] = [20, 5]  # same raises, but the second relisted 5 years ago
+
+    result = sp.get_processed_df(comparison)
+
+    assert result.loc['RELISTED.JK', 'DScore'] == pytest.approx(result.loc['LISTED.JK', 'DScore'])
+
+
+def test_income_ranking_discounts_a_skipped_year_instead_of_zeroing_it():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['STEADY.JK', 'SKIPPED.JK']
+    comparison['max10CutPct'] = [0.0, -100.0]
+
+    balanced = sp.get_processed_df(comparison)
+    income = sp.get_processed_df(comparison, rank_by='Income')
+
+    assert balanced.loc['SKIPPED.JK', 'DScore'] < 1e-3
+    assert income.loc['SKIPPED.JK', 'DScore'] == pytest.approx(
+        income.loc['STEADY.JK', 'DScore'] * sp.SOFT_CUT_FLOOR, rel=1e-3)
+
+
+def _growth_comparison():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 3)
+    comparison.index = ['FLAT.JK', 'GROWER.JK', 'TOKEN.JK']
+    comparison['price'] = 10_000.0
+    comparison['lastDiv'] = [400.0, 250.0, 50.0]
+    comparison['yield'] = [4.0, 2.5, 0.5]
+    comparison['avgFlatAnnualDivIncrease'] = [0.0, 25.0, 5.0]
+    comparison['positiveYear'] = 15
+    comparison['max10CutPct'] = 0.0
+    # Earnings cover every dividend, so payout sustainability doesn't separate the rows.
+    comparison['earningTTM'] = 1e14
+    comparison['revenueTTM'] = 4e14
+    return comparison
+
+
+def test_growth_ranking_puts_a_dividend_grower_above_a_flat_higher_yielder():
+    comparison = _growth_comparison()
+
+    balanced = sp.get_processed_df(comparison)
+    growth = sp.get_processed_df(comparison, rank_by='Growth')
+
+    assert balanced.loc['FLAT.JK', 'Rank'] < balanced.loc['GROWER.JK', 'Rank']
+    assert growth.loc['GROWER.JK', 'Rank'] < growth.loc['FLAT.JK', 'Rank']
+    # Yield 2.5 plus 10%/yr dividend growth, with a raise in every paying year
+    assert growth.loc['GROWER.JK', 'DScore'] == pytest.approx(12.5 * 1.08, rel=1e-3)
+
+
+def test_growth_ranking_does_not_score_token_yields():
+    growth = sp.get_processed_df(_growth_comparison(), rank_by='Growth')
+
+    assert growth.loc['TOKEN.JK', 'DScore'] < 1e-3
+
+
+def test_potential_ranking_ignores_past_cuts_but_counts_only_the_covered_yield():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['STEADY.JK', 'CUTTER.JK']
+    comparison['max10CutPct'] = [0.0, -100.0]
+
+    potential = sp.get_processed_df(comparison, rank_by='Potential')
+
+    assert potential.loc['CUTTER.JK', 'DScore'] == pytest.approx(potential.loc['STEADY.JK', 'DScore'])
+    # Earnings are 2% of market cap, so 1.6 of the 2.5 yield is covered at an 80% payout;
+    # 8% organic growth then lifts it.
+    assert potential.loc['STEADY.JK', 'DScore'] == pytest.approx(1.6 * 1.08, rel=1e-3)
+
+
+def test_potential_ranking_counts_a_dividend_jump_that_earnings_cover():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['NORMAL.JK', 'JUMP.JK']
+    comparison['scoreDiv'] = [250.0, 100.0]  # the second is smoothed down as a spike
+    comparison['earningTTM'] = 1e14
+    comparison['revenueTTM'] = 4e14
+
+    income = sp.get_processed_df(comparison, rank_by='Income')
+    potential = sp.get_processed_df(comparison, rank_by='Potential')
+
+    assert income.loc['JUMP.JK', 'DScore'] == pytest.approx(income.loc['NORMAL.JK', 'DScore'] * 0.4)
+    assert potential.loc['JUMP.JK', 'DScore'] == pytest.approx(potential.loc['NORMAL.JK', 'DScore'])
+    assert potential.loc['JUMP.JK', 'DScore'] == pytest.approx(2.5 * 1.08, rel=1e-3)
+
+
+def test_every_ranking_option_explains_its_score():
+    assert sp.RANK_OPTIONS[0] == 'Balanced'
+    assert set(sp.RANK_OPTIONS) == set(sp.RANK_HELP)
 
 
 def test_rating_band_labels():

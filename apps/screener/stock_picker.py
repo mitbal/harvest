@@ -44,6 +44,46 @@ MIN_SECTOR_PEERS = 3
 # Market cap at which the small-cap discount in DScore is 50%, in the table's currency.
 # IDR 3T is roughly USD 200M, so both markets discount the same economic size.
 MC_PENALTY_MIDPOINT = {'IDR': 3_000_000_000_000, 'USD': 200_000_000}
+# Ranking styles for the screener table. Each is a different DScore formula over the same factors.
+RANK_OPTIONS = ['Balanced', 'Income', 'Growth', 'Potential']
+RANK_HELP = {
+    'Balanced': (
+        'Risk-adjusted projected forward yield: projected 5y dividend yield (growth capped at '
+        '+5%/yr, decline floored at -20%/yr, yield capped at 12%), scaled by dividend-track-record '
+        'maturity, all 10y dividend cuts compounded, normalized payout sustainability (earnings are capped '
+        'at 125% of the historical median margin and payout above 80% is penalized), organic '
+        'revenue/income growth (reward up to +25%, decline to -100%), and market cap '
+        '(small caps are structurally discounted)'
+    ),
+    'Income': (
+        'Covered current yield: the dividend yield (capped at 12%) scaled by normalized payout '
+        'sustainability, with lighter discounts for past dividend cuts and small market cap. '
+        'A skipped year lowers the score instead of zeroing it, and dividend growth is ignored. '
+        'Stocks with fewer than 3 paying years are scaled down.'
+    ),
+    'Growth': (
+        'Yield plus dividend growth: the dividend yield (capped at 12%) plus the average yearly '
+        'dividend increase (capped at +15%/yr, weighted by the share of paying years with a raise), '
+        'scaled by payout sustainability and organic revenue/income growth, with lighter discounts '
+        'for past cuts and small market cap. Only stocks with a growing dividend, at least 5 paying '
+        'years and a yield of at least 1% are scored.'
+    ),
+    'Potential': (
+        'Earnings-backed yield: the latest dividend yield, counted only as far as normalized '
+        'earnings cover it at an 80% payout and capped at 12%, scaled by organic revenue/income '
+        'growth (reward up to +25%, decline to -100%), with a lighter discount for small market cap. '
+        'Past dividend cuts are ignored and the latest dividend is not smoothed, so payers that cut '
+        'before but now earn enough to pay well can rank high. Stocks with fewer than 3 paying '
+        'years are scaled down.'
+    ),
+}
+# Share of the score a stock keeps after cutting its whole dividend, in Income and Growth
+SOFT_CUT_FLOOR = 0.25
+# Paying years before a stock counts in full, in Income and Potential
+INCOME_SEASONING_YRS = 3
+GROWTH_MAX_DIV_GROWTH = 0.15
+GROWTH_MIN_DIV_YEARS = 5
+GROWTH_MIN_YIELD = 1.0
 # Dividend discount model defaults. Terminal growth is perpetual, so it is capped near
 # long-run nominal growth and kept DDM_MIN_SPREAD points below the cost of equity,
 # where the Gordon formula stops being hypersensitive to small input changes.
@@ -1824,14 +1864,19 @@ st.session_state.setdefault('_stock_picker_viewed', None)
 
 full_table_section = st.container(border=True)
 
-# Table controls share a single row: stock list and table view
+# Table controls share a single row: stock list, ranking style, and table view
 table_controls = full_table_section.container(
     horizontal=True,
     vertical_alignment='bottom',
-    gap='large',
+    gap='small',
 )
 
 stock_options = ['Indonesian Stock', 'S&P 500 (US and World Stock)']
+# Short display labels keep the table control row on one line.
+_STOCK_LIST_LABELS = {
+    'Indonesian Stock': 'Indonesia',
+    'S&P 500 (US and World Stock)': 'S&P 500',
+}
 
 
 def _market_changed():
@@ -1845,10 +1890,20 @@ with table_controls:
         'Stock List Selection',
         options=stock_options,
         default=stock_options[default_sl],
+        format_func=_STOCK_LIST_LABELS.get,
         key='sl',
         on_change=_market_changed,
         width='content',
     )
+    # Deselecting the active option returns None, which falls back to the default ranking.
+    rank_by = st.segmented_control(
+        'Rank by',
+        options=RANK_OPTIONS,
+        default=RANK_OPTIONS[0],
+        key='rank_by',
+        width='content',
+        help='\n\n'.join(f'**{name}**: {text}' for name, text in RANK_HELP.items()),
+    ) or RANK_OPTIONS[0]
 
 if stock_select == 'Indonesian Stock':
     sl = 'JKSE'
@@ -1947,14 +2002,18 @@ _TABLE_PRESETS = {
         'total_return_1y', 'return_10y', 'total_return_10y',
     ],
 }
+_TABLE_PRESET_LABELS = {
+    'Dividend income': 'Dividend',
+    'Returns and risk': 'Returns',
+}
 _keep = [c for c in _KEEP_COLS if c in final_df.columns]
 final_df = final_df[_keep]
 
 # ---------------------------------------------------------------------------
 # Cached compute pipeline — only re-runs when final_df changes
 # ---------------------------------------------------------------------------
-@st.cache_data(max_entries=8, ttl=6 * 60 * 60, show_spinner=False)
-def _get_processed_df_cached(data_version, _df, mc_midpoint):
+@st.cache_data(max_entries=24, ttl=6 * 60 * 60, show_spinner=False)
+def _get_processed_df_cached(data_version, _df, mc_midpoint, rank_by='Balanced'):
     """Compute all derived columns and sort. Cached so it only runs when data changes."""
     del data_version
     df = _df.copy()
@@ -1989,7 +2048,9 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     # 1. Projected forward yield: fractional dividend growth capped at +5%/yr and
     #    floored at -20%/yr, so dividend cutters degrade gracefully instead of
     #    having the whole score clip to 0.
-    reliability = (df['positiveYear'] / df['numOfYear'].replace(0, np.nan)).fillna(1.0)
+    # Capped at 1: dividend history can predate the listed IPO date (spin-offs, relistings),
+    #    which would otherwise push the growth boost past its cap.
+    reliability = (df['positiveYear'] / df['numOfYear'].replace(0, np.nan)).fillna(1.0).clip(upper=1.0)
     growth_rate = (df['avgFlatAnnualDivIncrease'] / score_div.replace(0, np.nan)).clip(
         hd.DIV_PROJECTION_MIN_GROWTH, hd.DIV_PROJECTION_MAX_GROWTH).fillna(0)
     proj_div    = score_div * (1 + growth_rate * PROJECTION_HORIZON_YRS * reliability)
@@ -2036,7 +2097,7 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     growth_adj = (1 + organic_growth.clip(-100, 25) / 100).fillna(1.0)
 
     # 5. Yield capped at 12% so distressed high-yielders can't dominate on yield alone.
-    df['DScore'] = (
+    balanced_score = (
         np.minimum(fwd_yield, 12)
         * maturity
         * (100 - score_cut_pct) / 100
@@ -2045,6 +2106,47 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
         * sustain
         * is_payer  # gate: zero-yield stocks always score 0, below any payer
     )
+
+    # Income and Growth reuse the factors above with a different emphasis. Past cuts are a
+    # haircut rather than a gate: one skipped year in ten zeroes the Balanced score, which
+    # would hide most of the high-yielders that Income exists to surface.
+    capped_yield = np.minimum(pd.to_numeric(score_yield, errors='coerce'), 12)
+    cut_haircut = SOFT_CUT_FLOOR + (1 - SOFT_CUT_FLOOR) * (100 - score_cut_pct) / 100
+    seasoning = (df['numDividendYear'] / INCOME_SEASONING_YRS).clip(upper=1)
+    if rank_by == 'Potential':
+        # Judge the latest dividend against earnings instead of history: no cut penalty and
+        # no spike smoothing, but only the part that normalized earnings cover counts, so a
+        # dividend funded by a one-off gain or a peak-cycle margin is still marked down.
+        latest_yield = pd.to_numeric(df['yield'], errors='coerce')
+        latest_payout = latest_yield / 100 * pd.to_numeric(df['mktCap'], errors='coerce') / organic_earnings.where(
+            organic_earnings > 0)
+        covered_yield = latest_yield * (1 / np.maximum(1, latest_payout / SUSTAINABLE_PAYOUT_RATIO)).fillna(0)
+        df['DScore'] = (
+            np.minimum(covered_yield, 12) * growth_adj * np.sqrt(df['mc_penalty']) * seasoning * is_payer
+        )
+    elif rank_by == 'Income':
+        df['DScore'] = (
+            capped_yield * sustain * cut_haircut * np.sqrt(df['mc_penalty']) * seasoning * is_payer
+        )
+    elif rank_by == 'Growth':
+        raise_share = (df['positiveYear'] / df['numDividendYear'].replace(0, np.nan)).clip(0, 1).fillna(0)
+        div_growth = (df['avgFlatAnnualDivIncrease'] / score_div.replace(0, np.nan)).clip(
+            upper=GROWTH_MAX_DIV_GROWTH).fillna(0)
+        # The yield floor keeps token payers from ranking on growth alone.
+        eligible = (
+            (div_growth > 0)
+            & (df['numDividendYear'] >= GROWTH_MIN_DIV_YEARS)
+            & (df['yield'] >= GROWTH_MIN_YIELD)
+        )
+        df['DScore'] = (
+            (capped_yield + 100 * div_growth * raise_share)
+            * sustain
+            * growth_adj
+            * np.sqrt(cut_haircut * df['mc_penalty'])
+            * eligible
+        )
+    else:
+        df['DScore'] = balanced_score
 
     df['DScore'] = df['DScore'].clip(lower=0)  # safety net: score should never be negative
 
@@ -2060,8 +2162,8 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint):
     return df
 
 
-def get_processed_df(df, currency='IDR'):
-    return _get_processed_df_cached(_dataframe_version(df), df, MC_PENALTY_MIDPOINT[currency])
+def get_processed_df(df, currency='IDR', rank_by='Balanced'):
+    return _get_processed_df_cached(_dataframe_version(df), df, MC_PENALTY_MIDPOINT[currency], rank_by)
 
 
 with full_table_section:
@@ -2070,7 +2172,7 @@ with full_table_section:
         final_df = final_df[final_df['is_syariah'] == True]
     final_df = filter_by_ownership(final_df, ownership_filter)
 
-    filtered_df = get_processed_df(final_df, currency)
+    filtered_df = get_processed_df(final_df, currency, rank_by)
 
     if sl == 'JKSE':
         divisor = 1_000_000_000_000
@@ -2133,7 +2235,7 @@ with full_table_section:
         cfig={  # noqa: E225
             'Rank': st.column_config.NumberColumn(
                 'Rank',
-                help='Rank based on Dividend Score',
+                help=f'Rank based on the {rank_by} Dividend Score',
                 format='%d',
             ),
             'stock': st.column_config.TextColumn(
@@ -2233,12 +2335,7 @@ with full_table_section:
             ),
             'DScore': st.column_config.NumberColumn(
                 'Dividend Score',
-                help=('Risk-adjusted projected forward yield: projected 5y dividend yield (growth capped at '
-                      '+5%/yr, decline floored at -20%/yr, yield capped at 12%), scaled by dividend-track-record '
-                      'maturity, all 10y dividend cuts compounded, normalized payout sustainability (earnings are capped '
-                      'at 125% of the historical median margin and payout above 80% is penalized), organic '
-                      'revenue/income growth (reward up to +25%, decline to -100%), and market cap '
-                      '(small caps are structurally discounted)'),
+                help=RANK_HELP[rank_by],
                 format='%,.02f',
             ),
             'lastDiv': st.column_config.NumberColumn(
@@ -2306,6 +2403,7 @@ with full_table_section:
             'Table view',
             options=list(_TABLE_PRESETS),
             default='Essentials',
+            format_func=lambda preset: _TABLE_PRESET_LABELS.get(preset, preset),
             help='Switch between focused column sets. Ranking and row selection remain unchanged.',
         ) or 'Essentials'
         column_order = [column for column in _TABLE_PRESETS[table_preset] if column in display_df.columns]
