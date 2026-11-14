@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Compounding Simulator</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./ui.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div class="app">
+<nav class="rail" aria-label="Main">
+<a class="brand" href="Main.dc.html"><span class="logo">PD</span>Panen Dividen</a>
+<a class="nl" href="Main.dc.html">Home</a>
+<p class="grp">Dividend</p>
+<a class="nl" href="Screener.dc.html">Ranking Screener</a>
+<a class="nl" href="Calendar.dc.html">Payout Calendar</a>
+<a class="nl" href="BestTiming.dc.html">Best Timing</a>
+<a class="nl" href="Portfolio.dc.html">Portfolio Analytics</a>
+<a class="nl on" href="Simulator.dc.html">Compounding Simulator</a>
+<p class="grp">Market</p>
+<a class="nl" href="Heatmap.dc.html">Market Heatmap</a>
+<a class="nl" href="Comparison.dc.html">Stock Comparison</a>
+<p class="grp">Trading</p>
+<a class="nl" href="MyTrades.dc.html">My Trades</a>
+<a class="nl" href="DividendPlay.dc.html">Dividend Play <span class="pro">Supporter</span></a>
+<a class="nl" href="Swing.dc.html">Short Term Swing <span class="pro">Supporter</span></a>
+<a class="nl" href="LongTerm.dc.html">Long Term Position <span class="pro">Supporter</span></a>
+<div class="railfoot">
+<a class="nl" href="https://trakteer.id/mitbal">Support on Trakteer</a>
+<a class="nl" href="https://reddit.com/r/panendividen">Join the community</a>
+<a class="nl" href="https://blog.panendividen.com">Read the blog</a>
+</div>
+</nav>
+<main class="main">
+<header class="top">
+<div><h1>Compounding Simulator</h1><p class="sub">See what reinvested dividends grow into over time</p></div>
+<div class="tools"><span class="chip">Sample data</span><div class="seg" role="group" aria-label="Simulation"><button class="on">Fixed yield</button><button>Single stock</button><button>Portfolio</button></div></div>
+</header>
+
+<div class="row" style="align-items: flex-start">
+<section class="card" style="flex: 1 1 280px; display: flex; flex-direction: column; gap: 14px">
+<div><h2>Assumptions</h2><p class="note" style="margin-top: 3px">A steady yield, with every dividend reinvested.</p></div>
+<label class="f" style="flex: none">Initial investment (million rupiah)<input type="text" value="120"></label>
+<label class="f" style="flex: none">Number of years<input type="text" value="10"></label>
+<label class="f" style="flex: none">Yield (percent)<input type="text" value="6.35"></label>
+<label class="f" style="flex: none">Monthly top-up (million rupiah)<input type="text" value="0"></label>
+<span class="sw on"><i></i>Reinvest dividends (DRIP)</span>
+<button class="btn pri">Run simulation</button>
+<p class="note">Single stock and Portfolio replay real dividend history instead of a fixed yield.</p>
+</section>
+
+<div style="flex: 3 1 560px; display: flex; flex-direction: column; gap: 18px; min-width: 0">
+<div class="kpis">
+<div class="kpi"><small>Final asset value</small><b>IDR 222,090,000</b><span class="up">1.85x your capital</span></div>
+<div class="kpi"><small>Total passive income</small><b>IDR 102,090,000</b><span class="mut">Over 10 years</span></div>
+<div class="kpi"><small>Income in year 10</small><b>IDR 13,260,000</b><span class="up">11.1% yield on cost</span></div>
+</div>
+
+<section class="card">
+<div class="hd"><h2>Asset value by year</h2><div style="display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; font-weight: 700"><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 11px; height: 11px; border-radius: 3px; background: #073f2e"></span>Capital</span><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 11px; height: 11px; border-radius: 3px; background: #7cc4a4"></span>Reinvested dividends</span></div></div>
+<svg class="ch" viewBox="0 0 760 300" role="img" aria-label="Stacked bar chart of asset value for years 1 to 10. Capital stays at 120 million while reinvested dividends grow to 102 million.">
+<line x1="48" y1="260" x2="760" y2="260" stroke="#cbd9d2"></line><line x1="48" y1="190" x2="760" y2="190" stroke="#e7ece9"></line><line x1="48" y1="120" x2="760" y2="120" stroke="#e7ece9"></line><line x1="48" y1="50" x2="760" y2="50" stroke="#e7ece9"></line>
+<g font-size="11" fill="#5c6d66"><text x="0" y="264">0</text><text x="0" y="194">75M</text><text x="0" y="124">150M</text><text x="0" y="54">225M</text></g>
+<g fill="#073f2e"><rect x="66" y="148" width="46" height="112"></rect><rect x="136" y="148" width="46" height="112"></rect><rect x="206" y="148" width="46" height="112"></rect><rect x="276" y="148" width="46" height="112"></rect><rect x="346" y="148" width="46" height="112"></rect><rect x="416" y="148" width="46" height="112"></rect><rect x="486" y="148" width="46" height="112"></rect><rect x="556" y="148" width="46" height="112"></rect><rect x="626" y="148" width="46" height="112"></rect><rect x="696" y="148" width="46" height="112"></rect></g>
+<g fill="#7cc4a4"><rect x="66" y="141" width="46" height="6"></rect><rect x="136" y="133" width="46" height="14"></rect><rect x="206" y="125" width="46" height="22"></rect><rect x="276" y="116" width="46" height="31"></rect><rect x="346" y="107" width="46" height="40"></rect><rect x="416" y="97" width="46" height="50"></rect><rect x="486" y="87" width="46" height="60"></rect><rect x="556" y="76" width="46" height="71"></rect><rect x="626" y="65" width="46" height="82"></rect><rect x="696" y="53" width="46" height="94"></rect></g>
+<text x="719" y="44" font-size="12" font-weight="800" fill="#10251d" text-anchor="middle">222M</text>
+<g font-size="11" fill="#5c6d66" text-anchor="middle"><text x="89" y="280">Y1</text><text x="159" y="280">Y2</text><text x="229" y="280">Y3</text><text x="299" y="280">Y4</text><text x="369" y="280">Y5</text><text x="439" y="280">Y6</text><text x="509" y="280">Y7</text><text x="579" y="280">Y8</text><text x="649" y="280">Y9</text><text x="719" y="280">Y10</text></g>
+</svg>
+</section>
+
+<section class="card" style="padding: 6px 8px 8px">
+<div class="hd" style="margin: 10px 12px"><h2>Year by year</h2><button class="btn ghost sm">Download CSV</button></div>
+<div class="tw">
+<table>
+<thead><tr><th>Year</th><th class="num">Start value</th><th class="num">Dividend received</th><th class="num">Reinvested</th><th class="num">End value</th><th class="num">Yield on cost</th></tr></thead>
+<tbody>
+<tr><td><b>1</b></td><td class="num">120,000,000</td><td class="num">7,620,000</td><td class="num">7,620,000</td><td class="num"><b>127,620,000</b></td><td class="num">6.35%</td></tr>
+<tr><td><b>2</b></td><td class="num">127,620,000</td><td class="num">8,104,000</td><td class="num">8,104,000</td><td class="num"><b>135,724,000</b></td><td class="num">6.75%</td></tr>
+<tr><td><b>3</b></td><td class="num">135,724,000</td><td class="num">8,618,000</td><td class="num">8,618,000</td><td class="num"><b>144,342,000</b></td><td class="num">7.18%</td></tr>
+<tr><td><b>4</b></td><td class="num">144,342,000</td><td class="num">9,166,000</td><td class="num">9,166,000</td><td class="num"><b>153,508,000</b></td><td class="num">7.64%</td></tr>
+<tr><td class="mut" colspan="6">6 more years</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+</div>
+</div>
+<p class="foot">A projection from your assumptions, not a forecast. Not financial advice.</p>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

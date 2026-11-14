@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Payout Calendar</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./ui.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div class="app">
+<nav class="rail" aria-label="Main">
+<a class="brand" href="Main.dc.html"><span class="logo">PD</span>Panen Dividen</a>
+<a class="nl" href="Main.dc.html">Home</a>
+<p class="grp">Dividend</p>
+<a class="nl" href="Screener.dc.html">Ranking Screener</a>
+<a class="nl on" href="Calendar.dc.html">Payout Calendar</a>
+<a class="nl" href="BestTiming.dc.html">Best Timing</a>
+<a class="nl" href="Portfolio.dc.html">Portfolio Analytics</a>
+<a class="nl" href="Simulator.dc.html">Compounding Simulator</a>
+<p class="grp">Market</p>
+<a class="nl" href="Heatmap.dc.html">Market Heatmap</a>
+<a class="nl" href="Comparison.dc.html">Stock Comparison</a>
+<p class="grp">Trading</p>
+<a class="nl" href="MyTrades.dc.html">My Trades</a>
+<a class="nl" href="DividendPlay.dc.html">Dividend Play <span class="pro">Supporter</span></a>
+<a class="nl" href="Swing.dc.html">Short Term Swing <span class="pro">Supporter</span></a>
+<a class="nl" href="LongTerm.dc.html">Long Term Position <span class="pro">Supporter</span></a>
+<div class="railfoot">
+<a class="nl" href="https://trakteer.id/mitbal">Support on Trakteer</a>
+<a class="nl" href="https://reddit.com/r/panendividen">Join the community</a>
+<a class="nl" href="https://blog.panendividen.com">Read the blog</a>
+</div>
+</nav>
+<main class="main">
+<header class="top">
+<div><h1>Dividend Calendar 2027</h1><p class="sub">Projected ex-dates, based on what each company paid in 2026</p></div>
+<div class="tools"><span class="chip">Sample data</span><div class="seg" role="group" aria-label="Stock list"><button class="on">JKSE</button><button>S&amp;P 500</button></div><div class="seg" role="group" aria-label="View"><button>Year</button><button class="on">Month</button></div></div>
+</header>
+
+<section class="card" style="padding: 14px 18px">
+<div class="frow">
+<label class="f" style="flex: 0 1 160px">Based on year<select><option>2026</option></select></label>
+<label class="f" style="flex: 0 1 180px">Month<select><option>May</option></select></label>
+<span class="sw"><i></i>Syariah only</span>
+<div style="margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px"><span class="note">Yield</span><span class="ev e1">under 3%</span><span class="ev e2">3 to 6%</span><span class="ev e3">6 to 9%</span><span class="ev e4">over 9%</span></div>
+</div>
+</section>
+
+<div class="row" style="align-items: flex-start">
+<section class="card" style="flex: 3 1 560px">
+<div class="hd"><h2>May 2027</h2><div class="acts"><button class="btn ghost sm" aria-label="Previous month">Prev</button><button class="btn ghost sm" aria-label="Next month">Next</button></div></div>
+<div class="cal">
+<span class="dow">Mon</span><span class="dow">Tue</span><span class="dow">Wed</span><span class="dow">Thu</span><span class="dow">Fri</span><span class="dow">Sat</span><span class="dow">Sun</span>
+<div class="day off"></div><div class="day off"></div><div class="day off"></div><div class="day off"></div><div class="day off"></div>
+<div class="day"><b>1</b></div><div class="day"><b>2</b></div>
+<div class="day"><b>3</b><span class="ev e3">BBRI</span></div><div class="day"><b>4</b><span class="ev e2">BBNI</span><span class="ev e1">BBCA</span></div><div class="day"><b>5</b></div><div class="day"><b>6</b><span class="ev e4">ITMG</span></div><div class="day"><b>7</b><span class="ev e2">BMRI</span></div><div class="day"><b>8</b></div><div class="day"><b>9</b></div>
+<div class="day"><b>10</b><span class="ev e3">UNTR</span></div><div class="day"><b>11</b></div><div class="day today"><b>12</b><span class="ev e4">PTBA</span><span class="ev e2">SMGR</span></div><div class="day"><b>13</b><span class="ev e1">ICBP</span></div><div class="day"><b>14</b></div><div class="day"><b>15</b></div><div class="day"><b>16</b></div>
+<div class="day"><b>17</b><span class="ev e3">ASII</span></div><div class="day"><b>18</b><span class="ev e4">ADRO</span></div><div class="day"><b>19</b></div><div class="day"><b>20</b><span class="ev e3">TLKM</span><span class="ev e1">KLBF</span></div><div class="day"><b>21</b></div><div class="day"><b>22</b></div><div class="day"><b>23</b></div>
+<div class="day"><b>24</b><span class="ev e2">INDF</span></div><div class="day"><b>25</b></div><div class="day"><b>26</b><span class="ev e3">HMSP</span></div><div class="day"><b>27</b><span class="ev e4">BJTM</span></div><div class="day"><b>28</b></div><div class="day"><b>29</b></div><div class="day"><b>30</b></div>
+<div class="day"><b>31</b><span class="ev e2">SIDO</span></div><div class="day off"></div><div class="day off"></div><div class="day off"></div><div class="day off"></div><div class="day off"></div><div class="day off"></div>
+</div>
+<p class="note" style="margin-top: 12px">Dates are estimates until the company announces them. Announced dates are outlined.</p>
+</section>
+
+<div style="flex: 2 1 360px; display: flex; flex-direction: column; gap: 18px; min-width: 0">
+<div class="kpis" style="grid-template-columns: repeat(3, minmax(0, 1fr))">
+<div class="kpi"><small>Dividends</small><b>17</b></div>
+<div class="kpi"><small>Average yield</small><b>6.4%</b></div>
+<div class="kpi"><small>Median yield</small><b>6.1%</b></div>
+</div>
+<section class="card" style="padding: 6px 8px 8px">
+<div class="hd" style="margin: 10px 12px"><h2>Ex-dates in May</h2><span class="note">Ranked by yield</span></div>
+<div class="tw">
+<table>
+<thead><tr><th>Stock</th><th>Ex-date</th><th class="num">Dividend</th><th class="num">Yield</th></tr></thead>
+<tbody>
+<tr><td><span class="tk"><i>IT</i>ITMG</span></td><td>~Thu 6 May</td><td class="num">2,240</td><td class="num"><b>8.6%</b></td></tr>
+<tr><td><span class="tk"><i>PT</i>PTBA</span></td><td>~Wed 12 May</td><td class="num">296</td><td class="num"><b>11.2%</b></td></tr>
+<tr><td><span class="tk"><i>AD</i>ADRO</span></td><td>~Tue 18 May</td><td class="num">240</td><td class="num"><b>10.4%</b></td></tr>
+<tr><td><span class="tk"><i>BJ</i>BJTM</span></td><td>~Thu 27 May</td><td class="num">54</td><td class="num"><b>9.6%</b></td></tr>
+<tr><td><span class="tk"><i>HM</i>HMSP</span></td><td>~Wed 26 May</td><td class="num">57</td><td class="num"><b>8.1%</b></td></tr>
+<tr><td><span class="tk"><i>UN</i>UNTR</span></td><td>~Mon 10 May</td><td class="num">1,520</td><td class="num"><b>5.8%</b></td></tr>
+<tr><td><span class="tk"><i>BB</i>BBRI</span></td><td>~Mon 3 May</td><td class="num">208</td><td class="num"><b>5.0%</b></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+<section class="card">
+<div class="hd" style="margin-bottom: 8px"><h2>Dividends per month</h2><span class="note">Count of ex-dates</span></div>
+<svg class="ch" viewBox="0 0 420 130" role="img" aria-label="Bar chart of ex-date counts for each month, May highlighted as the busiest">
+<line x1="0" y1="104" x2="420" y2="104" stroke="#cbd9d2"></line>
+<g fill="#9fd3ba"><rect x="6" y="92" width="24" height="12" rx="3"></rect><rect x="41" y="88" width="24" height="16" rx="3"></rect><rect x="76" y="62" width="24" height="42" rx="3"></rect><rect x="111" y="36" width="24" height="68" rx="3"></rect><rect x="181" y="30" width="24" height="74" rx="3"></rect><rect x="216" y="58" width="24" height="46" rx="3"></rect><rect x="251" y="80" width="24" height="24" rx="3"></rect><rect x="286" y="76" width="24" height="28" rx="3"></rect><rect x="321" y="66" width="24" height="38" rx="3"></rect><rect x="356" y="56" width="24" height="48" rx="3"></rect><rect x="391" y="78" width="24" height="26" rx="3"></rect></g>
+<rect x="146" y="10" width="24" height="94" rx="3" fill="#073f2e"></rect>
+<g font-size="11" fill="#5c6d66" text-anchor="middle"><text x="18" y="120">J</text><text x="53" y="120">F</text><text x="88" y="120">M</text><text x="123" y="120">A</text><text x="158" y="120" font-weight="800" fill="#073f2e">M</text><text x="193" y="120">J</text><text x="228" y="120">J</text><text x="263" y="120">A</text><text x="298" y="120">S</text><text x="333" y="120">O</text><text x="368" y="120">N</text><text x="403" y="120">D</text></g>
+</svg>
+</section>
+</div>
+</div>
+<p class="foot">Data may contain errors or delays. Verify with official sources before any investment decision.</p>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
