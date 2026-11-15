@@ -84,7 +84,7 @@ The mock-ups differ from what this plan asks for in a few places. Where they dis
 
 Files: new `harvest/page_ui.py`, new `tests/test_page_ui.py`.
 
-- [ ] Create `harvest/page_ui.py` with no imports from other `harvest` modules except
+- [x] Create `harvest/page_ui.py` with no imports from other `harvest` modules except
       `chart_style`. It holds:
   - `TOKENS`: the colours from `docs/custom-ui/reference/ui.css` (canvas `#eff1ef`, ink
     `#10251d`, muted `#5c6d66`, line `#dbe3df`, forest `#073f2e`, deep `#052d22`, lime
@@ -98,9 +98,9 @@ Files: new `harvest/page_ui.py`, new `tests/test_page_ui.py`.
     wrapping grid of tiles.
   - `card(key)`: returns `st.container(key=f'pdx-card-{key}')`, styled as a white card with
     a 16px radius and a 1px `#dbe3df` border, so native widgets and charts can sit inside it.
-- [ ] Unit tests for the pure functions: `esc` escapes `<`, `&` and quotes; `chip` and `kpi`
+- [x] Unit tests for the pure functions: `esc` escapes `<`, `&` and quotes; `chip` and `kpi`
       escape their text and emit the tone class.
-- [ ] Do not inject these styles from `main.py`. Each of the two pages calls
+- [x] Do not inject these styles from `main.py`. Each of the two pages calls
       `inject_styles()` itself so no other page changes.
 
 Done when: both pages can import the module, the tests pass, and no other page looks
@@ -195,17 +195,17 @@ are extracted), `tests/apps/conftest.py` (only if needed).
 Read first: `apps/simulator/simulator.py` in full, `harvest/data.py`
 `simulate_simple_compounding` (around line 1185), and the reference mock-up.
 
-- [ ] Replace the three stacked bordered sections with one segmented control under the
+- [x] Replace the three stacked bordered sections with one segmented control under the
       title: **Fixed yield**, **Single stock**, **Portfolio**. Only the selected simulation
       runs. Today all three run on every rerun, including the network fetches for
       simulations 2 and 3.
-- [ ] Sync the choice to the URL as `?sim=fixed|stock|portfolio`, default `fixed`, falling
+- [x] Sync the choice to the URL as `?sim=fixed|stock|portfolio`, default `fixed`, falling
       back to `fixed` on a bad value. Follow the pattern of `parse_query_params` in the
       calendar page and unit-test the parser.
-- [ ] Remove the page-level `<style>` block that restyles `stMetric`; use the Phase 0 tiles.
-- [ ] Page layout for every mode: a left "Assumptions" card with the inputs stacked, and a
+- [x] Remove the page-level `<style>` block that restyles `stMetric`; use the Phase 0 tiles.
+- [x] Page layout for every mode: a left "Assumptions" card with the inputs stacked, and a
       right results column. On narrow screens the assumptions card goes on top.
-- [ ] Fixed yield mode:
+- [x] Fixed yield mode:
   - Inputs unchanged: initial investment (million rupiah), number of years, yield (percent),
     with the same limits and defaults. Keep the caption about what the projection ignores,
     as small text in the assumptions card.
@@ -279,3 +279,22 @@ at the start or the end of each month.
 ## Progress log
 
 (Add entries here: date, phase, what was done, what is left open.)
+
+- **15 Nov 2026, Phases 0 and 2.** Added `harvest/page_ui.py` (TOKENS, STYLES with the `pdx-`
+  prefix incl. calendar grid classes, `inject_styles`, `esc`, `render`, `chip`, `kpi`,
+  `kpi_row_html`, `kpi_row`, `split`, `card`) and `tests/test_page_ui.py`. Rebuilt
+  `apps/simulator/simulator.py`: subtitle, one segmented control synced to
+  `?sim=fixed|stock|portfolio` (`parse_sim_param`), one `render_*` function per mode so only
+  the selected mode runs, Assumptions card left / results right (`page_ui.split`, a wrapping
+  horizontal container with 300px / 560px flex bases, not `st.columns`), the
+  `stMetric` style block removed in favour of `kpi_row` tiles. Fixed yield has the new tiles,
+  the stacked "Asset value by year" chart with HTML legend and last-bar label, and the "Year by
+  year" table card with the CSV download (same file name and columns). Single stock and
+  Portfolio only moved into the new layout (charts and tables in cards, numbers unchanged).
+  Pure helpers tested in `tests/apps/test_simulator_page.py`. Default numbers checked equal to
+  the old page (IDR 222,103,896 / IDR 102,103,896 / 11.05%). After the first browser review: split layout replaced
+  `st.columns` (it squeezed the Assumptions card at 800 to 900px viewports), tiles have a 175px
+  minimum with 20px values and no mid-digit breaks, the allocation editor headers are
+  shortened ("Ticker", "Million IDR", long wording in `help`), and the chart has padding so the
+  last-bar label is not clipped. Left open: re-check those four in the browser; Phase 1 not started; Phase 3
+  (forms, DRIP advantage tile, chart titles into card headings) still to do.

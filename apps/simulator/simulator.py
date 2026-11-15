@@ -9,26 +9,12 @@ import harvest.data as hd
 import harvest.plot as hp
 import harvest.simulator as hs
 from harvest import chart_style as cs
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 
 st.set_page_config(page_title='Panen Dividen | Compounding Simulator')
 hp.enable_chart_theme()
-st.title('Compounding Simulator')
-
-st.markdown("""
-<style>
-    div[data-testid="stMetric"] {
-        background-color: rgba(15, 118, 110, 0.08);
-        padding: 10px;
-        border-radius: 10px;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 24px;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 ### Start of Function definition
 
@@ -45,7 +31,7 @@ logger = get_logger('simulator')
 def simulate_compounding(initial_value, num_year, avg_yield):
 
     logger.info(f'sim #1 simple compounding. {initial_value=}, {num_year=}, {avg_yield=}')
-    
+
     return_df = hd.simulate_simple_compounding(initial_value, num_year, avg_yield)
     return return_df
 
@@ -95,93 +81,153 @@ EXPORT_COLUMNS = [
     'dividend_income',
 ]
 
-### End of Function definition
+SIM_MODES = {
+    'fixed': 'Fixed yield',
+    'stock': 'Single stock',
+    'portfolio': 'Portfolio',
+}
+DEFAULT_SIM_MODE = 'fixed'
 
-################################################################################
+CAPITAL_COLOR = '#073f2e'
+REINVESTED_COLOR = '#7cc4a4'
 
 
-with st.container(border=True):
-    st.write('## #1 Basic single instrument compounding simulation')
-    st.caption(
-        'Estimate how an investment grows when it earns the same yield every '
-        'year and all income is reinvested. This projection does not model '
-        'market-price changes, taxes, fees, or additional deposits.'
-    )
+def parse_sim_param(qp):
+    """Simulation mode from the URL, falling back to the default on a missing or bad value.
 
-    cols = st.columns(3)
-    initial_value = cols[0].number_input('Initial investment (in million rupiah)', value=120, min_value=1, max_value=10000) * 1_000_000
-    num_year = cols[1].number_input('Number of years', value=10, min_value=1, max_value=50)
-    avg_yield = cols[2].number_input('Yield (in percent)', value=6.35, min_value=0.1, max_value=99.9) / 100
+    Supported param: ?sim=fixed|stock|portfolio (default: fixed)
+    """
+    mode = str(qp.get('sim', DEFAULT_SIM_MODE)).strip().lower()
+    return mode if mode in SIM_MODES else DEFAULT_SIM_MODE
 
-    return_df = simulate_compounding(initial_value, num_year, avg_yield)
 
-    cols = st.columns([1, 1, 1])
+def short_idr(value):
+    """Compact amount for chart labels: 222M, 1.4B, 2.1T."""
+    for size, suffix in ((1e12, 'T'), (1e9, 'B'), (1e6, 'M')):
+        if abs(value) >= size:
+            scaled = value / size
+            text = f'{scaled:,.0f}' if abs(scaled) >= 100 else f'{scaled:,.1f}'.removesuffix('.0')
+            return text + suffix
+    return f'{value:,.0f}'
+
+
+def fixed_yield_summary(return_df, initial_value):
+    """The three Fixed yield tiles' numbers, with the same formulas as the old metrics."""
     final_investment = return_df['investment'].iloc[-1]
     final_returns = return_df['returns'].iloc[-1]
-    total_returns = return_df['returns'].sum()
-    
-    cols[0].metric('Final Asset Value', f'IDR {final_investment:,.0f}')
-    cols[1].metric('Total Passive Income', f'IDR {total_returns:,.0f}')
-    cols[2].metric(
-        'Yield on Cost (Final)',
-        f'{(final_returns/initial_value*100):.2f}%',
-        help='Final year income divided by the initial investment.',
-    )
+    return {
+        'final_value': final_investment,
+        'capital_multiple': final_investment / initial_value,
+        'total_income': return_df['returns'].sum(),
+        'final_income': final_returns,
+        'yield_on_cost': final_returns / initial_value * 100,
+    }
 
-    st.divider()
 
-    cols = st.columns([0.33, 0.67])
-    cols[0].dataframe(
-        return_df[['year', 'investment', 'returns']],
-        column_config={
-            'year': st.column_config.TextColumn('Year'),
-            'investment': st.column_config.NumberColumn('Investment', format='IDR %,d'), 
-            'returns': st.column_config.NumberColumn('Returns (p.a.)', format='IDR %,d'), }, 
-        hide_index=True,
-        width='stretch'
-    )
+def year_by_year_table(return_df, initial_value):
+    """Year, start value, income received, end value and yield on cost (percent) per year."""
+    end_value = return_df['investment'].astype(float)
+    start_value = end_value.shift(1).fillna(float(initial_value))
+    return pd.DataFrame({
+        'year': return_df['year'].values,
+        'start_value': start_value.values,
+        'income': return_df['returns'].values,
+        'end_value': end_value.values,
+        'yield_on_cost': (return_df['returns'] / initial_value * 100).values,
+    })
 
-    base_chart = alt.Chart(return_df)
 
-    investment_chart = base_chart.mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-        x=alt.X('year:O', title='Year'),
-        y=alt.Y('investment:Q', title='Investment (Asset Value)'),
-        tooltip=[alt.Tooltip('year:O', title='Year'), 
-                 alt.Tooltip('investment:Q', title='Investment', format=',.0f'),
-                 alt.Tooltip('returns:Q', title='Returns', format=',.0f')]
-    )
+def asset_chart_data(return_df, initial_value):
+    """One row per year: capital, accumulated reinvested income, total and that year's income."""
+    labels = [f'Y{i}' for i in range(1, len(return_df) + 1)]
+    total = return_df['investment'].astype(float)
+    return pd.DataFrame({
+        'label': labels,
+        'year': return_df['year'].values,
+        'capital': float(initial_value),
+        'reinvested': (total - initial_value).values,
+        'total': total.values,
+        'income': return_df['returns'].values,
+        'total_label': [short_idr(v) for v in total],
+    })
 
-    return_chart = base_chart.mark_line(
-        point=alt.OverlayMarkDef(size=60, filled=True),
-        size=2.5,
-        color=cs.CHART_AMBER,
-    ).encode(
-        x=alt.X('year:O', title='Year'),
-        y=alt.Y(
-            'returns:Q',
-            title='Returns (Passive Income)',
-            axis=alt.Axis(titleColor=cs.CHART_AMBER),
+
+def asset_value_chart(chart_df):
+    labels = chart_df['label'].tolist()
+    x = alt.X('label:O', sort=labels, title=None, axis=alt.Axis(labelAngle=0, labelOverlap=True))
+    tooltip = [
+        alt.Tooltip('year:N', title='Year'),
+        alt.Tooltip('capital:Q', title='Capital', format=',.0f'),
+        alt.Tooltip('reinvested:Q', title='Reinvested income', format=',.0f'),
+        alt.Tooltip('total:Q', title='Total', format=',.0f'),
+        alt.Tooltip('income:Q', title="That year's income", format=',.0f'),
+    ]
+    y_axis = alt.Axis(
+        title=None,
+        labelExpr=(
+            "datum.value >= 1e12 ? format(datum.value / 1e12, '~r') + 'T' : "
+            "datum.value >= 1e9 ? format(datum.value / 1e9, '~r') + 'B' : "
+            "datum.value >= 1e6 ? format(datum.value / 1e6, '~r') + 'M' : format(datum.value, ',.0f')"
         ),
-        tooltip=[
-            alt.Tooltip('year:O', title='Year'),
-            alt.Tooltip('returns:Q', title='Passive Income', format=',.0f'),
-        ],
+    )
+    bars = alt.Chart(chart_df).transform_fold(
+        ['capital', 'reinvested'], as_=['part', 'amount']
+    ).transform_calculate(
+        part_order="datum.part === 'capital' ? 0 : 1"
+    ).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+        x=x,
+        y=alt.Y('amount:Q', stack='zero', axis=y_axis),
+        color=alt.Color(
+            'part:N',
+            scale=alt.Scale(domain=['capital', 'reinvested'], range=[CAPITAL_COLOR, REINVESTED_COLOR]),
+            legend=None,
+        ),
+        order=alt.Order('part_order:Q'),
+        tooltip=tooltip,
+    )
+    # Centred over the last bar; the right padding below covers up to about 6 characters
+    # ("1,234B"). A longer label (only for extreme inputs) is right-aligned to the bar's
+    # right edge instead, so it grows leftwards and can never run off the chart.
+    label_text = chart_df['total_label'].iloc[-1]
+    centred = len(label_text) <= 6
+    last_label = alt.Chart(chart_df.tail(1)).mark_text(
+        baseline='bottom', dy=-5, fontSize=12, fontWeight=800, color=ui.TOKENS['ink'],
+        align='center' if centred else 'right',
+    ).encode(
+        x=x if centred else alt.X('label:O', sort=labels, bandPosition=1),
+        y=alt.Y('total:Q'), text='total_label:N',
+    )
+    # Room on the right and top so the last bar's label is not clipped.
+    return alt.layer(bars, last_label).properties(
+        height=320, padding={'left': 5, 'top': 22, 'right': 30, 'bottom': 5},
     )
 
-    compound_chart = alt.layer(investment_chart, return_chart)\
-        .resolve_scale(y='independent')\
-        .properties(title='Single Instrument Compounding Projection',
-                    height=450)
 
-    cols[1].altair_chart(compound_chart, width="stretch", theme=None)
-    
-    st.download_button(
-        label="Download Projection Data (CSV)",
-        data=df_to_csv(return_df),
-        file_name='basic_compounding_sim.csv',
-        mime='text/csv',
-    )
+def legend_html(items):
+    return '<div class="pdx-legend">' + ''.join(
+        f'<span><span class="pdx-swatch" style="background:{color}"></span>{ui.esc(name)}</span>'
+        for name, color in items
+    ) + '</div>'
 
+
+def card_heading(title, note='', extra=''):
+    note_html = f'<p class="pdx-note" style="margin-top:3px">{ui.esc(note)}</p>' if note else ''
+    ui.render(f'<div class="pdx-hd"><div><h2 class="pdx-h2">{ui.esc(title)}</h2>{note_html}</div>{extra}</div>')
+
+
+def assumptions_heading(note):
+    card_heading('Assumptions', note)
+
+
+def note(text):
+    ui.render(f'<p class="pdx-note">{ui.esc(text)}</p>')
+
+
+def mode_layout(key):
+    """Left assumptions pane and right results pane; they wrap, assumptions on top, when narrow."""
+    return ui.split(key)
+
+### End of Function definition
 
 ################################################################################
 
@@ -189,90 +235,142 @@ this_year = datetime.now().year
 YEAR_MIN = 2010
 YEAR_MAX = this_year - 1
 
-sim2_box = st.container(border=True)
-with sim2_box:
-    st.write('## #2 Single stock dividend reinvestment historical compounding simulation')
-    st.caption(
-        'Replay one Indonesian (IDX) stock using its historical prices and '
-        'dividends. The simulator buys whole 100-share lots near the start of '
-        'the selected period, then compares reinvesting dividends in the same '
-        'stock (bought on the payment date) with keeping them as cash. '
-        'Portfolio value includes shares and residual cash; past results do '
-        'not predict future returns.'
-    )
 
-    cols = st.columns([2, 2, 1, 1])
-    raw_stock_name = cols[0].text_input(
-        label='Stock Name', value='BBCA.JK', key='sim2_stock',
-        help='IDX tickers only, e.g. BBCA or BBCA.JK',
-    )
-    sim2_value = cols[1].number_input(
-        'Initial investment (in million rupiah)', value=120, min_value=1,
-        max_value=10000, key='sim2_value',
-    ) * 1_000_000
-    sim2_start = cols[2].number_input(
-        label='Start Year', value=2014, min_value=YEAR_MIN, max_value=YEAR_MAX,
-        key='sim2_start',
-    )
-    sim2_end = cols[3].number_input(
-        label='End Year', value=YEAR_MAX, min_value=YEAR_MIN, max_value=YEAR_MAX,
-        key='sim2_end',
-    )
-    sim2_drip = st.toggle(
-        'Enable DRIP', value=True, key='sim2_drip',
-        help='Show results for reinvesting dividends into more shares',
-    )
+def render_fixed():
+    left, right = mode_layout('sim1')
+    with left:
+        with ui.card('sim1-assumptions'):
+            assumptions_heading('A steady yield, with every dividend reinvested.')
+            initial_value = st.number_input(
+                'Initial investment (million rupiah)', value=120, min_value=1, max_value=10000,
+                key='sim1_value',
+            ) * 1_000_000
+            num_year = st.number_input(
+                'Number of years', value=10, min_value=1, max_value=50, key='sim1_years',
+            )
+            avg_yield = st.number_input(
+                'Yield (percent)', value=6.35, min_value=0.1, max_value=99.9, key='sim1_yield',
+            ) / 100
+            note(
+                'This projection does not model market-price changes, taxes, fees, or '
+                'additional deposits. Single stock and Portfolio replay real dividend history '
+                'instead of a fixed yield.'
+            )
 
-    sim2_result = None
-    stock_name = raw_stock_name
-    try:
-        stock_name = hs.normalize_idx_ticker(raw_stock_name)
-        if not stock_name:
-            raise hs.SimulatorValidationError('Please enter a stock ticker.')
-        sim2_result = simulate_single_stock_compounding(
-            sim2_value, stock_name, sim2_start, sim2_end
-        )
-    except hs.SimulatorValidationError as e:
-        st.error(str(e))
-    except Exception:
-        logger.exception(f'Unexpected error running sim2 for {stock_name}')
-        st.error('The market data service could not complete this simulation.')
+    return_df = simulate_compounding(initial_value, num_year, avg_yield)
+    summary = fixed_yield_summary(return_df, initial_value)
 
-with sim2_box:
-    if sim2_result is not None:
+    with right:
+        ui.kpi_row([
+            ui.kpi('Final asset value', f'IDR {summary["final_value"]:,.0f}',
+                   f'{summary["capital_multiple"]:.2f}x your capital', tone='up'),
+            ui.kpi('Total passive income', f'IDR {summary["total_income"]:,.0f}',
+                   f'Over {num_year} years', tone='muted'),
+            ui.kpi(f'Income in year {num_year}', f'IDR {summary["final_income"]:,.0f}',
+                   f'{summary["yield_on_cost"]:.2f}% yield on cost', tone='up'),
+        ])
+
+        with ui.card('sim1-chart'):
+            card_heading('Asset value by year', extra=legend_html([
+                ('Capital', CAPITAL_COLOR), ('Reinvested income', REINVESTED_COLOR),
+            ]))
+            st.altair_chart(
+                asset_value_chart(asset_chart_data(return_df, initial_value)),
+                width='stretch', theme=None,
+            )
+
+        with ui.card('sim1-table'):
+            with st.container(horizontal=True, vertical_alignment='center'):
+                card_heading('Year by year')
+                st.download_button(
+                    label='Download CSV',
+                    data=df_to_csv(return_df),
+                    file_name='basic_compounding_sim.csv',
+                    mime='text/csv',
+                    icon=':material/download:',
+                    width='content',
+                )
+            st.dataframe(
+                year_by_year_table(return_df, initial_value),
+                column_config={
+                    'year': st.column_config.TextColumn('Year'),
+                    'start_value': st.column_config.NumberColumn('Start value', format='IDR %,d'),
+                    'income': st.column_config.NumberColumn('Income received', format='IDR %,d'),
+                    'end_value': st.column_config.NumberColumn('End value', format='IDR %,d'),
+                    'yield_on_cost': st.column_config.NumberColumn('Yield on cost', format='%.2f%%'),
+                },
+                hide_index=True,
+                width='stretch',
+            )
+
+
+def render_stock():
+    left, right = mode_layout('sim2')
+    with left:
+        with ui.card('sim2-assumptions'):
+            assumptions_heading('Replay one IDX stock using its historical prices and dividends.')
+            raw_stock_name = st.text_input(
+                label='Stock name', value='BBCA.JK', key='sim2_stock',
+                help='IDX tickers only, e.g. BBCA or BBCA.JK',
+            )
+            sim2_value = st.number_input(
+                'Initial investment (million rupiah)', value=120, min_value=1,
+                max_value=10000, key='sim2_value',
+            ) * 1_000_000
+            sim2_start = st.number_input(
+                label='Start year', value=2014, min_value=YEAR_MIN, max_value=YEAR_MAX,
+                key='sim2_start',
+            )
+            sim2_end = st.number_input(
+                label='End year', value=YEAR_MAX, min_value=YEAR_MIN, max_value=YEAR_MAX,
+                key='sim2_end',
+            )
+            sim2_drip = st.toggle(
+                'Enable DRIP', value=True, key='sim2_drip',
+                help='Show results for reinvesting dividends into more shares',
+            )
+            note(
+                'The simulator buys whole 100-share lots near the start of the selected '
+                'period, then compares reinvesting dividends in the same stock (bought on '
+                'the payment date) with keeping them as cash. Portfolio value includes '
+                'shares and residual cash; past results do not predict future returns.'
+            )
+
+    with right:
+        sim2_result = None
+        stock_name = raw_stock_name
+        try:
+            stock_name = hs.normalize_idx_ticker(raw_stock_name)
+            if not stock_name:
+                raise hs.SimulatorValidationError('Please enter a stock ticker.')
+            sim2_result = simulate_single_stock_compounding(
+                sim2_value, stock_name, sim2_start, sim2_end
+            )
+        except hs.SimulatorValidationError as e:
+            st.error(str(e))
+        except Exception:
+            logger.exception(f'Unexpected error running sim2 for {stock_name}')
+            st.error('The market data service could not complete this simulation.')
+
+        if sim2_result is None:
+            return
+
         with_drip, without_drip, transactions = sim2_result
-
-        with st.expander('Activity Log'):
-            st.dataframe(transactions, hide_index=True, width='stretch')
 
         without_drip['type'] = hs.STRATEGY_NO_DRIP
         with_drip['type'] = hs.STRATEGY_DRIP
         display_df = with_drip if sim2_drip else without_drip
 
-        # Summary metrics for simulation #2
-        metric_cols = st.columns(4)
         final_val = display_df['investment'].iloc[-1]
         final_div = display_df['returns'].iloc[-1]
         total_div = display_df['returns'].sum()
 
-        metric_cols[0].metric('Final Portfolio Value', f'IDR {final_val:,.0f}')
-        metric_cols[1].metric('Total Dividend Income', f'IDR {total_div:,.0f}')
-        metric_cols[2].metric('Yield on Cost (Final)', f'{(final_div/sim2_value*100):.2f}%')
-        metric_cols[3].metric('Residual Cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}')
-
-        st.divider()
-
-        cols = st.columns([0.33, 0.67])
-        cols[0].dataframe(
-            display_df[['year', 'investment', 'returns']],
-            column_config={
-                'year': st.column_config.TextColumn('Year'),
-                'investment': st.column_config.NumberColumn('Asset Value', format='IDR %,d'),
-                'returns': st.column_config.NumberColumn('Div. Received', format='IDR %,d'),
-            },
-            hide_index=True,
-            width='stretch',
-            height=430)
+        ui.kpi_row([
+            ui.kpi('Final portfolio value', f'IDR {final_val:,.0f}'),
+            ui.kpi('Total dividend income', f'IDR {total_div:,.0f}'),
+            ui.kpi('Yield on cost (final)', f'{(final_div/sim2_value*100):.2f}%'),
+            ui.kpi('Residual cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}'),
+        ])
 
         # Combine for visual comparison in the main chart
         plot_df = pd.concat([without_drip, with_drip])
@@ -308,9 +406,25 @@ with sim2_box:
             height=430
         )
 
-        cols[1].altair_chart((investment_chart + return_chart)\
-                        .resolve_scale(y='independent'),
-                        width="stretch", theme=None)
+        with ui.card('sim2-chart'):
+            st.altair_chart((investment_chart + return_chart)\
+                            .resolve_scale(y='independent'),
+                            width="stretch", theme=None)
+
+        with ui.card('sim2-table'):
+            st.dataframe(
+                display_df[['year', 'investment', 'returns']],
+                column_config={
+                    'year': st.column_config.TextColumn('Year'),
+                    'investment': st.column_config.NumberColumn('Asset Value', format='IDR %,d'),
+                    'returns': st.column_config.NumberColumn('Div. Received', format='IDR %,d'),
+                },
+                hide_index=True,
+                width='stretch',
+            )
+
+        with st.expander('Activity Log'):
+            st.dataframe(transactions, hide_index=True, width='stretch')
 
         st.download_button(
             label=f"Download {stock_name} Historical Data (CSV)",
@@ -320,104 +434,87 @@ with sim2_box:
         )
 
 
-################################################################################
-
-sim3_box = st.container(border=True)
-with sim3_box:
-    st.write('## #3 Multi stock dividend reinvestment simulation')
-    st.caption(
-        'Replay a portfolio of Indonesian (IDX) stocks using the allocations '
-        'below. Each position starts with whole 100-share lots; dividends are '
-        'either reinvested in the stock that paid them (bought on the payment '
-        'date) or kept as cash. The comparison includes historical price '
-        'changes and uninvested cash.'
-    )
-
-    cols = st.columns([2, 1, 1])
-    sim3_allocations = cols[0].data_editor(
-        pd.DataFrame({
-            'Ticker': ['BJTM.JK', 'SMSM.JK'],
-            'Investment (Mio IDR)': [60.0, 60.0],
-        }),
-        num_rows='dynamic',
-        column_config={
-            'Ticker': st.column_config.TextColumn('Stock Ticker (e.g. BBCA.JK)'),
-            'Investment (Mio IDR)': st.column_config.NumberColumn(
-                'Initial Investment (Mio IDR)', format='%,.1f', min_value=0,
-                step=0.1,
-            ),
-        },
-        width='stretch',
-        hide_index=True,
-        key='sim3_stock_editor'
-    )
-    sim3_start = cols[1].number_input(
-        label='Start Year', value=2014, min_value=YEAR_MIN, max_value=YEAR_MAX,
-        key='sim3_start',
-    )
-    sim3_end = cols[1].number_input(
-        label='End Year', value=YEAR_MAX, min_value=YEAR_MIN, max_value=YEAR_MAX,
-        key='sim3_end',
-    )
-    sim3_drip = cols[2].toggle(
-        'Enable DRIP', value=True, key='sim3_drip',
-        help='Show results for reinvesting dividends into more shares',
-    )
+def render_portfolio():
+    left, right = mode_layout('sim3')
+    with left:
+        with ui.card('sim3-assumptions'):
+            assumptions_heading('Replay a portfolio of IDX stocks using the allocations below.')
+            sim3_allocations = st.data_editor(
+                pd.DataFrame({
+                    'Ticker': ['BJTM.JK', 'SMSM.JK'],
+                    'Investment (Mio IDR)': [60.0, 60.0],
+                }),
+                num_rows='dynamic',
+                column_config={
+                    'Ticker': st.column_config.TextColumn(
+                        'Ticker', help='Stock ticker, e.g. BBCA.JK',
+                    ),
+                    'Investment (Mio IDR)': st.column_config.NumberColumn(
+                        'Million IDR', help='Initial investment in million rupiah',
+                        format='%,.1f', min_value=0, step=0.1,
+                    ),
+                },
+                width='stretch',
+                hide_index=True,
+                key='sim3_stock_editor'
+            )
+            sim3_start = st.number_input(
+                label='Start year', value=2014, min_value=YEAR_MIN, max_value=YEAR_MAX,
+                key='sim3_start',
+            )
+            sim3_end = st.number_input(
+                label='End year', value=YEAR_MAX, min_value=YEAR_MIN, max_value=YEAR_MAX,
+                key='sim3_end',
+            )
+            sim3_drip = st.toggle(
+                'Enable DRIP', value=True, key='sim3_drip',
+                help='Show results for reinvesting dividends into more shares',
+            )
+            note(
+                'Each position starts with whole 100-share lots; dividends are either '
+                'reinvested in the stock that paid them (bought on the payment date) or '
+                'kept as cash. The comparison includes historical price changes and '
+                'uninvested cash.'
+            )
 
     allocation_rows = [
         (row['Ticker'], row['Investment (Mio IDR)'] * 1_000_000)
         for _, row in sim3_allocations.iterrows()
     ]
 
-    sim3_result = None
-    allocations = {}
-    try:
-        allocations = hs.build_allocations(allocation_rows)
-        sim3_result = simulate_real_multistock_compounding(
-            tuple(sorted(allocations.items())), sim3_start, sim3_end
-        )
-    except hs.SimulatorValidationError as e:
-        st.error(str(e))
-    except Exception:
-        logger.exception(f'Unexpected error on sim3 for stocks {list(allocations)}')
-        st.error('The market data service could not complete this simulation.')
+    with right:
+        sim3_result = None
+        allocations = {}
+        try:
+            allocations = hs.build_allocations(allocation_rows)
+            sim3_result = simulate_real_multistock_compounding(
+                tuple(sorted(allocations.items())), sim3_start, sim3_end
+            )
+        except hs.SimulatorValidationError as e:
+            st.error(str(e))
+        except Exception:
+            logger.exception(f'Unexpected error on sim3 for stocks {list(allocations)}')
+            st.error('The market data service could not complete this simulation.')
 
-with sim3_box:
-    if sim3_result is not None:
+        if sim3_result is None:
+            return
+
         aggregate_df, combined_plot_df, transactions = sim3_result
-
-        with st.expander('Historical Transaction Log'):
-            st.dataframe(transactions, hide_index=True, width='stretch')
 
         sim3_strategy = hs.STRATEGY_DRIP if sim3_drip else hs.STRATEGY_NO_DRIP
         display_df = aggregate_df[aggregate_df['strategy'] == sim3_strategy]
         starting_capital = sum(allocations.values())
 
-        # Summary metrics for simulation #3
-        metric_cols = st.columns(4)
         final_val = display_df['investment'].iloc[-1]
         final_div = display_df['returns'].iloc[-1]
         total_div = display_df['returns'].sum()
 
-        metric_cols[0].metric('Final Aggregate Value', f'IDR {final_val:,.0f}')
-        metric_cols[1].metric('Total Dividend Collected', f'IDR {total_div:,.0f}')
-        metric_cols[2].metric('Yield on Cost (Final)', f'{(final_div/starting_capital*100):.2f}%')
-        metric_cols[3].metric('Residual Cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}')
-
-        st.divider()
-
-        cols = st.columns([0.33, 0.67])
-        cols[0].dataframe(
-            display_df[['year', 'investment', 'returns']],
-            column_config={
-                'year': st.column_config.TextColumn('Year'),
-                'investment': st.column_config.NumberColumn('Total Value', format='IDR %,d'),
-                'returns': st.column_config.NumberColumn('Total Div.', format='IDR %,d'),
-            },
-            hide_index=True,
-            width='stretch',
-            height=430
-        )
+        ui.kpi_row([
+            ui.kpi('Final aggregate value', f'IDR {final_val:,.0f}'),
+            ui.kpi('Total dividend collected', f'IDR {total_div:,.0f}'),
+            ui.kpi('Yield on cost (final)', f'{(final_div/starting_capital*100):.2f}%'),
+            ui.kpi('Residual cash', f'IDR {display_df["cash"].iloc[-1]:,.0f}'),
+        ])
 
         combined_plot_df = combined_plot_df.rename(columns={'value': 'Value'})
 
@@ -443,13 +540,29 @@ with sim3_box:
             height=430
         )
 
-        cols[1].altair_chart(
-            (investment_chart + return_chart).resolve_scale(
-                y='independent', color='independent'
-            ),
-            width="stretch",
-            theme=None,
-        )
+        with ui.card('sim3-chart'):
+            st.altair_chart(
+                (investment_chart + return_chart).resolve_scale(
+                    y='independent', color='independent'
+                ),
+                width="stretch",
+                theme=None,
+            )
+
+        with ui.card('sim3-table'):
+            st.dataframe(
+                display_df[['year', 'investment', 'returns']],
+                column_config={
+                    'year': st.column_config.TextColumn('Year'),
+                    'investment': st.column_config.NumberColumn('Total Value', format='IDR %,d'),
+                    'returns': st.column_config.NumberColumn('Total Div.', format='IDR %,d'),
+                },
+                hide_index=True,
+                width='stretch',
+            )
+
+        with st.expander('Historical Transaction Log'):
+            st.dataframe(transactions, hide_index=True, width='stretch')
 
         st.download_button(
             label="Download Multi-Stock Sim Data (CSV)",
@@ -457,3 +570,35 @@ with sim3_box:
             file_name='multi_stock_historical_sim.csv',
             mime='text/csv',
         )
+
+
+RENDERERS = {
+    'fixed': render_fixed,
+    'stock': render_stock,
+    'portfolio': render_portfolio,
+}
+
+################################################################################
+
+ui.inject_styles()
+
+st.title('Compounding Simulator')
+ui.render('<p class="pdx-sub">See what reinvested dividends grow into over time</p>')
+
+_default_mode = parse_sim_param(st.query_params)
+sim_mode = st.segmented_control(
+    'Simulation',
+    list(SIM_MODES),
+    format_func=SIM_MODES.get,
+    default=_default_mode,
+    required=True,
+    key='sim_mode',
+    label_visibility='collapsed',
+)
+if sim_mode not in SIM_MODES:
+    sim_mode = _default_mode
+
+# Keep the URL param in sync with the current widget state
+st.query_params['sim'] = sim_mode
+
+RENDERERS[sim_mode]()
