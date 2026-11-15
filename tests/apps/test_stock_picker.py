@@ -251,7 +251,25 @@ def test_income_ranking_discounts_a_skipped_year_instead_of_zeroing_it():
 
     assert balanced.loc['SKIPPED.JK', 'DScore'] < 1e-3
     assert income.loc['SKIPPED.JK', 'DScore'] == pytest.approx(
-        income.loc['STEADY.JK', 'DScore'] * sp.SOFT_CUT_FLOOR, rel=1e-3)
+        income.loc['STEADY.JK', 'DScore'] * sp.INCOME_CUT_FLOOR, rel=1e-3)
+
+
+def test_income_ranking_does_not_discount_small_caps():
+    base = _raw_stock_df().loc[['AAA.JK']].copy()
+    comparison = pd.concat([base] * 2)
+    comparison.index = ['LARGE.JK', 'SMALL.JK']
+    # Scale size, earnings and revenue together so the payout ratio and margin are unchanged;
+    # IDR 1T sits below the IDR 3T midpoint.
+    scale = 1e12 / 5e14
+    comparison.loc['SMALL.JK', 'mktCap'] = 1e12
+    comparison.loc['SMALL.JK', 'earningTTM'] = base.loc['AAA.JK', 'earningTTM'] * scale
+    comparison.loc['SMALL.JK', 'revenueTTM'] = base.loc['AAA.JK', 'revenueTTM'] * scale
+
+    balanced = sp.get_processed_df(comparison, currency='IDR')
+    income = sp.get_processed_df(comparison, rank_by='Income', currency='IDR')
+
+    assert income.loc['SMALL.JK', 'DScore'] == pytest.approx(income.loc['LARGE.JK', 'DScore'], rel=1e-3)
+    assert balanced.loc['SMALL.JK', 'DScore'] < balanced.loc['LARGE.JK', 'DScore']
 
 
 def _growth_comparison():
@@ -278,8 +296,22 @@ def test_growth_ranking_puts_a_dividend_grower_above_a_flat_higher_yielder():
 
     assert balanced.loc['FLAT.JK', 'Rank'] < balanced.loc['GROWER.JK', 'Rank']
     assert growth.loc['GROWER.JK', 'Rank'] < growth.loc['FLAT.JK', 'Rank']
-    # Yield 2.5 plus 10%/yr dividend growth, with a raise in every paying year
-    assert growth.loc['GROWER.JK', 'DScore'] == pytest.approx(12.5 * 1.08, rel=1e-3)
+    # 10%/yr dividend growth with a raise in every paying year, lifted by 8% organic growth;
+    # the 2.5 yield does not add to the score.
+    assert growth.loc['GROWER.JK', 'DScore'] == pytest.approx(10 * 1.08, rel=1e-3)
+
+
+def test_growth_ranking_ignores_the_size_of_the_yield():
+    comparison = _growth_comparison().loc[['GROWER.JK', 'FLAT.JK']].copy()
+    comparison.index = ['GROWER.JK', 'HIGHYIELD.JK']
+    # A 6% yielder growing 5%/yr; earnings (20% of market cap) cover both dividends.
+    comparison.loc['HIGHYIELD.JK', ['price', 'lastDiv', 'yield', 'avgFlatAnnualDivIncrease']] = [
+        10_000.0, 600.0, 6.0, 30.0]
+
+    growth = sp.get_processed_df(comparison, rank_by='Growth')
+
+    assert growth.loc['HIGHYIELD.JK', 'DScore'] > 1e-3
+    assert growth.loc['GROWER.JK', 'Rank'] < growth.loc['HIGHYIELD.JK', 'Rank']
 
 
 def test_growth_ranking_does_not_score_token_yields():

@@ -56,17 +56,17 @@ RANK_HELP = {
         '(small caps are structurally discounted)'
     ),
     'Income': (
-        'Covered current yield: the dividend yield (capped at 12%) scaled by normalized payout '
-        'sustainability, with lighter discounts for past dividend cuts and small market cap. '
-        'A skipped year lowers the score instead of zeroing it, and dividend growth is ignored. '
-        'Stocks with fewer than 3 paying years are scaled down.'
+        'Covered current yield: the dividend yield (capped at 15%) scaled by normalized payout '
+        'sustainability, with a light discount for past dividend cuts (a skipped year keeps 75% '
+        'of the score). Company size and dividend growth are ignored, so smaller high-yielders '
+        'can rank high. Stocks with fewer than 3 paying years are scaled down.'
     ),
     'Growth': (
-        'Yield plus dividend growth: the dividend yield (capped at 12%) plus the average yearly '
-        'dividend increase (capped at +15%/yr, weighted by the share of paying years with a raise), '
-        'scaled by payout sustainability and organic revenue/income growth, with lighter discounts '
-        'for past cuts and small market cap. Only stocks with a growing dividend, at least 5 paying '
-        'years and a yield of at least 1% are scored.'
+        'Dividend growth rate: the average yearly dividend increase (capped at +15%/yr, weighted '
+        'by the share of paying years with a raise), scaled by payout sustainability and organic '
+        'revenue/income growth, with lighter discounts for past cuts and small market cap. The '
+        'yield itself does not add to the score. Only stocks with a growing dividend, at least 5 '
+        'paying years and a yield of at least 1% are scored.'
     ),
     'Potential': (
         'Earnings-backed yield: the latest dividend yield, counted only as far as normalized '
@@ -77,8 +77,12 @@ RANK_HELP = {
         'years are scaled down.'
     ),
 }
-# Share of the score a stock keeps after cutting its whole dividend, in Income and Growth
+# Share of the score a stock keeps after cutting its whole dividend, in Growth
 SOFT_CUT_FLOOR = 0.25
+# Share of the score a stock keeps after cutting its whole dividend, in Income
+INCOME_CUT_FLOOR = 0.75
+# Income's yield cap in percent: higher than the 12% used elsewhere because Income leads with yield
+INCOME_MAX_YIELD = 15
 # Paying years before a stock counts in full, in Income and Potential
 INCOME_SEASONING_YRS = 3
 GROWTH_MAX_DIV_GROWTH = 0.15
@@ -2107,11 +2111,10 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint, rank_by='Balanced')
         * is_payer  # gate: zero-yield stocks always score 0, below any payer
     )
 
-    # Income and Growth reuse the factors above with a different emphasis. Past cuts are a
-    # haircut rather than a gate: one skipped year in ten zeroes the Balanced score, which
-    # would hide most of the high-yielders that Income exists to surface.
-    capped_yield = np.minimum(pd.to_numeric(score_yield, errors='coerce'), 12)
-    cut_haircut = SOFT_CUT_FLOOR + (1 - SOFT_CUT_FLOOR) * (100 - score_cut_pct) / 100
+    # Income and Growth reuse the factors above with a different lead: Income leads with the
+    # yield, Growth with dividend growth. Past cuts are a haircut rather than a gate: one
+    # skipped year in ten zeroes the Balanced score, which would hide most of the
+    # high-yielders that Income exists to surface.
     seasoning = (df['numDividendYear'] / INCOME_SEASONING_YRS).clip(upper=1)
     if rank_by == 'Potential':
         # Judge the latest dividend against earnings instead of history: no cut penalty and
@@ -2125,21 +2128,26 @@ def _get_processed_df_cached(data_version, _df, mc_midpoint, rank_by='Balanced')
             np.minimum(covered_yield, 12) * growth_adj * np.sqrt(df['mc_penalty']) * seasoning * is_payer
         )
     elif rank_by == 'Income':
-        df['DScore'] = (
-            capped_yield * sustain * cut_haircut * np.sqrt(df['mc_penalty']) * seasoning * is_payer
-        )
+        # Company size is not discounted: Income is the highest covered paycheck regardless of
+        # company size. Size and a clean record are what Balanced rewards.
+        income_yield = np.minimum(pd.to_numeric(score_yield, errors='coerce'), INCOME_MAX_YIELD)
+        income_cut_haircut = INCOME_CUT_FLOOR + (1 - INCOME_CUT_FLOOR) * (100 - score_cut_pct) / 100
+        df['DScore'] = income_yield * sustain * income_cut_haircut * seasoning * is_payer
     elif rank_by == 'Growth':
         raise_share = (df['positiveYear'] / df['numDividendYear'].replace(0, np.nan)).clip(0, 1).fillna(0)
         div_growth = (df['avgFlatAnnualDivIncrease'] / score_div.replace(0, np.nan)).clip(
             upper=GROWTH_MAX_DIV_GROWTH).fillna(0)
-        # The yield floor keeps token payers from ranking on growth alone.
+        # The score leads with dividend growth alone; on high-yield markets adding the yield
+        # made the list a copy of Balanced. The yield only gates: the floor keeps token payers
+        # from ranking on growth alone.
+        cut_haircut = SOFT_CUT_FLOOR + (1 - SOFT_CUT_FLOOR) * (100 - score_cut_pct) / 100
         eligible = (
             (div_growth > 0)
             & (df['numDividendYear'] >= GROWTH_MIN_DIV_YEARS)
             & (df['yield'] >= GROWTH_MIN_YIELD)
         )
         df['DScore'] = (
-            (capped_yield + 100 * div_growth * raise_share)
+            100 * div_growth * raise_share
             * sustain
             * growth_adj
             * np.sqrt(cut_haircut * df['mc_penalty'])
