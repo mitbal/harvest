@@ -23,9 +23,17 @@ current_month = datetime.today().month
 st.set_page_config(page_title='Dividend Calendar - Panen Dividen', page_icon=':material/calendar_month:')
 hp.enable_chart_theme()
 
+# The full-year calendar should fit the first screen, so this page trims Streamlit's default top
+# padding and uses a compact title, like the Market Heatmap page. Scoped to this page's elements.
+st.html("""
+<style>
+    [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
+    .st-key-cal_header h1 { font-size: 1.75rem; padding: 0; }
+</style>
+""")
 
 # Title and warning go first; they depend on the year picked in the controls below them
-header = st.container()
+header = st.container(key='cal_header')
 # All options on one row: stock list, calendar view, year, month and the Syariah filter
 controls = st.container(horizontal=True, vertical_alignment='bottom', gap='medium')
 
@@ -287,8 +295,8 @@ def yield_histogram(stats_df):
 # Full-year calendar month size limits in pixels, the same as the live site before the redesign.
 # lesley 0.4.0 draws square date cells of min(width / 7, height / 6) = 33px (30px squares after
 # padding). On a 13" MacBook (1440x800 window, sidebar open) the image is ~975px wide, inside the
-# 980px content area, and once scrolled the 4x3 grid fits below the 60px Streamlit header;
-# the title and color key row sits just under it
+# 980px content area. The page trims its top padding and title (see the style block at the top)
+# so the image starts higher and the 4x3 grid fits the first screen on taller windows
 CALENDAR_MONTH_WIDTH = 250
 CALENDAR_MONTH_HEIGHT = 200
 
