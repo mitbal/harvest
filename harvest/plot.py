@@ -6,7 +6,6 @@ import lesley
 import numpy as np
 import pandas as pd
 import altair as alt
-from streamlit_echarts5 import JsCode
 
 from harvest.data import calc_div_projection_rate, project_dividends
 from harvest.chart_style import (
@@ -25,6 +24,16 @@ from harvest.chart_style import (
     CHART_TEXT,
     MARKET_HEATMAP_RANGE,
 )
+
+
+# Local copy of streamlit_echarts5.JsCode. Importing streamlit_echarts5 here would declare the component
+# outside a script run (server.py imports this module through harvest.share), leaving it unregistered so
+# every ECharts chart 404s. The placeholder must match the one the streamlit-echarts5 frontend looks for.
+class JsCode:
+    def __init__(self, js_code: str):
+        js_placeholder = "--x_x--0_0--"
+        self.js_code = f"{js_placeholder}{js_code}{js_placeholder}"
+
 
 _ALTAIR_THEME_NAME = 'harvest-professional'
 
