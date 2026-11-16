@@ -53,3 +53,21 @@ def test_styles_use_prefix_and_load_font():
                 'st-key-pdx-card-', 'st-key-pdx-split-', 'st-key-pdx-pane-left-',
                 'st-key-pdx-pane-right-'):
         assert cls in ui.STYLES
+
+
+def test_kpi_row_html_fixed_columns():
+    markup = ui.kpi_row_html([ui.kpi('A', '1')], columns=3)
+    assert markup.startswith('<div class="pdx-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">')
+
+
+def test_split_keys_default_and_wide_left():
+    assert ui.split_keys('sim1') == ('pdx-split-sim1', 'pdx-pane-left-sim1', 'pdx-pane-right-sim1')
+    assert ui.split_keys('cal', wide_left=True) == ('pdx-wsplit-cal', 'pdx-wpane-left-cal', 'pdx-wpane-right-cal')
+    for cls in ('st-key-pdx-wsplit-', 'st-key-pdx-wpane-left-', 'st-key-pdx-wpane-right-'):
+        assert cls in ui.STYLES
+
+
+def test_wide_left_keys_do_not_match_the_default_split_selectors():
+    outer, left, right = ui.split_keys('cal', wide_left=True)
+    assert 'pdx-split-' not in outer
+    assert 'pdx-pane-left-' not in left and 'pdx-pane-right-' not in right

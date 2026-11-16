@@ -85,6 +85,13 @@ STYLES = f"""
 [class*="st-key-pdx-split-"] > :has(> [class*="st-key-pdx-pane-right-"]) {{
   flex: 3 1 560px; width: auto; min-width: 0; max-width: 100%;
 }}
+/* Wide-left split (split(..., wide_left=True)): main card 3 1 560px, side column 2 1 360px */
+[class*="st-key-pdx-wsplit-"] > :has(> [class*="st-key-pdx-wpane-left-"]) {{
+  flex: 3 1 560px; width: auto; min-width: 0; max-width: 100%;
+}}
+[class*="st-key-pdx-wsplit-"] > :has(> [class*="st-key-pdx-wpane-right-"]) {{
+  flex: 2 1 360px; width: auto; min-width: 0; max-width: 100%;
+}}
 
 /* Metric tiles */
 .pdx-kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; }}
@@ -112,30 +119,62 @@ STYLES = f"""
 .pdx-chip-lime {{ background: var(--pdx-lime); color: var(--pdx-deep); border-color: transparent; }}
 
 /* Calendar month grid */
-.pdx-cal {{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }}
+.pdx-cal {{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }}
 .pdx-dow {{
   font-size: 11.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
   color: var(--pdx-muted); padding: 0 6px 2px;
 }}
+/* Row height follows the window so a whole month fits the first screen: 372px is everything on
+   that screen that is not a cell row. On the Single Month page the card starts at ~209px and has
+   74px above its first row (border, padding, 32px heading, 8px gap, weekday row) = 283px; below the
+   last row come 43px (8px gap, 20px legend, padding, border), the 36px footer and 10px of slack.
+   The rest is shared by --pdx-weeks rows, less the 4px grid gap each row brings. Tall windows keep
+   roomy 92px cells (from ~964px tall); short ones go down to 52px. A busy cell (number line and
+   three chips) needs ~73px, which six-week months get from ~850px tall. */
 .pdx-day {{
-  background: var(--pdx-soft); border-radius: 10px; min-height: 92px; padding: 7px;
-  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  background: var(--pdx-soft); border-radius: 10px; padding: 3px 5px;
+  min-height: clamp(52px, calc((100dvh - 372px) / var(--pdx-weeks, 6) - 4px), 92px);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
 }}
-.pdx-day b {{ font-size: 12px; color: var(--pdx-ink-soft); }}
+.pdx-day-hd {{ display: flex; align-items: center; justify-content: space-between; gap: 3px; min-height: 15px; min-width: 0; }}
+.pdx-day b {{ font-size: 12px; line-height: 1.25; color: var(--pdx-ink-soft); flex: none; }}
 .pdx-day-closed b {{ color: var(--pdx-down); }}
 .pdx-day-off {{ background: transparent; }}
 .pdx-day-today {{ outline: 2px solid var(--pdx-forest); background: #fff; }}
 .pdx-ev {{
-  display: block; font-size: 11.5px; font-weight: 800; border-radius: 6px; padding: 2px 6px;
+  display: block; font-size: 11px; font-weight: 800; line-height: 1.2; border-radius: 6px; padding: 1px 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none;
 }}
+
+.pdx a.pdx-ev:hover {{ text-decoration: none; box-shadow: inset 0 0 0 2px rgba(16, 37, 29, .35); }}
+.pdx-ev-more {{
+  background: #e4ebe7; color: var(--pdx-ink-soft); cursor: default;
+  font-size: 10.5px; padding: 1px 4px; letter-spacing: -.01em;
+}}
+.pdx-day-hd .pdx-ev-more {{ flex: 0 1 auto; min-width: 0; }}
+/* On phones the grid stops shrinking at 300px (see the media query) and scrolls inside its card */
+.pdx-cal-wrap {{ overflow-x: auto; container: pdx-cal / inline-size; }}
+/* The day-number line holds a two-digit day (~14px), a 3px gap and "+99 more" (~55px with its
+   padding): 72px of content, so an 82px cell (5px padding each side). Seven cells and six 4px gaps
+   make 7 * 82 + 24 = 598px of grid; narrower grids show "+99" rather than cut it off */
+@container pdx-cal (max-width: 597px) {{
+  .pdx-ev-more-word {{ display: none; }}
+}}
+.pdx-cal-legend {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px; }}
+.pdx-cal-legend .pdx-note {{ margin-right: 2px; }}
+.pdx-cal-legend .pdx-legend-key {{ min-width: 38px; text-align: center; }}
 
 @media (max-width: 640px) {{
   .pdx-kpi .pdx-kpi-value {{ font-size: 18px; }}
   [class*="st-key-pdx-card-"] {{ padding: 14px 14px; }}
-  .pdx-cal {{ gap: 3px; }}
-  .pdx-day {{ min-height: 64px; padding: 4px; }}
-  .pdx-ev {{ font-size: 10.5px; padding: 1px 3px; }}
+  .pdx-cal {{ gap: 3px; min-width: 300px; }}
+  .pdx-dow {{ font-size: 10.5px; letter-spacing: .02em; padding: 0 2px 2px; }}
+  .pdx-day {{ min-height: 52px; padding: 4px 3px; gap: 2px; }}
+  .pdx-day b {{ font-size: 11px; }}
+  .pdx-ev {{ font-size: 10px; padding: 1px 2px; border-radius: 4px; letter-spacing: -.01em; }}
+  .pdx-ev-more-word {{ display: none; }}
+  .pdx-cal-legend {{ justify-content: flex-start; }}
+  .pdx-cal-legend .pdx-legend-key {{ min-width: 0; }}
 }}
 </style>
 """
@@ -172,27 +211,43 @@ def kpi(label, value, note='', tone: str = '') -> str:
     )
 
 
-def kpi_row_html(items) -> str:
-    """Markup for a wrapping grid of tiles. items: markup strings from kpi()."""
-    return f'<div class="pdx-kpis">{"".join(items)}</div>'
+def kpi_row_html(items, columns=None) -> str:
+    """Markup for a grid of tiles. items: markup strings from kpi().
+
+    By default tiles wrap at a 175px minimum; columns=n keeps n equal columns at every width.
+    """
+    style = f' style="grid-template-columns:repeat({int(columns)},minmax(0,1fr))"' if columns else ''
+    return f'<div class="pdx-kpis"{style}>{"".join(items)}</div>'
 
 
-def kpi_row(items) -> None:
-    render(kpi_row_html(items))
+def kpi_row(items, columns=None) -> None:
+    render(kpi_row_html(items, columns))
 
 
-def split(key: str):
+def split_keys(key: str, wide_left: bool = False):
+    """Container keys (outer, left, right) that split() uses; each prefix has its own CSS sizes."""
+    if wide_left:
+        return f'pdx-wsplit-{key}', f'pdx-wpane-left-{key}', f'pdx-wpane-right-{key}'
+    return f'pdx-split-{key}', f'pdx-pane-left-{key}', f'pdx-pane-right-{key}'
+
+
+def split(key: str, wide_left: bool = False):
     """(left, right) panes that sit side by side and wrap, left on top, when space runs out.
 
-    Left has a 300px basis and right 560px, growing 1:3 (the mock-up's flex values).
+    Default (simulator): left has a 300px basis and right 560px, growing 1:3.
+    wide_left (calendar): left 560px and right 360px, growing 3:2.
     """
-    outer = st.container(horizontal=True, gap='medium', key=f'pdx-split-{key}')
+    outer_key, left_key, right_key = split_keys(key, wide_left)
+    outer = st.container(horizontal=True, gap='medium', key=outer_key)
     with outer:
-        left = st.container(key=f'pdx-pane-left-{key}')
-        right = st.container(key=f'pdx-pane-right-{key}')
+        left = st.container(key=left_key)
+        right = st.container(key=right_key)
     return left, right
 
 
-def card(key: str):
-    """A white bordered card that native Streamlit elements can be placed in."""
-    return st.container(key=f'pdx-card-{key}')
+def card(key: str, gap='small'):
+    """A white bordered card that native Streamlit elements can be placed in.
+
+    gap is st.container's gap between the card's elements ('small', 1rem, by default).
+    """
+    return st.container(key=f'pdx-card-{key}', gap=gap)

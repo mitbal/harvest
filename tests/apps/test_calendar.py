@@ -400,3 +400,72 @@ class TestYieldSummary:
         assert summary["events"].tolist() == [2, 1]
         assert summary["avg_yield"].tolist() == [3.0, 6.0]
         assert "month_name" not in summary.columns
+
+
+class TestSelectedView:
+
+    def test_url_decides_on_first_load(self):
+        assert cal.selected_view({}, {}) == "Full Year"
+        assert cal.selected_view({}, {"view": "Monthly"}) == "Single Month"
+        assert cal.selected_view({}, {"view": "weekly"}) == "Full Year"
+
+    def test_widget_state_wins_over_url(self):
+        assert cal.selected_view({cal.VIEW_KEY: "Single Month"}, {"view": "yearly"}) == "Single Month"
+        assert cal.selected_view({cal.VIEW_KEY: "Full Year"}, {"view": "monthly"}) == "Full Year"
+
+    def test_bad_state_falls_back_to_url(self):
+        assert cal.selected_view({cal.VIEW_KEY: None}, {"view": "monthly"}) == "Single Month"
+
+    def test_agrees_with_parse_query_params(self):
+        for qp in ({}, {"view": "monthly"}, {"view": "MONTHLY"}, {"view": "x"}):
+            view_idx, _, _ = cal.parse_query_params(qp, [2025], 2025, 1)
+            assert cal.selected_view({}, qp) == cal.VIEW_OPTIONS[view_idx]
+
+
+class TestShiftMonth:
+
+    @pytest.mark.parametrize("start,step,expected", [
+        ("May", 1, "June"),
+        ("May", -1, "April"),
+        ("January", 1, "February"),
+        ("December", -1, "November"),
+        ("January", -1, "January"),
+        ("December", 1, "December"),
+    ])
+    def test_moves_within_the_year(self, start, step, expected):
+        state = {cal.MONTH_KEY: start}
+        cal.shift_month(state, step)
+        assert state[cal.MONTH_KEY] == expected
+
+
+class TestSeedYear:
+
+    YEARS = [2023, 2024, 2025]
+
+    def test_seeds_from_url_when_missing(self):
+        state = {}
+        cal.seed_year(state, self.YEARS, 2024)
+        assert state[cal.YEAR_KEY] == 2024
+
+    def test_keeps_a_valid_stored_year(self):
+        state = {cal.YEAR_KEY: 2023}
+        cal.seed_year(state, self.YEARS, 2025)
+        assert state[cal.YEAR_KEY] == 2023
+
+    def test_reseeds_when_stored_year_not_in_list(self):
+        # e.g. switching stock list to one without that year
+        state = {cal.YEAR_KEY: 2019}
+        cal.seed_year(state, self.YEARS, 2025)
+        assert state[cal.YEAR_KEY] == 2025
+
+
+def test_highest_yield_caption():
+    stats = pd.DataFrame({
+        "date": pd.to_datetime(["2027-05-12", "2027-05-20"]),
+        "symbol": ["PTBA.JK", "BBCA.JK"],
+        "yield": [11.2, 2.0],
+        "adjDividend": [296.0, 250.0],
+    })
+    assert cal.highest_yield_caption(stats) == (
+        "Highest yield: PTBA.JK on 12 May at 11.20% (dividend 296 per share)."
+    )

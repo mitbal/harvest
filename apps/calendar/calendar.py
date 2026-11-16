@@ -13,7 +13,10 @@ import streamlit as st
 
 
 import harvest.plot as hp
+from harvest import calendar_grid as cg
 from harvest import chart_style as cs
+from harvest import page_ui as ui
+from harvest.calendar_grid import format_dividend
 from harvest.utils import setup_logging
 
 
@@ -29,13 +32,62 @@ st.html("""
 <style>
     [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
     .st-key-cal_header h1 { font-size: 1.75rem; padding: 0; }
+    /* Single Month: tighter cards so the month grid fits the first screen. The main-block prefix
+       outranks the shared card padding in page_ui, which is injected after this block */
+    [data-testid="stMainBlockContainer"] .st-key-pdx-card-cal-controls { padding: 8px 16px; }
+    [data-testid="stMainBlockContainer"] .st-key-pdx-card-cal-grid { padding: 14px 16px; }
+    /* Previous/Next 32px tall instead of 40px, so the card's heading row is 32px */
+    [data-testid="stMainBlockContainer"] :is(.st-key-cal_prev, .st-key-cal_next) button {
+        min-height: 32px; padding-top: 0; padding-bottom: 0;
+    }
+    /* Single Month: subtitle beside the title, bottoms lined up; it wraps under the title when narrow */
+    .st-key-cal_title_row .pdx .pdx-sub { margin: 0; padding-bottom: 3px; }
+    @media (max-width: 640px) {
+        [data-testid="stMainBlockContainer"] .st-key-pdx-card-cal-grid { padding: 14px 14px; }
+    }
 </style>
 """)
+ui.inject_styles()
+
+VIEW_OPTIONS = ['Full Year', 'Single Month']
+VIEW_KEY = 'cal_view'
+MONTH_KEY = 'cal_month'
+YEAR_KEY = 'cal_year'
+MONTH_NAMES = list(calendar.month_name)[1:]
+
+
+def view_index(qp):
+    """0 (Full Year) or 1 (Single Month) from ?view=yearly|monthly."""
+    return 1 if str(qp.get('view', 'yearly')).lower() == 'monthly' else 0
+
+
+def selected_view(state, qp):
+    """The view this run shows, known before its control renders: the widget state, else the URL."""
+    view = state.get(VIEW_KEY)
+    return view if view in VIEW_OPTIONS else VIEW_OPTIONS[view_index(qp)]
+
+
+def shift_month(state, step):
+    """Previous/Next callback: move the month selectbox by step months, staying inside the year."""
+    i = MONTH_NAMES.index(state[MONTH_KEY]) + step
+    state[MONTH_KEY] = MONTH_NAMES[min(max(i, 0), len(MONTH_NAMES) - 1)]
+
+
+def seed_year(state, available_years, url_year):
+    """Seed the year selectbox from the URL on first load, or when the stored year is not in this stock list."""
+    if state.get(YEAR_KEY) not in available_years:
+        state[YEAR_KEY] = url_year
+
 
 # Title and warning go first; they depend on the year picked in the controls below them
 header = st.container(key='cal_header')
-# All options on one row: stock list, calendar view, year, month and the Syariah filter
-controls = st.container(horizontal=True, vertical_alignment='bottom', gap='medium')
+# All options on one row: stock list, calendar view, year, month and the Syariah filter.
+# Single Month puts the row in a card (the colour key sits under the month grid); Full Year keeps it bare so the
+# 4x3 image still starts as high on the page
+if selected_view(st.session_state, st.query_params) == 'Single Month':
+    controls = ui.card('cal-controls').container(horizontal=True, vertical_alignment='bottom', gap='medium')
+else:
+    controls = st.container(horizontal=True, vertical_alignment='bottom', gap='medium')
 
 sl = controls.segmented_control('Stock list', ['JKSE', 'S&P500'], default='JKSE', required=True)
 
@@ -103,11 +155,6 @@ def prep_div_table(df, month, market='ID'):
     table['url_link'] = table['symbol'].map(lambda x: f'{SITE_URL}/stock_picker?market={market}&stock={x}')
     table = table.rename(columns={'date': 'ex_date', 'yield': 'div_yield', 'adjDividend': 'dividend'})
     return table[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']]
-
-
-def format_dividend(value):
-    """Dividend per share without trailing zeros: 350, 0.24, 0.2635."""
-    return f'{value:,.4f}'.rstrip('0').rstrip('.')
 
 
 def market_holidays(market, years):
@@ -222,7 +269,7 @@ def parse_query_params(qp, available_years, default_year, current_month):
       ?month=3               (1-12, only relevant when view=monthly)
     Example: ?view=monthly&year=2025&month=6
     """
-    view_idx = 1 if str(qp.get('view', 'yearly')).lower() == 'monthly' else 0
+    view_idx = view_index(qp)
 
     try:
         year = int(qp.get('year', default_year))
@@ -292,6 +339,32 @@ def yield_histogram(stats_df):
     return (bars + mean_rule).properties(height=260)
 
 
+def highest_yield_caption(stats_df):
+    top_row = stats_df.loc[stats_df['yield'].idxmax()]
+    return (
+        f"Highest yield: {top_row['symbol']} on {top_row['date'].strftime('%d %b')} at {top_row['yield']:.2f}% "
+        f"(dividend {format_dividend(top_row['adjDividend'])} per share)."
+    )
+
+
+def payout_frequency_table(df):
+    st.dataframe(
+        payout_frequency(df),
+        hide_index=True,
+        width='stretch',
+        column_config={
+            'frequency': st.column_config.TextColumn('Frequency'),
+            'count': st.column_config.NumberColumn('Companies', format='%d'),
+            'stocks': st.column_config.TextColumn('Stocks')
+        }
+    )
+
+
+def card_heading(title, note=''):
+    note_html = f'<p class="pdx-note" style="margin-top:3px">{ui.esc(note)}</p>' if note else ''
+    ui.render(f'<div class="pdx-hd"><div><h2 class="pdx-h2">{ui.esc(title)}</h2>{note_html}</div></div>')
+
+
 # Full-year calendar month size limits in pixels, the same as the live site before the redesign.
 # lesley 0.4.0 draws square date cells of min(width / 7, height / 6) = 33px (30px squares after
 # padding). On a 13" MacBook (1440x800 window, sidebar open) the image is ~975px wide, inside the
@@ -299,12 +372,6 @@ def yield_histogram(stats_df):
 # so the image starts higher and the 4x3 grid fits the first screen on taller windows
 CALENDAR_MONTH_WIDTH = 250
 CALENDAR_MONTH_HEIGHT = 200
-
-# Single Month view: a 466px-wide calendar (7 square cells of 466 / 7 = 66.6px, ~474px with padding)
-# and the month's dividend table beside it at the same width
-SINGLE_MONTH_WIDTH = 466
-SINGLE_MONTH_HEIGHT = 400
-SINGLE_MONTH_COLUMN_WIDTH = 474
 
 # Ticker after stock=, without the .JK suffix; allows class shares like BRK.B or BF-B
 TICKER_DISPLAY_PATTERN = r"[?&]stock=([A-Z0-9.\-]+?)(?:\.JK)?$"
@@ -356,19 +423,24 @@ default_year = max(completed_years) if completed_years else max(available_years)
 _default_view_idx, _default_year_idx, _default_month_idx = parse_query_params(
     st.query_params, available_years, default_year, current_month
 )
-months = list(calendar.month_name)  # ['', 'January', ..., 'December']
 
-view_options = ['Full Year', 'Single Month']
 view_control = controls.segmented_control(
-    'Calendar view', view_options, default=view_options[_default_view_idx], required=True
+    'Calendar view', VIEW_OPTIONS, default=VIEW_OPTIONS[_default_view_idx], required=True, key=VIEW_KEY
 )
 
-selected_year = controls.selectbox('Based on year', available_years, index=_default_year_idx, width=140)
+# Keyed and seeded instead of index=: the URL follows the widget, so an index from the URL changed
+# the widget's identity on the next run and Streamlit dropped every other year change
+seed_year(st.session_state, available_years, available_years[_default_year_idx])
+selected_year = controls.selectbox('Based on year', available_years, key=YEAR_KEY, width=140)
 
 month_index = None
 if view_control == 'Single Month':
-    select_month = controls.selectbox('Month', months[1:], index=_default_month_idx, width=160)
-    month_index = months.index(select_month)
+    # Seeded from the URL instead of index=, so Previous/Next can set the state without the
+    # "default value and Session State API" warning
+    if MONTH_KEY not in st.session_state:
+        st.session_state[MONTH_KEY] = MONTH_NAMES[_default_month_idx]
+    select_month = controls.selectbox('Month', MONTH_NAMES, key=MONTH_KEY, width=160)
+    month_index = MONTH_NAMES.index(select_month) + 1
 
 # Keep URL params in sync with the current widget state
 if month_index is not None:
@@ -383,7 +455,14 @@ projection_note = (
     'or to the next trading day when that is a weekend or exchange holiday.'
 )
 with header:
-    st.title(f'Dividend Calendar {projected_year}')
+    if view_control == 'Single Month':
+        # Title and subtitle share one line (wrapping on narrow screens) so the month grid starts higher
+        with st.container(horizontal=True, vertical_alignment='bottom', key='cal_title_row'):
+            st.title(f'Dividend Calendar {projected_year}', width='content')
+            st.html(f'<div class="pdx"><p class="pdx-sub">Projected ex-dates, based on what each company '
+                    f'paid in {ui.esc(selected_year)}</p></div>', width='content')
+    else:
+        st.title(f'Dividend Calendar {projected_year}')
     if selected_year >= current_year:
         st.warning(f'{selected_year} is not over yet, so this projection only includes ex-dividend dates up to today.')
 
@@ -440,71 +519,67 @@ if view_control == 'Full Year':
                 else:
                     st.dataframe(month_table, hide_index=True, width='stretch', height=213, column_config=column_config)
 
-else:
-    # Calendar at its own width with the table right next to it (small gap); on narrow screens the
-    # table wraps below the calendar
-    month_row = st.container(horizontal=True, gap='small')
-    with month_row.container(width=SINGLE_MONTH_COLUMN_WIDTH):
-        st.altair_chart(
-            hp.plot_dividend_month(df, month_index, sl=sl, closed_dates=closed_dates, title=select_month,
-                                   width=SINGLE_MONTH_WIDTH, height=SINGLE_MONTH_HEIGHT),
-            width='content', theme=None,
-        )
-        st.altair_chart(hp.plot_dividend_calendar_legend(sl), width='content', theme=None)
-        st.caption(f'{COLOR_NOTE} {projection_note}')
-    with month_row.container(width=SINGLE_MONTH_COLUMN_WIDTH):
-        month_table = prep_div_table(df, month_index, market=market)
-        # Default height shows ten rows; the rest of the month scrolls inside the table
-        st.dataframe(month_table, hide_index=True, width='stretch', column_config=column_config)
-        if len(month_table) > 10:
-            st.caption(f'{len(month_table)} dividends this month, ranked by yield. Scroll the table to see them all.')
-
-stats_df = df if view_control == 'Full Year' else df[df['date'].dt.month == month_index]
-if stats_df.empty:
-    # Only a single month can be empty here; the page stops earlier when there is no data at all
-    st.info(f'No ex-dividend dates in {select_month}, so there are no statistics for this month.')
-else:
     st.subheader('Dividend statistics')
 
     c1, c2, c3 = st.columns(3)
-    c1.metric('Dividends', len(stats_df), border=True)
-    c2.metric('Average yield', f"{stats_df['yield'].mean():.2f}%", border=True)
-    c3.metric('Median yield', f"{stats_df['yield'].median():.2f}%", border=True)
+    c1.metric('Dividends', len(df), border=True)
+    c2.metric('Average yield', f"{df['yield'].mean():.2f}%", border=True)
+    c3.metric('Median yield', f"{df['yield'].median():.2f}%", border=True)
 
-    top_row = stats_df.loc[stats_df['yield'].idxmax()]
-    st.caption(
-        f"Highest yield: {top_row['symbol']} on {top_row['date'].strftime('%d %b')} at {top_row['yield']:.2f}% "
-        f"(dividend {format_dividend(top_row['adjDividend'])} per share)."
-    )
+    st.caption(highest_yield_caption(df))
 
     charts = st.columns(2, gap='medium')
-
-    if view_control == 'Full Year':
-        combo = yield_combo_chart(yield_summary(stats_df, 'month'), 'month_name:N', 'Month', sort=list(calendar.month_abbr[1:]))
-        combo_title = 'Dividends and average yield per month'
-    else:
-        combo = yield_combo_chart(yield_summary(stats_df, 'day'), 'day:O', 'Ex-date day')
-        combo_title = 'Dividends and average yield per day'
     with charts[0]:
-        st.markdown(f'**{combo_title}**')
+        st.markdown('**Dividends and average yield per month**')
+        combo = yield_combo_chart(yield_summary(df, 'month'), 'month_name:N', 'Month', sort=list(calendar.month_abbr[1:]))
         st.altair_chart(combo, width='stretch', theme=None)
     with charts[1]:
         st.markdown('**Yield distribution**')
-        st.altair_chart(yield_histogram(stats_df), width='stretch', theme=None)
+        st.altair_chart(yield_histogram(df), width='stretch', theme=None)
         st.caption(':orange[Dashed line]: average yield.')
 
-if view_control == 'Full Year':
-    # Frequency covers the whole year, so it is only shown in the Full Year view
-    freq_summary = payout_frequency(df)
-
+    # Frequency covers the whole year
     st.subheader('Payout frequency per year')
-    st.dataframe(
-        freq_summary,
-        hide_index=True,
-        width='stretch',
-        column_config={
-            'frequency': st.column_config.TextColumn('Frequency'),
-            'count': st.column_config.NumberColumn('Companies', format='%d'),
-            'stocks': st.column_config.TextColumn('Stocks')
-        }
-    )
+    payout_frequency_table(df)
+
+else:
+    month_df = df[df['date'].dt.month == month_index]
+
+    # Calendar card on the left, month numbers on the right; the right column wraps below on narrow screens
+    grid_pane, side_pane = ui.split('cal-month', wide_left=True)
+    # 8px between heading, grid and colour key, so a six-week month fits the first screen
+    with grid_pane, ui.card('cal-grid', gap=8):
+        with st.container(horizontal=True, vertical_alignment='center'):
+            card_heading(f'{select_month} {projected_year}')
+            st.button('Previous', key='cal_prev', icon=':material/chevron_left:', disabled=month_index == 1,
+                      on_click=shift_month, args=(st.session_state, -1))
+            st.button('Next', key='cal_next', icon=':material/chevron_right:', icon_position='right',
+                      disabled=month_index == 12, on_click=shift_month, args=(st.session_state, 1))
+        cells = cg.month_cells(df, projected_year, month_index, closed_dates, today=datetime.today().date())
+        ui.render(cg.month_grid_html(cells, sl, market, SITE_URL))
+        ui.render(cg.legend_html(sl))
+    with grid_pane:
+        ui.render(
+            '<p class="pdx-note"><span class="pdx-tone-down">Red dates</span> are weekends and exchange holidays; '
+            f'hover a holiday for its name and a ticker for its yield and dividend. {ui.esc(projection_note)}</p>'
+        )
+
+    with side_pane:
+        if month_df.empty:
+            st.info(f'No ex-dividend dates in {select_month}, so there are no statistics for this month.')
+        else:
+            ui.kpi_row([
+                ui.kpi('Dividends', f'{len(month_df):,}'),
+                ui.kpi('Average yield', f"{month_df['yield'].mean():.2f}%"),
+                ui.kpi('Median yield', f"{month_df['yield'].median():.2f}%"),
+            ], columns=3)
+            with ui.card('cal-month-table'):
+                card_heading(f'Ex-dates in {select_month}', note='Ranked by yield')
+                month_table = prep_div_table(df, month_index, market=market)
+                # Default height shows ten rows; the rest of the month scrolls inside the table
+                st.dataframe(month_table, hide_index=True, width='stretch', column_config=column_config)
+                if len(month_table) > 10:
+                    st.caption(f'{len(month_table)} dividends this month, ranked by yield. Scroll the table to see them all.')
+
+    if not month_df.empty:
+        st.caption(highest_yield_caption(month_df))
