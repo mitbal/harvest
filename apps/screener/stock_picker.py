@@ -101,7 +101,8 @@ DDM_RANGE_STEP = 1.0  # points that r and g each move for the low/high range est
 _RESEARCH_SECTIONS = {
     'dividends': 'Dividends',
     'financials': 'Financials',
-    'valuation': 'Valuation',
+    'multiples': 'Multiples',
+    'intrinsic-value': 'Intrinsic value',
     'price-technicals': 'Price and technicals',
     'buy-timing': 'Buy timing',
     'compounding': 'Compounding simulation',
@@ -463,6 +464,10 @@ def _normalize_research_section(value):
     aliases = {
         'price-and-technicals': 'price-technicals',
         'compounding-simulation': 'compounding',
+        'valuation': 'multiples',
+        'ddm': 'intrinsic-value',
+        'dividend-discount': 'intrinsic-value',
+        'dividend-discount-model': 'intrinsic-value',
     }
     normalized = aliases.get(normalized, normalized)
     return normalized if normalized in _RESEARCH_SECTIONS else 'dividends'
@@ -1826,10 +1831,10 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
     elif section == 'Financials':
         st.subheader(f'Financial information: {stock_name}')
         render_financial_info(fin, currency, stock_name, filtered_df)
-    elif section == 'Valuation':
-        st.subheader(f'Valuation analysis: {stock_name}')
+    elif section == 'Multiples':
+        st.subheader(f'Valuation multiples: {stock_name}')
         render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
-        st.divider()
+    elif section == 'Intrinsic value':
         st.subheader(f'Dividend discount model: {stock_name}')
         render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
     elif section == 'Price and technicals':
