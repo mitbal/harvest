@@ -1608,3 +1608,18 @@ else:
                         f'A trap means the entry price was not regained within {FOLLOW_UP_DAYS} calendar days '
                         'of the ex-date. Unrecovered events more recent than that are counted as pending.'
                     )
+
+# Dividend Play covers IDX stocks only, so the pointer shows for the Indonesian market.
+if exch == 'jkse':
+    with st.container(border=True):
+        st.markdown('**Have an ex-date coming up?**')
+        st.markdown(
+            'This page shows how prices behaved around past ex-dates across the market. '
+            'Dividend Play applies the same history to stocks with an ex-date ahead and lists '
+            'the ones inside their entry window today.'
+        )
+        st.caption(
+            'The top entry window, announced dividends and upcoming windows are free. '
+            "Supporters see every entry window and each stock's past record."
+        )
+        st.page_link('apps/trading/dividend_play.py', label='Open Dividend Play', icon=':material/arrow_forward:')

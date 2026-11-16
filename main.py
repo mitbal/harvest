@@ -52,7 +52,6 @@ pages = st.navigation(
         'Home': [page_home],
         'Dividend': [page_screener,
                  page_calendar,
-                 page_best_timing,
                 #  page_market_watch,
                 #  page_market_animation,
                 #  page_comparison,
@@ -63,6 +62,7 @@ pages = st.navigation(
             [
                 page_market_watch,
                 page_comparison,
+                page_best_timing,
             ],
         'Trading': [
                 page_my_trades,
