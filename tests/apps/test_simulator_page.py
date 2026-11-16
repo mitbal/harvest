@@ -102,3 +102,131 @@ def test_chart_builds_for_extreme_long_label():
 ])
 def test_short_idr(value, expected):
     assert sim.short_idr(value) == expected
+
+
+class TestSubmissions:
+
+    def test_stock_submission_keeps_raw_ticker_and_casts(self):
+        s = sim.stock_submission(" bbca ", 120, 2014.0, 2024, 1)
+        assert s == {"stock": " bbca ", "value_mio": 120, "start": 2014, "end": 2024, "drip": True}
+
+    def test_stock_submission_none_ticker(self):
+        assert sim.stock_submission(None, 1, 2014, 2015, False)["stock"] == ""
+
+    def test_default_stock_submission(self):
+        s = sim.default_stock_submission()
+        assert s == {"stock": "BBCA.JK", "value_mio": 120, "start": 2014,
+                     "end": sim.YEAR_MAX, "drip": True}
+
+    def test_default_portfolio_submission(self):
+        s = sim.default_portfolio_submission()
+        assert s["rows"] == [("BJTM.JK", 60.0), ("SMSM.JK", 60.0)]
+        assert (s["start"], s["end"], s["drip"]) == (2014, sim.YEAR_MAX, True)
+
+    def test_portfolio_submission_cleans_blank_cells(self):
+        edited = pd.DataFrame({
+            "Ticker": ["BBCA.JK", None, "TLKM"],
+            "Investment (Mio IDR)": [10.0, 5.0, float("nan")],
+        }, index=[0, 3, 7])
+        s = sim.portfolio_submission(edited, 2015, 2020, False)
+        assert s["rows"] == [("BBCA.JK", 10.0), (None, 5.0), ("TLKM", None)]
+        assert (s["start"], s["end"], s["drip"]) == (2015, 2020, False)
+
+    def test_allocations_frame_round_trips_editor_output(self):
+        rows = [("BJTM.JK", 60.0), (None, None)]
+        frame = sim.allocations_frame(rows)
+        assert list(frame.columns) == sim.ALLOCATION_COLUMNS
+        assert frame["Investment (Mio IDR)"].dtype == float
+        assert sim.portfolio_submission(frame, 2014, 2015, True)["rows"] == rows
+
+    def test_allocations_frame_empty(self):
+        frame = sim.allocations_frame([])
+        assert frame.empty and list(frame.columns) == sim.ALLOCATION_COLUMNS
+
+    def test_allocation_rows_scale_to_rupiah(self):
+        rows = sim.allocation_rows([("BJTM.JK", 60.0), ("SMSM.JK", 1.5)])
+        assert rows == [("BJTM.JK", 60_000_000.0), ("SMSM.JK", 1_500_000.0)]
+
+    def test_allocation_rows_blank_investment_stays_nan(self):
+        (ticker, value), = sim.allocation_rows([("BJTM.JK", None)])
+        assert ticker == "BJTM.JK" and pd.isna(value)
+
+
+class TestDripAdvantage:
+
+    def test_positive(self):
+        adv = sim.drip_advantage(105_400_000, 100_000_000)
+        assert adv["value"] == "IDR 5,400,000"
+        assert adv["note"] == "+5.4% vs no DRIP"
+        assert adv["tone"] == "up"
+
+    def test_negative(self):
+        adv = sim.drip_advantage(98_800_000, 100_000_000)
+        assert adv["value"] == "-IDR 1,200,000"
+        assert adv["note"] == "-1.2% vs no DRIP"
+        assert adv["tone"] == "down"
+
+    def test_zero(self):
+        adv = sim.drip_advantage(100_000_000, 100_000_000)
+        assert adv["value"] == "IDR 0"
+        assert adv["note"] == "0.0% vs no DRIP"
+        assert adv["tone"] == "muted"
+
+    def test_zero_baseline_has_no_percentage(self):
+        adv = sim.drip_advantage(1_000, 0)
+        assert adv["pct"] is None
+        assert adv["note"] == ""
+        assert adv["value"] == "IDR 1,000"
+
+    def test_kpi_markup(self):
+        markup = sim.drip_advantage_kpi(105_400_000, 100_000_000)
+        assert "DRIP advantage" in markup
+        assert "pdx-tone-up" in markup
+
+
+class TestStockList:
+
+    def test_idx_ticker_options_normalises_sorts_and_dedupes(self):
+        frame = pd.DataFrame({"symbol": ["TLKM.JK", "bbca", "BBCA.JK", None, "AAPL", "", "ASII.JK"]})
+        # "AAPL" becomes AAPL.JK (normalize_idx_ticker only checks the suffix)
+        assert sim.idx_ticker_options(frame) == ("AAPL.JK", "ASII.JK", "BBCA.JK", "TLKM.JK")
+
+    def test_idx_ticker_options_drops_other_markets(self):
+        frame = pd.DataFrame({"stock": ["BBCA.JK", "MSFT.US"]})
+        assert sim.idx_ticker_options(frame) == ("BBCA.JK",)
+
+    @pytest.mark.parametrize("frame", [None, pd.DataFrame()])
+    def test_idx_ticker_options_empty(self, frame):
+        assert sim.idx_ticker_options(frame) == ()
+
+    def test_select_options_finds_submitted_ticker(self):
+        options, index = sim.stock_select_options(("ASII.JK", "BBCA.JK"), "BBCA.JK")
+        assert options == ["ASII.JK", "BBCA.JK"] and index == 1
+
+    def test_select_options_normalises_submitted_ticker(self):
+        options, index = sim.stock_select_options(("ASII.JK", "BBCA.JK"), " bbca ")
+        assert options[index] == "BBCA.JK" and len(options) == 2
+
+    def test_select_options_adds_unknown_ticker(self):
+        options, index = sim.stock_select_options(("ASII.JK", "BBCA.JK"), "zzzz")
+        assert options == ["ASII.JK", "BBCA.JK", "ZZZZ.JK"] and index == 2
+
+    def test_select_options_keeps_rejected_ticker_as_typed(self):
+        options, index = sim.stock_select_options(("BBCA.JK",), "MSFT.US")
+        assert options[index] == "MSFT.US"
+
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_select_options_blank_has_no_selection(self, value):
+        assert sim.stock_select_options(("BBCA.JK",), value) == (["BBCA.JK"], None)
+
+    def test_load_idx_tickers_reads_screener_table(self):
+        frame = pd.DataFrame({"symbol": ["BBCA.JK", "TLKM.JK"]})
+        with patch.object(sim, "read_redis_frame", return_value=frame) as read:
+            assert sim.load_idx_tickers() == ("BBCA.JK", "TLKM.JK")
+        read.assert_called_once_with("div_score_jkse")
+
+    @pytest.mark.parametrize("effect", [ConnectionError("down"), None])
+    def test_load_idx_tickers_falls_back_to_empty(self, effect):
+        kwargs = {"side_effect": effect} if effect else {"return_value": None}
+        with patch.object(sim, "read_redis_frame", **kwargs):
+            assert sim.load_idx_tickers() == ()
