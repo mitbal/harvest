@@ -1,0 +1,2714 @@
+<!doctype html>
+<!--
+    Panen Dividen homepage redesign: static mockup of home.py.
+    Not production code. Open straight from disk; in-app links (./slug) are dead here.
+
+    The fixed "Mockup" bar sets body[data-state], which stands in for the branch the
+    real page takes on each visit:
+      visitor   = is_enforced() and not has_access()   (logged out, or logged in without access)
+      supporter = is_enforced() and has_access(), access ends more than 7 days from now
+      expiring  = is_enforced() and has_access(), access ends within 7 days (shown: 5 days)
+      gateoff   = not is_enforced() (PREMIUM_ENFORCED off): nothing is locked, no supporter content
+    The real page renders only the matching branch; the only-* / hide-* classes are mockup-only.
+    "Design notes" toggles the dashed amber .mock-note annotations.
+
+    All numbers, dates, tickers, prices and results on this page are sample data.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home redesign mockup</title>
+<link rel="icon" href="../../static/home/favicon.webp">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --pd-ink: #10251d;
+    --pd-ink-soft: #3c5148;
+    --pd-forest: #073f2e;
+    --pd-forest-deep: #052d22;
+    --pd-green: #066642;
+    --pd-green-bright: #16a96b;
+    --pd-lime: #d7f35a;
+    --pd-mint: #e7f4ec;
+    --pd-canvas: #eff1ef;
+    --pd-surface: #fbfdfc;
+    --pd-line: #cbd9d2;
+    --pd-image-line: #aebdb5;
+    --pd-white: #f9fcfa;
+}
+
+.pd-home,
+.pd-home * {
+    box-sizing: border-box;
+}
+
+.pd-home {
+    container-type: inline-size;
+    color: var(--pd-ink);
+    font-family: 'Manrope', sans-serif;
+}
+
+.pd-home a {
+    color: inherit;
+}
+
+.pd-masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.7rem 0 1.15rem;
+}
+
+.pd-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.pd-brand img {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+}
+
+.pd-masthead-note {
+    color: var(--pd-ink-soft);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.pd-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
+    min-height: 610px;
+    overflow: hidden;
+    background: var(--pd-forest);
+    border-radius: 16px;
+    color: var(--pd-white);
+}
+
+.pd-hero-copy {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: clamp(2.25rem, 5vw, 5.25rem);
+}
+
+.pd-hero-kicker {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: 0.55rem;
+    margin: 0 0 1.45rem;
+    color: #d3e9de;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.pd-hero-kicker::before {
+    width: 8px;
+    height: 8px;
+    background: var(--pd-lime);
+    border-radius: 50%;
+    content: '';
+}
+
+.pd-hero h1 {
+    max-width: 11ch;
+    margin: 0;
+    color: var(--pd-white) !important;
+    font-size: clamp(2.8rem, 5.6vw, 5.6rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 0.98;
+    text-wrap: balance;
+}
+
+.pd-hero-copy > p {
+    max-width: 58ch;
+    margin: 1.7rem 0 0;
+    color: #cde0d7;
+    font-size: clamp(1rem, 1.35vw, 1.18rem);
+    line-height: 1.75;
+    text-wrap: pretty;
+}
+
+.pd-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2.1rem;
+}
+
+.pd-button {
+    display: inline-flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    padding: 0.75rem 1.15rem;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    font-weight: 800;
+    text-decoration: none !important;
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
+}
+
+.pd-home .pd-button-primary {
+    background-color: var(--pd-lime);
+    color: #17351f !important;
+}
+
+.pd-button-secondary {
+    border: 1px solid #6c9783;
+    color: var(--pd-white) !important;
+}
+
+.pd-button:hover {
+    transform: translateY(-2px);
+}
+
+.pd-home .pd-button-primary:hover {
+    background-color: #e2f77f;
+}
+
+.pd-button-secondary:hover {
+    background: #145740;
+}
+
+.pd-button:focus-visible,
+.pd-tool-link:focus-visible,
+.pd-text-link:focus-visible {
+    outline: 3px solid var(--pd-forest);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 5px var(--pd-lime);
+}
+
+.pd-hero-visual {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    padding: clamp(2.5rem, 5vw, 5rem) 0 clamp(2.5rem, 5vw, 5rem) clamp(1rem, 3vw, 2.5rem);
+    background: var(--pd-forest-deep);
+}
+
+.pd-preview {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #3f7661;
+    border-right: 0;
+    border-radius: 12px 0 0 12px;
+    background: var(--pd-white);
+}
+
+.pd-preview-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 50px;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #d5e0da;
+    color: var(--pd-ink);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.pd-preview-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #46705f;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.pd-preview-status::before {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pd-green-bright);
+    content: '';
+}
+
+.pd-preview img {
+    display: block;
+    width: 145%;
+    max-width: none;
+    height: 400px;
+    border: 1px solid var(--pd-image-line);
+    object-fit: cover;
+    object-position: left top;
+}
+
+.pd-hero-chip {
+    position: absolute;
+    right: clamp(1rem, 3vw, 2.5rem);
+    bottom: clamp(1.5rem, 4vw, 3.5rem);
+    max-width: 220px;
+    padding: 0.9rem 1rem;
+    border-radius: 10px;
+    background: var(--pd-lime);
+    color: #17351f;
+    font-size: 0.78rem;
+    font-weight: 800;
+    line-height: 1.45;
+}
+
+.pd-context {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem 1.5rem;
+    padding: 1rem;
+    color: var(--pd-ink-soft);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.pd-context span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.pd-context span::before {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--pd-green-bright);
+    content: '';
+}
+
+.pd-section {
+    padding: clamp(4.5rem, 9vw, 8rem) 0;
+}
+
+.pd-section-header {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(280px, 0.6fr);
+    gap: 3rem;
+    align-items: end;
+    margin-bottom: clamp(2.5rem, 5vw, 4.25rem);
+}
+
+.pd-section h2 {
+    max-width: 14ch;
+    margin: 0;
+    color: var(--pd-ink) !important;
+    font-size: clamp(2.2rem, 4.2vw, 4.6rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1.02;
+    text-wrap: balance;
+}
+
+.pd-section-header p {
+    max-width: 56ch;
+    margin: 0;
+    color: var(--pd-ink-soft);
+    font-size: 1rem;
+    line-height: 1.75;
+    text-wrap: pretty;
+}
+
+.pd-workflow {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.pd-workflow-item {
+    overflow: hidden;
+    background: var(--pd-surface);
+    border-radius: 14px;
+}
+
+.pd-workflow-item:first-child {
+    grid-column: span 7;
+}
+
+.pd-workflow-item:nth-child(2) {
+    grid-column: span 5;
+    background: var(--pd-mint);
+}
+
+.pd-workflow-item:nth-child(3) {
+    display: grid;
+    grid-column: span 12;
+    grid-template-columns: 0.8fr 1.2fr;
+    align-items: center;
+    background: var(--pd-forest);
+    color: var(--pd-white);
+}
+
+.pd-workflow-copy {
+    padding: clamp(1.5rem, 3vw, 2.4rem);
+}
+
+.pd-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-bottom: 2rem;
+    border-radius: 50%;
+    background: var(--pd-ink);
+    color: var(--pd-white);
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.pd-workflow-item:nth-child(3) .pd-step {
+    background: var(--pd-lime);
+    color: #17351f;
+}
+
+.pd-workflow h3 {
+    margin: 0;
+    color: inherit;
+    font-size: clamp(1.5rem, 2.6vw, 2.5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+    text-wrap: balance;
+}
+
+.pd-workflow p {
+    max-width: 52ch;
+    margin: 1rem 0 1.4rem;
+    color: var(--pd-ink-soft);
+    line-height: 1.7;
+    text-wrap: pretty;
+}
+
+.pd-workflow-item:nth-child(3) p {
+    color: #cde0d7;
+}
+
+.pd-text-link {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 0.5rem;
+    padding-block: 0.55rem;
+    color: var(--pd-green) !important;
+    font-size: 0.88rem;
+    font-weight: 800;
+    text-decoration: none !important;
+}
+
+.pd-workflow-item:nth-child(3) .pd-text-link {
+    color: var(--pd-lime) !important;
+}
+
+.pd-text-link::after {
+    content: '→';
+    transition: transform 160ms ease;
+}
+
+.pd-text-link:hover::after {
+    transform: translateX(4px);
+}
+
+.pd-workflow-image {
+    overflow: hidden;
+    border-top: 1px solid var(--pd-line);
+}
+
+.pd-workflow-image img {
+    display: block;
+    width: 100%;
+    height: 260px;
+    border: 1px solid var(--pd-image-line);
+    object-fit: cover;
+    object-position: left top;
+}
+
+.pd-workflow-item:nth-child(3) .pd-workflow-image {
+    height: 100%;
+    border-top: 0;
+    border-left: 1px solid #3f7661;
+}
+
+.pd-workflow-item:nth-child(3) .pd-workflow-image img {
+    height: 100%;
+    min-height: 360px;
+}
+
+.pd-latest {
+    margin-inline: calc(clamp(1rem, 3vw, 2.5rem) * -1);
+    padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 3vw, 2.5rem);
+    background: #dfe9e3;
+}
+
+.pd-latest-inner {
+    max-width: 1160px;
+    margin: 0 auto;
+}
+
+.pd-latest-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 2rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid #a8bcb2;
+}
+
+.pd-latest-heading h2 {
+    max-width: 13ch;
+}
+
+.pd-new-label {
+    flex: 0 0 auto;
+    padding: 0.45rem 0.7rem;
+    border-radius: 999px;
+    background: var(--pd-lime);
+    color: #17351f;
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.pd-latest-row {
+    display: grid;
+    grid-template-columns: 0.2fr minmax(180px, 0.65fr) minmax(280px, 1.35fr) auto;
+    gap: clamp(1rem, 3vw, 2.5rem);
+    align-items: start;
+    padding: 2rem 0;
+    border-bottom: 1px solid #a8bcb2;
+}
+
+.pd-latest-index {
+    color: #557166;
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.pd-latest-row h3 {
+    margin: 0;
+    color: var(--pd-ink);
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.pd-latest-row p {
+    max-width: 64ch;
+    margin: 0;
+    color: var(--pd-ink-soft);
+    font-size: 0.92rem;
+    line-height: 1.7;
+}
+
+.pd-latest-row .pd-text-link {
+    white-space: nowrap;
+}
+
+.pd-insights {
+    padding: clamp(4.5rem, 9vw, 8rem) 0;
+}
+
+.pd-insight-lead {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.7fr) minmax(0, 1.3fr);
+    overflow: hidden;
+    border-radius: 14px;
+    background: var(--pd-forest);
+    color: var(--pd-white);
+}
+
+.pd-insight-copy {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: clamp(1.75rem, 4vw, 3.5rem);
+}
+
+.pd-insight-copy h3,
+.pd-insight-card h3 {
+    margin: 0;
+    color: inherit;
+    font-size: clamp(1.45rem, 2.5vw, 2.4rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+    text-wrap: balance;
+}
+
+.pd-insight-copy p,
+.pd-insight-card p {
+    margin: 1rem 0 1.25rem;
+    color: #cde0d7;
+    font-size: 0.92rem;
+    line-height: 1.7;
+    text-wrap: pretty;
+}
+
+.pd-insight-lead figure,
+.pd-insight-card figure {
+    margin: 0;
+    overflow: hidden;
+}
+
+.pd-insight-lead figure {
+    min-height: 420px;
+    border-left: 1px solid #3f7661;
+}
+
+.pd-insight-lead img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 420px;
+    border: 1px solid var(--pd-image-line);
+    object-fit: cover;
+    object-position: center;
+}
+
+.pd-insight-lead .pd-text-link {
+    color: var(--pd-lime) !important;
+}
+
+.pd-insight-pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.pd-insight-card {
+    display: flex;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 14px;
+    background: var(--pd-surface);
+    color: var(--pd-ink);
+    flex-direction: column;
+}
+
+.pd-insight-card figure {
+    display: flex;
+    min-height: 270px;
+    align-items: center;
+    border-bottom: 1px solid var(--pd-line);
+    background: #eef1ef;
+}
+
+.pd-insight-card img {
+    display: block;
+    width: 100%;
+    height: 270px;
+    border: 1px solid var(--pd-image-line);
+    object-fit: contain;
+}
+
+.pd-insight-card .pd-insight-copy {
+    padding: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+.pd-insight-card p {
+    color: var(--pd-ink-soft);
+}
+
+.pd-tools-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 2rem;
+    margin-bottom: 3rem;
+}
+
+.pd-tools-header p {
+    max-width: 46ch;
+    margin: 0;
+    color: var(--pd-ink-soft);
+    line-height: 1.7;
+}
+
+.pd-tool-groups {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(1.5rem, 4vw, 4rem);
+}
+
+.pd-tool-group {
+    min-width: 0;
+}
+
+.pd-tool-group-title {
+    margin: 0 0 1rem;
+    color: var(--pd-green);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.pd-tool-link {
+    display: block;
+    padding: 1.15rem 0;
+    border-top: 1px solid var(--pd-line);
+    text-decoration: none !important;
+    transition: color 150ms ease;
+}
+
+.pd-tool-link:last-child {
+    border-bottom: 1px solid var(--pd-line);
+}
+
+.pd-tool-link strong {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    color: var(--pd-ink);
+    font-size: 0.98rem;
+}
+
+.pd-tool-link strong::after {
+    color: var(--pd-green);
+    content: '↗';
+    font-size: 0.88rem;
+    transition: transform 160ms ease;
+}
+
+.pd-tool-link span {
+    display: block;
+    margin-top: 0.45rem;
+    color: var(--pd-ink-soft);
+    font-size: 0.8rem;
+    line-height: 1.55;
+}
+
+.pd-tool-link:hover strong {
+    color: var(--pd-green);
+}
+
+.pd-tool-link:hover strong::after {
+    transform: translate(2px, -2px);
+}
+
+.pd-closing {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: center;
+    padding: clamp(2.5rem, 5vw, 4.5rem);
+    border-radius: 16px;
+    background: var(--pd-lime);
+    color: #17351f;
+}
+
+.pd-closing h2 {
+    max-width: 13ch;
+    color: #17351f !important;
+}
+
+.pd-closing-copy p {
+    max-width: 48ch;
+    margin: 0 0 1.5rem;
+    color: #38543f;
+    line-height: 1.7;
+}
+
+.pd-home .pd-closing .pd-button-primary {
+    background-color: var(--pd-forest);
+    color: var(--pd-white) !important;
+}
+
+.pd-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 2.25rem 0 0;
+    color: #587066;
+    font-size: 0.76rem;
+    line-height: 1.6;
+}
+
+.pd-footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.pd-footer a {
+    color: #335c4b !important;
+    font-weight: 700;
+    text-decoration: none !important;
+}
+
+.pd-footer a:hover {
+    text-decoration: underline !important;
+    text-underline-offset: 3px;
+}
+
+@media (max-width: 900px) {
+    .pd-hero {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-hero-copy {
+        min-height: 520px;
+    }
+
+    .pd-hero-visual {
+        padding: 2rem 0 3rem 1.5rem;
+    }
+
+    .pd-preview img {
+        height: 340px;
+    }
+
+    .pd-section-header,
+    .pd-closing {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-workflow-item:first-child,
+    .pd-workflow-item:nth-child(2) {
+        grid-column: span 6;
+    }
+
+    .pd-workflow-item:nth-child(3) {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-workflow-item:nth-child(3) .pd-workflow-image {
+        border-top: 1px solid #3f7661;
+        border-left: 0;
+    }
+
+    .pd-workflow-item:nth-child(3) .pd-workflow-image img {
+        min-height: 280px;
+    }
+
+    .pd-latest-row {
+        grid-template-columns: 45px minmax(160px, 0.7fr) minmax(240px, 1.3fr);
+    }
+
+    .pd-latest-row .pd-text-link {
+        grid-column: 2 / -1;
+    }
+
+    .pd-tools-header {
+        align-items: start;
+        flex-direction: column;
+    }
+
+    .pd-tool-groups {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@container (max-width: 900px) {
+    .pd-hero {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-hero-copy {
+        min-height: 520px;
+    }
+
+    .pd-hero-visual {
+        padding: 2rem 0 3rem 1.5rem;
+    }
+
+    .pd-preview img {
+        height: 340px;
+    }
+
+    .pd-section-header,
+    .pd-closing {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-workflow-item:first-child,
+    .pd-workflow-item:nth-child(2) {
+        grid-column: span 6;
+    }
+
+    .pd-workflow-item:nth-child(3) {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-workflow-item:nth-child(3) .pd-workflow-image {
+        border-top: 1px solid #3f7661;
+        border-left: 0;
+    }
+
+    .pd-workflow-item:nth-child(3) .pd-workflow-image img {
+        min-height: 280px;
+    }
+
+    .pd-latest-row {
+        grid-template-columns: 45px minmax(160px, 0.7fr) minmax(240px, 1.3fr);
+    }
+
+    .pd-latest-row .pd-text-link {
+        grid-column: 2 / -1;
+    }
+
+    .pd-tools-header {
+        align-items: start;
+        flex-direction: column;
+    }
+
+    .pd-tool-groups {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .pd-insight-lead {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-insight-lead figure {
+        min-height: 320px;
+        border-top: 1px solid #3f7661;
+        border-left: 0;
+    }
+
+    .pd-insight-lead img {
+        min-height: 320px;
+    }
+}
+
+@media (max-width: 640px) {
+    .mock-page {
+        padding-inline: 0.75rem;
+    }
+
+    .pd-masthead-note {
+        display: none;
+    }
+
+    .pd-hero {
+        min-height: auto;
+    }
+
+    .pd-hero-copy {
+        min-height: auto;
+        padding: 2.75rem 1.35rem 2.25rem;
+    }
+
+    .pd-hero h1 {
+        max-width: 10ch;
+        font-size: clamp(2.65rem, 15vw, 4.2rem);
+    }
+
+    .pd-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .pd-button {
+        width: 100%;
+    }
+
+    .pd-hero-visual {
+        padding: 1.25rem 0 2.5rem 1.25rem;
+    }
+
+    .pd-preview img {
+        width: 175%;
+        height: 260px;
+    }
+
+    .pd-hero-chip {
+        right: 0.85rem;
+        bottom: 1rem;
+        max-width: 190px;
+    }
+
+    .pd-context {
+        align-items: flex-start;
+        flex-direction: column;
+        padding-inline: 0.5rem;
+    }
+
+    .pd-section {
+        padding: 4.5rem 0;
+    }
+
+    .pd-section-header {
+        gap: 1.5rem;
+    }
+
+    .pd-workflow {
+        display: block;
+    }
+
+    .pd-workflow-item + .pd-workflow-item {
+        margin-top: 1rem;
+    }
+
+    .pd-workflow-image img {
+        height: 220px;
+    }
+
+    .pd-latest-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .pd-latest {
+        margin-inline: 0;
+        padding-inline: 1.25rem;
+    }
+
+    .pd-latest-row {
+        grid-template-columns: 34px 1fr;
+        gap: 0.75rem 1rem;
+    }
+
+    .pd-latest-row p,
+    .pd-latest-row .pd-text-link {
+        grid-column: 2;
+    }
+
+    .pd-tool-groups {
+        grid-template-columns: 1fr;
+        gap: 2.5rem;
+    }
+
+    .pd-closing {
+        padding: 2.25rem 1.25rem;
+    }
+
+    .pd-footer {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+@container (max-width: 640px) {
+    .pd-hero {
+        min-height: auto;
+    }
+
+    .pd-hero-copy {
+        min-height: auto;
+        padding: 2.75rem 1.35rem 2.25rem;
+    }
+
+    .pd-hero h1 {
+        max-width: 10ch;
+        font-size: clamp(2.65rem, 15vw, 4.2rem);
+    }
+
+    .pd-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .pd-button {
+        width: 100%;
+    }
+
+    .pd-hero-visual {
+        padding: 1.25rem 0 2.5rem 1.25rem;
+    }
+
+    .pd-preview img {
+        width: 175%;
+        height: 260px;
+    }
+
+    .pd-hero-chip {
+        right: 0.85rem;
+        bottom: 1rem;
+        max-width: 190px;
+    }
+
+    .pd-context {
+        align-items: flex-start;
+        flex-direction: column;
+        padding-inline: 0.5rem;
+    }
+
+    .pd-workflow {
+        display: block;
+    }
+
+    .pd-workflow-item + .pd-workflow-item {
+        margin-top: 1rem;
+    }
+
+    .pd-workflow-image img {
+        height: 220px;
+    }
+
+    .pd-latest {
+        margin-inline: 0;
+        padding-inline: 1.25rem;
+    }
+
+    .pd-latest-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .pd-latest-row {
+        grid-template-columns: 34px 1fr;
+        gap: 0.75rem 1rem;
+    }
+
+    .pd-latest-row p,
+    .pd-latest-row .pd-text-link {
+        grid-column: 2;
+    }
+
+    .pd-tool-groups {
+        grid-template-columns: 1fr;
+        gap: 2.5rem;
+    }
+
+    .pd-insight-pair {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-insight-lead figure,
+    .pd-insight-lead img {
+        min-height: 250px;
+    }
+
+    .pd-insight-card figure {
+        min-height: 220px;
+    }
+
+    .pd-insight-card img {
+        height: 220px;
+    }
+
+    .pd-closing {
+        padding: 2.25rem 1.25rem;
+    }
+
+    .pd-footer {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .pd-hero-copy > * {
+        animation: pd-enter 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .pd-hero-copy > :nth-child(2) {
+        animation-delay: 80ms;
+    }
+
+    .pd-hero-copy > :nth-child(3) {
+        animation-delay: 150ms;
+    }
+
+    .pd-hero-copy > :nth-child(4) {
+        animation-delay: 220ms;
+    }
+
+    .pd-hero-copy > :nth-child(5) {
+        animation-delay: 290ms;
+    }
+
+    .pd-preview {
+        animation: pd-preview-enter 800ms 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    @keyframes pd-enter {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pd-preview-enter {
+        from { opacity: 0.75; transform: translateX(28px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+}
+
+/* ------------------------------------------------------------------
+   Mockup page shell (replaces the Streamlit container rules)
+   ------------------------------------------------------------------ */
+
+body {
+    margin: 0;
+    padding-top: 46px;
+    background: var(--pd-canvas);
+}
+
+.mock-page {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 4rem;
+}
+
+/* ------------------------------------------------------------------
+   State visibility. body[data-state] is set by the mockup switcher;
+   the real page renders only the branch that applies.
+   ------------------------------------------------------------------ */
+
+body:not([data-state="visitor"]) .only-visitor,
+body:not([data-state="supporter"]):not([data-state="expiring"]) .only-supporter,
+body:not([data-state="expiring"]) .only-expiring,
+body:not([data-state="gateoff"]) .only-gateoff,
+body[data-state="gateoff"] .hide-gateoff,
+body[data-state="supporter"] .hide-supporter,
+body[data-state="expiring"] .hide-supporter,
+body[data-state="expiring"] .hide-expiring,
+body[data-notes="off"] .mock-note {
+    display: none !important;
+}
+
+.pd-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------
+   Masthead state pill
+   ------------------------------------------------------------------ */
+
+.pd-masthead-pill {
+    display: inline-flex;
+    min-height: 40px;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.95rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    line-height: 1.3;
+    text-decoration: none !important;
+}
+
+.pd-home a.pd-masthead-pill-link {
+    border: 1.5px solid var(--pd-forest);
+    color: var(--pd-forest);
+    transition: background 160ms ease;
+}
+
+.pd-home a.pd-masthead-pill-link:hover {
+    background: var(--pd-mint);
+}
+
+.pd-masthead-pill-active {
+    background: var(--pd-mint);
+    color: var(--pd-green);
+}
+
+.pd-masthead-pill-active::before {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--pd-green-bright);
+    content: '';
+}
+
+.pd-masthead-pill-warn {
+    border: 1px solid #ecc46f;
+    background: #fdf0d5;
+    color: #6f4303;
+}
+
+.pd-home .pd-masthead-pill-warn a,
+.pd-home .pd-renew-notice a {
+    color: #6f4303;
+    font-weight: 800;
+    text-decoration: underline;
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 3px;
+}
+
+/* ------------------------------------------------------------------
+   Hero supporter line
+   ------------------------------------------------------------------ */
+
+.pd-hero-note {
+    max-width: 58ch;
+    margin-top: 1.4rem;
+    color: #cde0d7;
+    font-size: 0.86rem;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.pd-home .pd-hero-note a {
+    color: var(--pd-lime);
+    font-weight: 800;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+.pd-home .pd-hero-note a:hover {
+    text-decoration-thickness: 2px;
+}
+
+/* ------------------------------------------------------------------
+   Workflow step 3: supporter extra
+   ------------------------------------------------------------------ */
+
+.pd-extra {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.55rem;
+    max-width: 52ch;
+    margin-top: 0.5rem;
+    color: #cde0d7;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.55;
+}
+
+.pd-extra-pill,
+.pd-pill-supporter {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    padding: 0.14rem 0.55rem;
+    border-radius: 999px;
+    background: var(--pd-lime);
+    color: #17351f;
+    font-size: 0.7rem;
+    font-style: normal;
+    font-weight: 800;
+    line-height: 1.4;
+}
+
+/* ------------------------------------------------------------------
+   Supporter band (visitor)
+   ------------------------------------------------------------------ */
+
+.pd-band {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr);
+    gap: clamp(2rem, 5vw, 4.5rem);
+    padding: clamp(2.25rem, 5vw, 4.5rem);
+    border-radius: 16px;
+    background: var(--pd-forest);
+    color: var(--pd-white);
+}
+
+.pd-band h2 {
+    max-width: 13ch;
+    margin: 0;
+    color: var(--pd-white) !important;
+    font-size: clamp(2.1rem, 3.8vw, 3.8rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1.02;
+    text-wrap: balance;
+}
+
+.pd-band-copy > p {
+    max-width: 54ch;
+    margin: 1.4rem 0 0;
+    color: #cde0d7;
+    font-size: 1rem;
+    line-height: 1.75;
+    text-wrap: pretty;
+}
+
+.pd-benefits {
+    display: grid;
+    gap: 1.1rem;
+    margin: 2rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.pd-benefits li {
+    position: relative;
+    padding-left: 1.5rem;
+    color: #cde0d7;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+.pd-benefits li::before {
+    position: absolute;
+    top: 0.5em;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--pd-lime);
+    content: '';
+}
+
+.pd-benefits strong {
+    display: block;
+    color: var(--pd-white);
+    font-size: 1rem;
+    font-weight: 800;
+}
+
+.pd-band .pd-actions {
+    margin-top: 2.25rem;
+}
+
+.pd-sample {
+    min-width: 0;
+    align-self: center;
+}
+
+.pd-sample-label {
+    margin: 0 0 0.75rem;
+    color: #cde0d7;
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.pd-card {
+    container: pd-card / inline-size;
+    padding: 1.15rem 1.2rem 1.05rem;
+    border: 1px solid #3f7661;
+    border-radius: 16px;
+    background: var(--pd-white);
+    color: var(--pd-ink);
+    font-variant-numeric: tabular-nums;
+}
+
+.pd-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem 0.8rem;
+}
+
+.pd-card-symbol {
+    display: block;
+    font-size: 1.22rem;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    line-height: 1.15;
+}
+
+.pd-card-company {
+    display: block;
+    color: var(--pd-ink-soft);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.pd-card-chip {
+    padding: 0.18rem 0.6rem;
+    border-radius: 999px;
+    background: var(--pd-mint);
+    color: var(--pd-green);
+    font-size: 0.74rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.pd-card-cells {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.45rem;
+    margin-top: 0.9rem;
+}
+
+.pd-card-cell {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    padding: 0.55rem 0.65rem;
+    border-radius: 11px;
+    background: #eef3f0;
+}
+
+.pd-card-cell .k {
+    flex: 1 0 auto;
+    color: #587066;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.pd-card-cell .v {
+    margin-top: 0.1rem;
+    overflow: hidden;
+    font-size: 1.05rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pd-card-cell .s {
+    color: var(--pd-ink-soft);
+    font-size: 0.76rem;
+}
+
+.pd-card-cell.up {
+    background: #e6f4ea;
+}
+
+.pd-card-cell.up .v {
+    color: #0f7040;
+}
+
+.pd-card-cell.down {
+    background: #fbece2;
+}
+
+.pd-card-cell.down .v {
+    color: #ad3f0b;
+}
+
+.pd-card-strip {
+    margin-top: 0.85rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 11px;
+    background: var(--pd-mint);
+    color: #0b4d3c;
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+/* Four tiles need about 135px each for a date value such as "Thu 19 Nov". */
+@container pd-card (max-width: 560px) {
+    .pd-card-cells {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.pd-locked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem 0.8rem;
+    margin-top: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px dashed #5b8c77;
+    border-radius: 14px;
+    color: #cde0d7;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.pd-locked-title {
+    color: var(--pd-white);
+}
+
+.pd-locked-chips {
+    display: inline-flex;
+    gap: 0.35rem;
+}
+
+.pd-locked-chips i {
+    display: block;
+    width: 3.1rem;
+    height: 1.45rem;
+    border-radius: 8px;
+    background:
+        linear-gradient(#cde0d7, #cde0d7) center / 62% 5px no-repeat,
+        #145740;
+    filter: blur(0.6px);
+}
+
+.pd-locked-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--pd-lime);
+}
+
+.pd-locked-hint svg {
+    width: 14px;
+    height: 14px;
+    flex: none;
+}
+
+/* Track record strip inside the band */
+
+.pd-record {
+    grid-column: 1 / -1;
+    padding-top: clamp(1.75rem, 3vw, 2.5rem);
+    border-top: 1px solid #3f7661;
+}
+
+.pd-record-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1.5rem;
+}
+
+.pd-record-head h3 {
+    margin: 0;
+    color: var(--pd-white);
+    font-size: 1.15rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.pd-band .pd-text-link,
+.pd-plan-supporter .pd-text-link {
+    color: var(--pd-lime) !important;
+}
+
+.pd-record-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.25rem;
+}
+
+.pd-record-group {
+    min-width: 0;
+    padding: 1.1rem 1.2rem;
+    border-radius: 14px;
+    background: var(--pd-forest-deep);
+    font-variant-numeric: tabular-nums;
+}
+
+.pd-record-group h4 {
+    margin: 0;
+    color: var(--pd-white);
+    font-size: 0.92rem;
+    font-weight: 800;
+}
+
+.pd-record-group p {
+    margin: 0.4rem 0 0;
+    color: #cde0d7;
+    font-size: 0.82rem;
+    line-height: 1.55;
+}
+
+.pd-record-avg {
+    font-size: 0.82rem;
+}
+
+.pd-record-avg b {
+    display: block;
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+}
+
+.pd-neg {
+    color: #ffb48a;
+}
+
+.pd-pos {
+    color: #8fe3a9;
+}
+
+.pd-fine {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: #a9c6b8;
+    font-size: 0.76rem;
+    line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------
+   Tonight for you (supporter, expiring)
+   ------------------------------------------------------------------ */
+
+.pd-tonight {
+    padding: clamp(1.75rem, 4vw, 3rem);
+    border-radius: 16px;
+    background: var(--pd-mint);
+}
+
+.pd-tonight-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1.5rem;
+}
+
+.pd-tonight h2 {
+    margin: 0;
+    color: var(--pd-ink) !important;
+    font-size: clamp(1.8rem, 3vw, 2.6rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1.05;
+}
+
+.pd-tonight-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: #3f6a58;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.pd-tonight-status::before {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--pd-green-bright);
+    content: '';
+}
+
+.pd-renew-notice {
+    margin: 1.25rem 0 0;
+    padding: 0.75rem 0.95rem;
+    border: 1px solid #ecc46f;
+    border-radius: 12px;
+    background: #fdf0d5;
+    color: #6f4303;
+    font-size: 0.86rem;
+    font-weight: 700;
+    line-height: 1.55;
+}
+
+.pd-tonight-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.pd-tonight-tile {
+    min-width: 0;
+    padding: 1.15rem 1.25rem;
+    border-radius: 14px;
+    background: var(--pd-surface);
+}
+
+.pd-tonight-tile strong {
+    display: block;
+    color: var(--pd-ink);
+    font-size: 1.08rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+}
+
+.pd-tonight-tile p {
+    margin: 0.5rem 0 0;
+    color: var(--pd-ink-soft);
+    font-size: 0.84rem;
+    line-height: 1.55;
+}
+
+.pd-tickers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.55rem;
+}
+
+.pd-tickers span {
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--pd-line);
+    border-radius: 8px;
+    background: var(--pd-white);
+    color: var(--pd-ink);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.pd-tonight .pd-actions {
+    margin-top: 1.5rem;
+}
+
+.pd-home .pd-button-dark {
+    background-color: var(--pd-forest);
+    color: var(--pd-white) !important;
+}
+
+.pd-home .pd-button-dark:hover {
+    background-color: #145740;
+}
+
+/* ------------------------------------------------------------------
+   Tool index: Supporter pill next to a tool name
+   ------------------------------------------------------------------ */
+
+.pd-tool-link .pd-tool-name {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+    margin-top: 0;
+    color: inherit;
+    font-size: inherit;
+    line-height: 1.35;
+}
+
+/* ------------------------------------------------------------------
+   Free vs supporter
+   ------------------------------------------------------------------ */
+
+.pd-plan-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.pd-plan {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    padding: clamp(1.75rem, 4vw, 3rem);
+    border: 1px solid var(--pd-line);
+    border-radius: 16px;
+    background: var(--pd-surface);
+}
+
+.pd-plan-supporter {
+    border-color: var(--pd-forest);
+    background: var(--pd-forest);
+    color: var(--pd-white);
+}
+
+.pd-plan h3 {
+    margin: 0;
+    color: inherit;
+    font-size: clamp(1.6rem, 2.6vw, 2.3rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+}
+
+.pd-plan-sub {
+    margin: 0.5rem 0 0;
+    color: var(--pd-ink-soft);
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+
+.pd-plan-supporter .pd-plan-sub {
+    color: var(--pd-lime);
+}
+
+.pd-plan ul {
+    margin: 1.75rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.pd-plan li {
+    position: relative;
+    padding: 0.8rem 0 0.8rem 1.5rem;
+    border-top: 1px solid var(--pd-line);
+    color: var(--pd-ink-soft);
+    font-size: 0.92rem;
+    line-height: 1.55;
+}
+
+.pd-plan li:last-child {
+    border-bottom: 1px solid var(--pd-line);
+}
+
+.pd-plan li::before {
+    position: absolute;
+    top: calc(0.8rem + 0.5em);
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--pd-green-bright);
+    content: '';
+}
+
+.pd-plan-supporter li {
+    border-color: #3f7661 !important;
+    color: #cde0d7;
+}
+
+.pd-plan-supporter li::before {
+    background: var(--pd-lime);
+}
+
+.pd-plan-foot {
+    margin-top: auto;
+    padding-top: 1.75rem;
+}
+
+.pd-plan-price {
+    margin: 0;
+    color: var(--pd-white);
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+
+.pd-plan .pd-actions {
+    margin-top: 1rem;
+}
+
+.pd-plan-small {
+    margin: 0.75rem 0 0;
+    color: #cde0d7;
+    font-size: 0.8rem;
+}
+
+/* ------------------------------------------------------------------
+   Closing: secondary supporter button on lime
+   ------------------------------------------------------------------ */
+
+.pd-closing-copy .pd-actions {
+    margin-top: 0;
+}
+
+.pd-home .pd-button-outline-dark {
+    border: 1.5px solid #17351f;
+    color: #17351f !important;
+}
+
+.pd-home .pd-button-outline-dark:hover {
+    background: rgba(23, 53, 31, 0.08);
+}
+
+/* Focus styles for the new links, matching the existing ones */
+
+.pd-masthead-pill-link:focus-visible,
+.pd-masthead-pill-warn a:focus-visible,
+.pd-renew-notice a:focus-visible,
+.pd-hero-note a:focus-visible,
+.pd-footer a:focus-visible {
+    outline: 3px solid var(--pd-forest);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 5px var(--pd-lime);
+    border-radius: 4px;
+}
+
+.pd-masthead-pill-link:focus-visible {
+    border-radius: 999px;
+}
+
+/* ------------------------------------------------------------------
+   Responsive rules for the new blocks (same @media / @container pairs)
+   ------------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+    .pd-band {
+        grid-template-columns: 1fr;
+    }
+}
+
+@container (max-width: 900px) {
+    .pd-band {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .pd-masthead {
+        flex-wrap: wrap;
+    }
+
+    .pd-masthead-pill {
+        min-height: 36px;
+        font-size: 0.76rem;
+    }
+
+    .pd-band {
+        padding: 2.25rem 1.25rem;
+    }
+
+    .pd-record-grid,
+    .pd-tonight-grid,
+    .pd-plan-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-tonight {
+        padding: 2rem 1.25rem;
+    }
+
+    .pd-plan {
+        padding: 2rem 1.35rem;
+    }
+
+    .pd-closing-copy .pd-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}
+
+@container (max-width: 640px) {
+    .pd-masthead {
+        flex-wrap: wrap;
+    }
+
+    .pd-band {
+        padding: 2.25rem 1.25rem;
+    }
+
+    .pd-record-grid,
+    .pd-tonight-grid,
+    .pd-plan-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pd-tonight {
+        padding: 2rem 1.25rem;
+    }
+
+    .pd-plan {
+        padding: 2rem 1.35rem;
+    }
+
+    .pd-closing-copy .pd-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}
+
+/* ------------------------------------------------------------------
+   Mockup-only chrome: state switcher bar and design notes.
+   Not part of the design.
+   ------------------------------------------------------------------ */
+
+.mock-bar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 100;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
+    min-height: 46px;
+    padding: 0.45rem 0.9rem;
+    background: #1c1c20;
+    color: #ececef;
+    font: 600 0.74rem/1.2 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.mock-bar-label {
+    padding: 0.22rem 0.5rem;
+    border-radius: 4px;
+    background: #f5b301;
+    color: #1c1c20;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.mock-states {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.mock-states button {
+    padding: 0.36rem 0.65rem;
+    border: 1px solid #4b4b54;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    white-space: nowrap;
+}
+
+.mock-states button:hover {
+    border-color: #8a8a94;
+}
+
+.mock-states button[aria-pressed="true"] {
+    border-color: #ececef;
+    background: #ececef;
+    color: #1c1c20;
+}
+
+.mock-states button:focus-visible,
+.mock-toggle input:focus-visible {
+    outline: 2px solid #f5b301;
+    outline-offset: 2px;
+}
+
+.mock-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.mock-toggle input {
+    margin: 0;
+    accent-color: #f5b301;
+}
+
+.mock-note {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0.65rem 0 0;
+    padding: 0.35rem 0.6rem;
+    border: 1.5px dashed #c98500;
+    border-radius: 8px;
+    background: #fff3d1;
+    color: #5e3c00;
+    font: 600 0.72rem/1.45 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.mock-note::before {
+    content: 'Design note: ';
+    font-weight: 800;
+}
+
+@media (max-width: 640px) {
+    body {
+        padding-top: 78px;
+    }
+
+    .mock-states {
+        order: 3;
+        width: 100%;
+    }
+
+    .mock-states button {
+        flex: 1 1 0;
+        min-width: 0;
+        padding: 0.36rem 0.25rem;
+        font-size: 0.7rem;
+    }
+}
+</style>
+</head>
+<body data-state="visitor" data-notes="on">
+
+<div class="mock-bar" role="toolbar" aria-label="Mockup state switcher">
+    <span class="mock-bar-label">Mockup</span>
+    <div class="mock-states">
+        <button type="button" data-set-state="visitor" aria-pressed="true">Visitor</button>
+        <button type="button" data-set-state="supporter" aria-pressed="false">Supporter</button>
+        <button type="button" data-set-state="expiring" aria-pressed="false">Renewal due</button>
+        <button type="button" data-set-state="gateoff" aria-pressed="false">Gate off</button>
+    </div>
+    <label class="mock-toggle">
+        <input type="checkbox" id="mock-notes-toggle" checked>
+        Design notes
+    </label>
+</div>
+
+<div class="mock-page">
+<main class="pd-home">
+    <header class="pd-masthead">
+        <div class="pd-brand">
+            <img src="../../static/home/favicon.webp" alt="Panen Dividen logo">
+            <span>Panen Dividen</span>
+        </div>
+        <a class="pd-masthead-pill pd-masthead-pill-link only-visitor" href="./supporter" target="_self">Become a supporter</a>
+        <span class="pd-masthead-pill pd-masthead-pill-active only-supporter hide-expiring">Supporter until 12 Jan 2027</span>
+        <span class="pd-masthead-pill pd-masthead-pill-warn only-expiring">
+            Supporter access ends in 5 days
+            <a href="./supporter" target="_self">Renew</a>
+        </span>
+        <div class="pd-masthead-note only-gateoff">A data-driven investing workspace</div>
+    </header>
+
+    <section class="pd-hero" aria-labelledby="pd-hero-title">
+        <div class="pd-hero-copy">
+            <div class="pd-hero-kicker">Built for Indonesian investors</div>
+            <h1 id="pd-hero-title">Clear data. Calmer decisions.</h1>
+            <p>
+                Bring dividend stock research, portfolio analytics, historical timing,
+                compounding simulation, and strategy testing together in one workspace.
+            </p>
+            <div class="pd-actions">
+                <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
+                    Start with the Ranking Screener <span aria-hidden="true">→</span>
+                </a>
+                <a class="pd-button pd-button-secondary" href="./porto_overview" target="_self">
+                    Analyze your portfolio
+                </a>
+            </div>
+            <div class="pd-hero-note hide-gateoff">
+                <span class="only-visitor">
+                    Free and ad-free.
+                    <a href="./supporter" target="_self">Supporters get nightly trade cards, alerts and a trade journal <span aria-hidden="true">→</span></a>
+                </span>
+                <span class="only-supporter">
+                    Welcome back.
+                    <a href="./my_trades" target="_self">7 new cards were published after Friday's close <span aria-hidden="true">→</span></a>
+                </span>
+            </div>
+        </div>
+        <div class="pd-hero-visual" aria-label="Portfolio Analytics preview">
+            <div class="pd-preview">
+                <div class="pd-preview-bar">
+                    <span>Portfolio Analytics</span>
+                    <span class="pd-preview-status">Dashboard preview</span>
+                </div>
+                <img
+                    src="../../static/home/portfolio_table.webp"
+                    alt="Portfolio Analytics showing annual dividend income, target progress, yield on cost, investment value, and holdings"
+                    decoding="async"
+                    fetchpriority="high"
+                >
+            </div>
+            <div class="pd-hero-chip">
+                From yield on cost to income targets, see your portfolio as one complete story.
+            </div>
+        </div>
+    </section>
+
+    <div class="pd-context" aria-label="Product coverage">
+        <span>Focused on IDX and retail investors</span>
+        <span>Research for JKSE and S&amp;P 500</span>
+        <span class="hide-gateoff">Free to use, funded by supporters</span>
+        <span class="only-gateoff">12 tools that work together</span>
+    </div>
+
+    <section class="pd-section" aria-labelledby="pd-workflow-title">
+        <div class="pd-section-header">
+            <h2 id="pd-workflow-title">One flow from idea to evaluation.</h2>
+            <p>
+                Start with a simple question, dig into the data that matters, then test its impact
+                on your income goals and strategy.
+            </p>
+        </div>
+
+        <div class="pd-workflow">
+            <article class="pd-workflow-item">
+                <div class="pd-workflow-copy">
+                    <span class="pd-step">1</span>
+                    <h3>Find candidates with context, not just yield.</h3>
+                    <p>
+                        The Ranking Screener brings together dividend quality, valuation, growth,
+                        profitability, and risk to help you build a sharper shortlist.
+                    </p>
+                    <a class="pd-text-link" href="./stock_picker" target="_self">Open the screener</a>
+                </div>
+                <div class="pd-workflow-image">
+                    <img
+                        src="../../static/home/screener_table.webp"
+                        alt="Latest Ranking Screener with stock rankings, dividend yield, Dividend Score, valuation, profit margin, and return"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+            </article>
+
+            <article class="pd-workflow-item">
+                <div class="pd-workflow-copy">
+                    <span class="pd-step">2</span>
+                    <h3>Understand when historical income shows up.</h3>
+                    <p>
+                        Explore monthly dividend payout patterns, compare historical yields,
+                        and move on to timing analysis before and after the ex-date.
+                    </p>
+                    <a class="pd-text-link" href="./calendar" target="_self">View the payout calendar</a>
+                </div>
+                <div class="pd-workflow-image">
+                    <img
+                        src="../../static/home/dividend_monthly_calendar.webp"
+                        alt="Monthly Payout Calendar with dividend dates and the highest-yielding stocks in April"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+            </article>
+
+            <article class="pd-workflow-item">
+                <div class="pd-workflow-copy">
+                    <span class="pd-step">3</span>
+                    <h3>Test the impact on your portfolio.</h3>
+                    <p>
+                        Track income, sector diversification, and portfolio targets. Compare DRIP
+                        and non-DRIP scenarios before committing to a long-term plan.
+                    </p>
+                    <a class="pd-text-link" href="./simulator" target="_self">Run a simulation</a>
+                    <div class="hide-gateoff">
+                        <div class="pd-extra">
+                            <span class="pd-extra-pill">Supporters<span class="pd-sr">:</span></span>
+                            <span>a 12-month dividend paycheck forecast and cum-date alerts on your holdings.</span>
+                        </div>
+                        <div class="mock-note" role="note">Shown only once Phase C is live.</div>
+                    </div>
+                </div>
+                <div class="pd-workflow-image">
+                    <img
+                        src="../../static/home/compounding_simulator.webp"
+                        alt="Compounding Simulator comparing total invested, portfolio value, dividends, yield on cost, and annual growth"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <!-- Supporter band: visitor only (gate on, no access). -->
+    <section class="pd-band only-visitor" aria-labelledby="pd-band-title">
+        <div class="pd-band-copy">
+            <div class="pd-hero-kicker">For supporters</div>
+            <h2 id="pd-band-title">The nightly routine, done for you.</h2>
+            <p>
+                After every IDX close, Panen Dividen scans the market for dividend plays, short swings
+                and long-term positions, and publishes each one as a card with its entry, stop, target
+                and sell-by date.
+            </p>
+            <ul class="pd-benefits">
+                <li>
+                    <strong>Every card, the night it is published</strong>
+                    Free visitors see yesterday's cards. Supporters see tonight's.
+                </li>
+                <li>
+                    <strong>A journal that watches the calendar</strong>
+                    Track the trades you take, with sell-by countdowns.
+                </li>
+                <li>
+                    <strong>Alerts on Telegram</strong>
+                    A nightly digest and reminders before a position must be sold.
+                    <div class="mock-note" role="note">Listed only once Phase B is live.</div>
+                </li>
+            </ul>
+            <div class="pd-actions">
+                <a class="pd-button pd-button-primary" href="./supporter" target="_self">
+                    Start 7-day free trial <span aria-hidden="true">→</span>
+                </a>
+                <a class="pd-button pd-button-secondary" href="./supporter" target="_self">
+                    See supporter plans
+                </a>
+            </div>
+            <div class="mock-note" role="note">Buttons link to /supporter; login and the trial start happen there (st.html cannot run them).</div>
+        </div>
+
+        <div class="pd-sample">
+            <p class="pd-sample-label">Published Thu 12 Nov. Supporters saw this the night it was published.</p>
+            <div class="pd-card" aria-label="Sample trade card for BBRI">
+                <div class="pd-card-head">
+                    <div>
+                        <span class="pd-card-symbol">BBRI</span>
+                        <span class="pd-card-company">Bank Rakyat Indonesia</span>
+                    </div>
+                    <span class="pd-card-chip">Short Term Swing</span>
+                </div>
+                <div class="pd-card-cells">
+                    <div class="pd-card-cell">
+                        <span class="k">Buy limit</span>
+                        <span class="v">4,120</span>
+                        <span class="s">Fri 13 Nov only</span>
+                    </div>
+                    <div class="pd-card-cell down">
+                        <span class="k">Stop</span>
+                        <span class="v">−3%</span>
+                        <span class="s">about 3,995</span>
+                    </div>
+                    <div class="pd-card-cell up">
+                        <span class="k">Target</span>
+                        <span class="v">+5%</span>
+                        <span class="s">about 4,325</span>
+                    </div>
+                    <div class="pd-card-cell">
+                        <span class="k">Sell by</span>
+                        <span class="v">Thu 19 Nov</span>
+                        <span class="s">5 sessions max</span>
+                    </div>
+                </div>
+                <div class="pd-card-strip">Filled at 4,120 · Friday close 4,180 · +1.1% after costs so far</div>
+            </div>
+            <div class="pd-locked">
+                <span class="pd-locked-title">5 new cards published Fri 13 Nov</span>
+                <span class="pd-locked-chips" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="pd-locked-hint">
+                    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                        <rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/>
+                        <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+                    </svg>
+                    Tickers for supporters
+                </span>
+            </div>
+            <div class="mock-note" role="note">Sample data. The live page shows the previous session's real card and its result (plan task A.5).</div>
+        </div>
+
+        <div class="pd-record">
+            <div class="pd-record-head">
+                <h3>Track record so far, after costs</h3>
+                <a class="pd-text-link" href="./track_record" target="_self">See the full track record</a>
+            </div>
+            <div class="pd-record-grid">
+                <div class="pd-record-group">
+                    <h4>Dividend Play</h4>
+                    <p>22 closed trades · 9 won</p>
+                    <p class="pd-record-avg"><b class="pd-neg">−2.6%</b> average</p>
+                    <p>JKSE over the same days <span class="pd-neg">−0.4%</span></p>
+                </div>
+                <div class="pd-record-group">
+                    <h4>Short Term Swing</h4>
+                    <p>31 closed trades · 18 won</p>
+                    <p class="pd-record-avg"><b class="pd-pos">+1.1%</b> average</p>
+                    <p>JKSE over the same days <span class="pd-pos">+0.3%</span></p>
+                </div>
+                <div class="pd-record-group">
+                    <h4>Long Term Position</h4>
+                    <p>6 closed trades so far. Results are shown from 10.</p>
+                </div>
+            </div>
+            <div class="mock-note" role="note">Sample numbers. A tool's headline appears only from 10 closed trades, and is shown even when negative.</div>
+        </div>
+
+        <p class="pd-fine">Research and record keeping, not financial advice. Past results do not predict future ones.</p>
+    </section>
+
+    <!-- Tonight for you: supporter and expiring. -->
+    <section class="pd-tonight only-supporter" aria-labelledby="pd-tonight-title">
+        <div class="pd-tonight-head">
+            <h2 id="pd-tonight-title">Tonight for you</h2>
+            <span class="pd-tonight-status">Updated Fri 13 Nov, 18:40 WIB after close</span>
+        </div>
+        <p class="pd-renew-notice only-expiring">
+            Your supporter access ends on 20 Nov 2026. Your journal and settings are kept.
+            <a href="./supporter" target="_self">Renew</a>
+        </p>
+        <div class="pd-tonight-grid">
+            <div class="pd-tonight-tile">
+                <strong>7 new cards</strong>
+                <p>Dividend Play 2 · Swing 4 · Long Term 1</p>
+            </div>
+            <div class="pd-tonight-tile">
+                <strong>2 positions to sell within two sessions</strong>
+                <div class="pd-tickers"><span>TLKM</span><span>ADRO</span></div>
+            </div>
+            <div class="pd-tonight-tile">
+                <strong>Next ex-date on your watchlist</strong>
+                <p>ASII · cum date Wed 18 Nov</p>
+            </div>
+        </div>
+        <div class="pd-actions">
+            <a class="pd-button pd-button-dark" href="./my_trades" target="_self">
+                Open My Trades <span aria-hidden="true">→</span>
+            </a>
+        </div>
+    </section>
+
+    <!-- Original "Latest tools" section: gate off only. -->
+    <section class="pd-latest only-gateoff" aria-labelledby="pd-latest-title">
+        <div class="pd-latest-inner">
+            <div class="pd-latest-heading">
+                <h2 id="pd-latest-title">New capabilities for deeper research.</h2>
+                <span class="pd-new-label">Latest tools</span>
+            </div>
+
+            <article class="pd-latest-row">
+                <span class="pd-latest-index">01</span>
+                <h3>Historical DRIP Simulator</h3>
+                <p>
+                    Compare reinvesting versus not reinvesting using the history of a single stock
+                    or several, complete with allocation, residual cash, and a transaction log.
+                </p>
+                <a class="pd-text-link" href="./simulator" target="_self">Try the simulator</a>
+            </article>
+
+            <article class="pd-latest-row">
+                <span class="pd-latest-index">02</span>
+                <h3>Best Timing Analysis</h3>
+                <p>
+                    Study which months tend to be cheaper, how lows are distributed before the ex-date,
+                    and recovery patterns afterwards, all from auditable historical data.
+                </p>
+                <a class="pd-text-link" href="./best_timing" target="_self">Explore timing</a>
+            </article>
+
+            <article class="pd-latest-row">
+                <span class="pd-latest-index">03</span>
+                <h3>Growth at a Discount</h3>
+                <p>
+                    Screen IDX companies that stay profitable and keep growing while their P/E and P/S
+                    multiples sit below historical ranges. Results are shown as scenarios, not price targets.
+                </p>
+                <a class="pd-text-link" href="./backtester" target="_self">Open the long-term screen</a>
+            </article>
+
+            <article class="pd-latest-row">
+                <span class="pd-latest-index">04</span>
+                <h3>Short-Term Swing Trading Lab</h3>
+                <p>
+                    Research mean-reversion, pullback, relative strength, and breakout strategies
+                    with holdout validation over roughly a 1–10 session horizon.
+                </p>
+                <a class="pd-text-link" href="./day_trading" target="_self">Enter the lab</a>
+            </article>
+        </div>
+    </section>
+
+    <section class="pd-insights" aria-labelledby="pd-insights-title">
+        <div class="pd-section-header">
+            <h2 id="pd-insights-title">Read the market from more than one angle.</h2>
+            <p>
+                Move from the market-wide picture to stock comparisons and historical patterns
+                without losing context along the way.
+            </p>
+        </div>
+
+        <article class="pd-insight-lead">
+            <div class="pd-insight-copy">
+                <h3>See where the market is heading at a glance.</h3>
+                <p>
+                    The Market Heatmap arranges daily returns by sector, industry, and market cap
+                    so breadth and the biggest moves are quicker to read.
+                </p>
+                <a class="pd-text-link" href="./market_watch" target="_self">Open the market heatmap</a>
+            </div>
+            <figure>
+                <img
+                    src="../../static/home/heatmap_1d_price_return.webp"
+                    alt="Red and green IDX Market Heatmap showing one-day returns by market cap"
+                    loading="lazy"
+                    decoding="async"
+                >
+            </figure>
+        </article>
+
+        <div class="pd-insight-pair">
+            <article class="pd-insight-card">
+                <figure>
+                    <img
+                        src="../../static/home/stock_comparison_scatterplot.webp"
+                        alt="Scatter plot comparing stocks by dividend yield and PE ratio"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </figure>
+                <div class="pd-insight-copy">
+                    <h3>Compare trade-offs, not a single number.</h3>
+                    <p>
+                        Plot several stocks across two metrics at once to see relative position,
+                        outliers, and the candidates that best fit your research focus.
+                    </p>
+                    <a class="pd-text-link" href="./stock_comparison" target="_self">Compare stocks</a>
+                </div>
+            </article>
+
+            <article class="pd-insight-card">
+                <figure>
+                    <img
+                        src="../../static/home/best_timing_best_time_to_buy.webp"
+                        alt="Best Timing analysis with monthly price patterns and the distribution of days before the ex-date"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </figure>
+                <div class="pd-insight-copy">
+                    <h3>Turn timing into a distribution you can test.</h3>
+                    <p>
+                        Study seasonality and the historical distance to the ex-date as data patterns,
+                        not as a guaranteed time to buy.
+                    </p>
+                    <a class="pd-text-link" href="./best_timing" target="_self">Explore historical timing</a>
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <section class="pd-section" aria-labelledby="pd-tools-title">
+        <div class="pd-tools-header">
+            <h2 id="pd-tools-title">Every tool, arranged around how you work.</h2>
+            <p>
+                Pick the entry point closest to your question. Each page is built to answer
+                one research decision more clearly.
+            </p>
+        </div>
+
+        <div class="pd-tool-groups">
+            <div class="pd-tool-group">
+                <p class="pd-tool-group-title">Dividend research</p>
+                <a class="pd-tool-link" href="./stock_picker" target="_self">
+                    <strong>Ranking Screener</strong>
+                    <span>Dividend, valuation, fundamental, and risk rankings in a single stock research view.</span>
+                </a>
+                <a class="pd-tool-link" href="./calendar" target="_self">
+                    <strong>Payout Calendar</strong>
+                    <span>Historical payout patterns and monthly yields for JKSE or the S&amp;P 500.</span>
+                </a>
+                <a class="pd-tool-link" href="./best_timing" target="_self">
+                    <strong>Best Timing</strong>
+                    <span>Seasonality, pre-ex-date patterns, and recovery after the payout.</span>
+                </a>
+                <a class="pd-tool-link" href="./porto_overview" target="_self">
+                    <strong>Portfolio Analytics</strong>
+                    <span>Income, yield on cost, targets, diversification, and a dividend timeline.</span>
+                </a>
+                <a class="pd-tool-link" href="./simulator" target="_self">
+                    <strong>Compounding Simulator</strong>
+                    <span>Simple projections and historical replay, with or without DRIP.</span>
+                </a>
+            </div>
+
+            <div class="pd-tool-group">
+                <p class="pd-tool-group-title">Market intelligence</p>
+                <a class="pd-tool-link" href="./market_watch" target="_self">
+                    <strong>Market Heatmap</strong>
+                    <span>A snapshot of breadth, sectors, returns, valuation, yield, and macro indicators.</span>
+                </a>
+                <a class="pd-tool-link" href="./stock_comparison" target="_self">
+                    <strong>Stock Comparison</strong>
+                    <span>Compare 2–5 stocks on income, quality, growth, return, and risk.</span>
+                </a>
+            </div>
+
+            <div class="pd-tool-group">
+                <p class="pd-tool-group-title">Trading</p>
+                <a class="pd-tool-link" href="./my_trades" target="_self">
+                    <strong>My Trades</strong>
+                    <span>Tonight's cards from every tool, the dates coming up, and your trade journal.</span>
+                </a>
+                <a class="pd-tool-link" href="./dividend_play" target="_self">
+                    <strong><span class="pd-tool-name">Dividend Play <em class="pd-pill-supporter only-visitor">Supporter</em></span></strong>
+                    <span>Buy a dividend payer ahead of its ex-date and sell into the run-up.</span>
+                </a>
+                <a class="pd-tool-link" href="./day_trading" target="_self">
+                    <strong><span class="pd-tool-name">Short Term Swing <em class="pd-pill-supporter only-visitor">Supporter</em></span></strong>
+                    <span>Swings of 1 to 10 sessions on liquid IDX stocks, published only after a walk-forward test.</span>
+                </a>
+                <a class="pd-tool-link" href="./backtester" target="_self">
+                    <strong><span class="pd-tool-name">Long Term Position <em class="pd-pill-supporter only-visitor">Supporter</em></span></strong>
+                    <span>Growth at a Discount: profitable businesses priced below their own history.</span>
+                </a>
+                <a class="pd-tool-link" href="./track_record" target="_self">
+                    <strong>Track Record</strong>
+                    <span>What following every published card would have returned, after costs.</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Free vs supporter: visitor only. -->
+    <section class="pd-section pd-plans only-visitor" aria-labelledby="pd-plans-title">
+        <div class="pd-section-header">
+            <h2 id="pd-plans-title">Free to use. Better with support.</h2>
+            <p>
+                Panen Dividen stays free and ad-free. Supporters cover the data and servers,
+                and get the personal, proactive parts in return.
+            </p>
+        </div>
+
+        <div class="pd-plan-grid">
+            <article class="pd-plan" aria-labelledby="pd-plan-free-title">
+                <h3 id="pd-plan-free-title">Free</h3>
+                <p class="pd-plan-sub">Everything you can look up</p>
+                <ul>
+                    <li>Ranking Screener, payout calendar and timing analysis</li>
+                    <li>Portfolio analytics and the compounding simulator</li>
+                    <li>Market heatmap and stock comparison</li>
+                    <li>Yesterday's trade cards with their results</li>
+                    <li>The public track record</li>
+                </ul>
+            </article>
+
+            <article class="pd-plan pd-plan-supporter" aria-labelledby="pd-plan-supporter-title">
+                <h3 id="pd-plan-supporter-title">Supporter</h3>
+                <p class="pd-plan-sub">Personal, proactive, saved</p>
+                <ul>
+                    <li>Every trade card the night it is published</li>
+                    <li>Evidence for any stock and the research lab</li>
+                    <li>Trade journal with sell-by countdowns</li>
+                    <li>Telegram alerts and the nightly digest</li>
+                </ul>
+                <div class="pd-plan-foot">
+                    <p class="pd-plan-price">From Rp 25rb a month · Rp 200rb a year</p>
+                    <div class="pd-actions">
+                        <a class="pd-button pd-button-primary" href="./supporter" target="_self">
+                            See supporter plans <span aria-hidden="true">→</span>
+                        </a>
+                    </div>
+                    <p class="pd-plan-small">Try it free for 7 days.</p>
+                    <div class="mock-note" role="note">Prices are placeholders (decision D3); the line is read from TIERS. Full tier cards live on /supporter.</div>
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <section class="pd-closing" aria-labelledby="pd-closing-title">
+        <h2 id="pd-closing-title">Start with one stock you want to understand.</h2>
+        <div class="pd-closing-copy">
+            <p>
+                Open the Ranking Screener, pick a market, then explore dividends, fundamentals,
+                valuation, price action, and compounding simulations from a single page.
+            </p>
+            <div class="pd-actions">
+                <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
+                    Start researching stocks <span aria-hidden="true">→</span>
+                </a>
+                <a class="pd-button pd-button-outline-dark only-visitor" href="./supporter" target="_self">
+                    Become a supporter
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <footer class="pd-footer">
+        <span>Data may be delayed or contain errors. Verify with official sources; Panen Dividen is not investment advice and does not guarantee results.</span>
+        <nav class="pd-footer-links" aria-label="Community and support links">
+            <a href="https://www.reddit.com/r/panendividen" target="_blank" rel="noreferrer">Community</a>
+            <a href="https://github.com/mitbal/harvest/issues" target="_blank" rel="noreferrer">Feedback</a>
+            <a href="https://blog.panendividen.com?utm_source=pd_web&amp;utm_medium=home_footer" target="_blank" rel="noreferrer">Blog</a>
+            <a class="hide-gateoff" href="./supporter" target="_self">Support</a>
+            <a class="only-gateoff" href="https://trakteer.id/mitbal" target="_blank" rel="noreferrer">Support</a>
+        </nav>
+    </footer>
+</main>
+</div>
+
+<script>
+(function () {
+    var STATES = ['visitor', 'supporter', 'expiring', 'gateoff'];
+    var body = document.body;
+    var buttons = document.querySelectorAll('[data-set-state]');
+    var notes = document.getElementById('mock-notes-toggle');
+
+    function setState(state, updateHash) {
+        if (STATES.indexOf(state) === -1) {
+            state = 'visitor';
+        }
+        body.setAttribute('data-state', state);
+        buttons.forEach(function (button) {
+            button.setAttribute('aria-pressed', String(button.getAttribute('data-set-state') === state));
+        });
+        if (updateHash) {
+            history.replaceState(null, '', '#' + state);
+        }
+    }
+
+    buttons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            setState(button.getAttribute('data-set-state'), true);
+        });
+    });
+
+    body.setAttribute('data-notes', notes.checked ? 'on' : 'off');
+
+    notes.addEventListener('change', function () {
+        body.setAttribute('data-notes', notes.checked ? 'on' : 'off');
+    });
+
+    window.addEventListener('hashchange', function () {
+        setState(location.hash.slice(1), false);
+    });
+
+    setState(location.hash.slice(1), false);
+})();
+</script>
+</body>
+</html>

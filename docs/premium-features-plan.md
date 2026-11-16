@@ -80,6 +80,8 @@ reports about the supporter's own stocks.
 | D6 | Whether the pipeline's Supabase key may read the `users` table (portfolios), and its RLS state | Service-role key | C.3 |
 | D7 | FMP plan limits for statements on the whole dividend universe | — | D.1 |
 | D8 | A direct payment gateway (QRIS / e-wallet). The user opens the merchant account and holds the keys | Later, after Phase C | F.4 |
+| D9 | Buying plan candidates: current holdings only, or also stocks the user does not own | Holdings by default, with an opt-in toggle that adds the top 10 of the screener's Income ranking. The ranking code lives in the page module `apps/screener/stock_picker.py` (`get_processed_df`); reuse it, do not copy the scoring | C.4 |
+| D10 | Income goal basis: before or after the 10% final tax. The KPI card today compares the gross trailing dividend with the goal, while the `income_goal_idr` column is described as after tax | After tax everywhere, with the KPI card switched and labelled | C.4 |
 
 ## What exists (read before designing anything new)
 
@@ -125,9 +127,10 @@ table). The user runs it. **[ASK USER]** before anything is run.
 -- A.4 trial: one per email, enforced by the premium_users primary key.
 alter table premium_users add column if not exists trial_started_at timestamptz;
 
--- C.4, F.3: goal and calendar feed live with the other settings.
-alter table user_settings add column if not exists income_goal_idr numeric;   -- yearly, after tax
+-- C.4, F.3: goal, buying plan inputs and calendar feed live with the other settings.
+alter table user_settings add column if not exists income_goal_idr numeric;   -- yearly; basis per D10
 alter table user_settings add column if not exists income_goal_year int;
+alter table user_settings add column if not exists goal_plan jsonb;           -- C.4 top-up and limits
 alter table user_settings add column if not exists calendar_token text;
 
 -- C.6 portfolio history: one small row per user per session, no per-stock detail.
@@ -229,10 +232,11 @@ Read first: `harvest/premium.py` (`_render_paywall`), `harvest/donations.py` (`T
       list a benefit once its feature is live (a `live: bool` field per item):
       - Trading: every card each night; evidence for any stock; the research lab; the journal with
         sell-by countdowns; Telegram alerts and the nightly digest (Phase B).
-      - Dividends: paycheck forecast, cum-date and announcement alerts on your holdings, monthly
-        income report, portfolio history (Phase C); safety grades and reasons (Phase D).
+      - Dividends: paycheck forecast, cum-date and announcement alerts on your holdings, a buying
+        plan towards your income goal, monthly income report, portfolio history (Phase C); safety
+        grades and reasons (Phase D).
 - [ ] **[ASK USER]** D3 before changing `TIERS`.
-- [ ] `home.py`: one supporter call-to-action linking to `/supporter`.
+- The homepage is task A.6. It replaces the single call-to-action that was planned here.
 - [ ] AppTests for the page in the three states. Check desktop and mobile in the preview.
 
 ### A.3 Supporter status and renewal
@@ -282,9 +286,96 @@ Read first: the `render_today` function of each tool page, `my_trades.py` ("Act 
 - [ ] Track Record keeps its rule (open trades are names for supporters only).
 - [ ] Update the free-tier AppTests.
 
+### A.6 Homepage: show the supporter offer
+
+Do this last in Phase A. It links to the pages and reuses the functions of A.0 to A.5.
+
+The homepage stays a page about the free tools. The supporter offer is a second layer on it,
+and every supporter link goes to `/supporter`. The design is fixed by the mockup
+`docs/home-redesign/home-mockup.html`: open it with the preview config `home-mockup`
+(port 8602, path `/docs/home-redesign/home-mockup.html`) or straight from disk. The bar at its
+top switches between the four states below, and its "Design notes" tags repeat the rules of this
+task. **Every number in the mockup is sample data.**
+
+Read first: `home.py` (one `st.html` f-string plus the click router at the end), the mockup,
+`main.py` (page titles and URLs), `harvest/premium.py`, `harvest/donations.py` (`TIERS`),
+`harvest/track_record.py`, `apps/trading/my_trades.py` ("Act now" and "Coming up").
+
+States, decided once at the top of `home.py`:
+
+| State | Condition | Mockup button |
+|---|---|---|
+| Gate off | `not is_enforced()` | Gate off |
+| Visitor | gate on and `not has_access()` (logged out, or logged in without access) | Visitor |
+| Supporter | gate on and `has_access()` | Supporter |
+| Renewal due | supporter whose `supporter_expiry` (A.0) is within 7 days; never for lifetime rows | Renewal due |
+
+Use the same 7-day constant as the sidebar line of A.3, so the two cannot disagree.
+
+- [ ] Split the `home.py` f-string into one function per section, each returning HTML, and
+      assemble the page from the state. Every dynamic value goes through `html.escape`. The CSS
+      and the unchanged sections stay as they are.
+- [ ] **Gate off renders today's page**: the "Latest tools" section, the tagline in the masthead,
+      the Trakteer "Support" link, and no supporter content anywhere. Two differences from today:
+      the tool index below, and the context strip says "12 tools that work together".
+- [ ] Masthead, right side: "Become a supporter" pill (visitor), "Supporter until <date>" or
+      "Lifetime supporter" chip (supporter), amber "Supporter access ends in N days · Renew"
+      (renewal due). The pill stays visible on mobile.
+- [ ] Hero: one line under the buttons. Visitor: "Free and ad-free. Supporters get nightly trade
+      cards, alerts and a trade journal", linking to `/supporter`. Supporter: "Welcome back. N new
+      cards were published after <day>'s close", linking to `/my_trades`; left out when N is 0.
+- [ ] Context strip: third item becomes "Free to use, funded by supporters".
+- [ ] Supporter band (visitor), in place of "Latest tools":
+  - Benefit rows come from the benefits list of A.2 and its `live` flags. The Telegram row
+    appears only once Phase B is live.
+  - Buttons: "Start N-day free trial" (N from the A.4 constant) and "See supporter plans". A
+    logged-in visitor who is not eligible for a trial gets "See supporter plans" only.
+  - Sample card: the first card of the previous session from `visible_signals` (A.5), in the
+    fixed tool order Short Term Swing, Dividend Play, with its result so far and the label
+    "Published <day>. Supporters saw this the night it was published". Below it, the count of
+    cards from the latest session with no tickers. No previous card: leave the panel out and let
+    the text column take the full width.
+  - Track record strip: `headline(outcomes)` (A.1) for each tool. A tool under
+    `MIN_HEADLINE_TRADES` shows "N closed trades so far. Results are shown from 10." A negative
+    average is shown like a positive one. Link to `/track_record`.
+- [ ] "Tonight for you" block (supporter, renewal due), in place of the band: new cards by tool,
+      the supporter's positions to sell within two sessions, and the next date from the "Coming
+      up" events of My Trades. Put the counting in a function outside the page module, so the
+      nightly digest (B.2) reuses it and the two always agree. A tile with nothing to say is left
+      out. Renewal due adds the notice "Your supporter access ends on <date>. Your journal and
+      settings are kept." with a "Renew" link.
+- [ ] Workflow step 3: the one-line "Supporters" extra appears only once the paycheck forecast
+      and holding alerts (C.2, C.3) are marked live in the benefits list. Until then, nothing.
+- [ ] Tool index: a "Trading" group replaces "Strategy research", with My Trades, Dividend Play,
+      Short Term Swing, Long Term Position and Track Record, using the titles and URLs of
+      `main.py`. The three gated pages carry a "Supporter" pill for visitors only.
+- [ ] "Free to use. Better with support." section (visitor only): the two lists, and one price
+      line built from the cheapest monthly and the yearly entry of `TIERS`. **[ASK USER]** D3
+      before the price line ships; until then show the section without it.
+- [ ] Closing block: second button "Become a supporter" (visitor only). Footer: "Support" goes
+      to `/supporter` when the gate is on.
+- [ ] `st.html` cannot run a login or start a trial, so every supporter button is a link to
+      `/supporter`. The click router needs `/supporter` and `/track_record` in the sidebar
+      navigation (A.1, A.2); check that both navigate without a full reload.
+- [ ] **The homepage must never fail or slow down because of the store.** Today it reads nothing.
+      Read the sample card, the headlines and the "Tonight" numbers through one cached function
+      (`st.cache_data`, 10 minutes; the supporter's own positions keyed by email). On any error,
+      log it and render the page without that panel.
+- [ ] Copy as in the mockup. No returns promises, no "buy", "best" or "recommended", no
+      countdown timers, no popups. Keep the line "Research and record keeping, not financial
+      advice. Past results do not predict future ones." under the track record strip.
+- [ ] AppTests for the four states, plus a visitor run where the store raises. Preview at
+      desktop and mobile width with `harvest` (gate off) and `harvest-premium`.
+- The redesign uses the existing screenshots in `static/home/`; none need regenerating.
+
+Done when: the four states match the mockup with live data, a logged-out visitor reaches
+`/supporter` and `/track_record` from the homepage without a reload, and the page still renders
+when Supabase is unreachable.
+
 Done when (Phase A): with `PREMIUM_ENFORCED=true`, a logged-out visitor can open Track Record and
-the supporter page, a new Google account can start a trial and sees its end date, and an expired
-account sees the renewal notice.
+the supporter page, a new Google account can start a trial and sees its end date, an expired
+account sees the renewal notice, and the homepage shows the supporter offer to visitors and
+"Tonight for you" to supporters.
 
 ## Phase B: Alerts and the nightly digest
 
@@ -407,14 +498,76 @@ Read first: `harvest/alerts.py`, `pipeline/trading_data.py`, `pipeline/trading_n
 - [ ] The Telegram card and an alerts toggle on Portfolio Analytics (shared function from B.1).
 - [ ] Tests with a fake client and fake `send`.
 
-### C.4 Income goal
+### C.4 Income goal and buying plan
+
+When the portfolio earns less than the goal, this section shows how to close the gap: how much to
+invest, which stocks add the most income within the user's own limits, how many lots of each, and
+how much of the cost comes from reinvested dividends and how much from new capital. It replaces
+the former F.5.
+
+**[ASK USER]** D9 and D10 first.
+
+Read first: `apps/porto/porto_overview.py` (the "Income goal" popover and the "Compounding
+projection" expander), `harvest/portfolio.py` (`enrich_holdings`, `summarize_portfolio`,
+`project_income`), `harvest/income.py` from C.1, `harvest/trading_store.py` (`get_settings`,
+`save_settings`, `SETTINGS_DEFAULTS`).
+
+Why it is a plan for one year and not for the whole gap: the gap is usually far larger than one
+purchase (Rp 80 million of missing income at a 6% yield is about Rp 1.3 billion of stock). So the
+section answers "what do I buy with the next 12 months of cash, and when does that get me there".
 
 - [ ] Save the yearly target: the `porto_target` widget reads and writes
       `user_settings.income_goal_idr` for logged-in users (free feature, as today), with
-      `income_goal_year` as a new optional input.
-- [ ] Supporter section "Path to your goal": progress, forecast for this year, the gap, the
-      monthly top-up needed (`income.income_goal`), and a line chart of the projected path against
-      the goal. Reuse `hpf.project_income`.
+      `income_goal_year` as a new optional input. One tax basis everywhere, as decided in D10.
+- [ ] Save the plan inputs for logged-in supporters in `user_settings.goal_plan` (jsonb):
+      `monthly_topup_idr`, `max_stock_pct` (default 20), `max_sector_pct` (default 40),
+      `include_new` (default false). Add the key to `SETTINGS_DEFAULTS`; rows without it must
+      keep working.
+- [ ] `harvest/income.py`: `plan_purchases(holdings, candidates, reinvest_idr, new_capital_idr,
+      max_stock_pct, max_sector_pct, tax_pct=10.0) -> tuple[DataFrame, dict]`. No Streamlit, no
+      network.
+  - `holdings` is `enrich_holdings` output. `candidates` has one row per stock that may be
+    bought (`symbol`, `price`, dividend per share, `sector`, `score`): the current holdings, plus
+    new names when D9 allows them.
+  - Budget = `reinvest_idr + new_capital_idr`. Buy one whole lot (100 shares) at a time of the
+    stock with the highest dividend per rupiah that still fits the remaining budget and keeps its
+    stock and its sector at or under the limits. The limits are measured against the market
+    value after the whole budget is spent. Ties go to the higher `score`. Stop when no lot fits.
+  - A stock with no trailing dividend, no price, or a last dividend older than
+    `dp.MAX_SCHEDULE_AGE_DAYS` is never bought. A holding already over a limit gets no lots. The
+    function never proposes a sale.
+  - Rows: `symbol`, `lots`, `price`, `cost`, `from_dividends`, `from_new_capital`,
+    `added_income_net` (per year), `weight_after_pct`, `is_new`. Dividends are spent first, in
+    row order, then new capital; the two columns always add up to `cost`.
+  - Summary dict: cash left over, income after the purchases, progress and gap after them, and
+    the stocks skipped because of a limit (so the page can say why a high yielder is missing).
+- [ ] Supporter section "Path to your goal" on Portfolio Analytics, behind
+      `ui.supporter_section` (A.0):
+  - Below the goal: progress, the gap, and the capital that closes it at the portfolio's current
+    yield.
+  - Inputs: monthly top-up, the two limits, and the D9 toggle if it exists.
+  - "The next 12 months": reinvestment budget = net dividends expected in the next 12 months
+    (`income.forecast_income`, announced and estimated shown separately); new capital = 12 × the
+    monthly top-up. Then the `plan_purchases` table and one line with the income and progress
+    after it.
+  - The path: a line chart of projected income against the goal for "reinvest only" and
+    "reinvest plus top-up", with the year each one reaches the goal, and the monthly top-up
+    needed to reach it by `income_goal_year` when that is set (`income.income_goal`). Reuse
+    `hpf.project_income`; do not write a second projection.
+  - At or above the goal: one line saying so. The plan table stays available as "Add more
+    income".
+- [ ] Free preview: the gap and the capital needed, in full. The table is locked, with a count
+      ("5 stocks in your plan"). Logged-out visitors with a pasted portfolio see the same preview.
+- [ ] Copy: this is arithmetic on trailing dividends and the user's own limits. No "buy",
+      "recommended" or "best" in headings, buttons or column names (use "Lots", "Cost", "Added
+      income"). A caption says trailing dividends can be cut and that this is not advice.
+- [ ] Charts follow `harvest/chart_style.py`; load the `dataviz` skill before writing chart code.
+- [ ] Unit tests for `plan_purchases`: the budget is never exceeded, whole lots only, both limits
+      hold, dividends are spent before new capital, a holding over its limit gets nothing, zero
+      budget, no dividend payers, new names appear only when passed in, symbol suffix handling.
+- [ ] AppTests: supporter below the goal, supporter at the goal, free, logged out.
+- [ ] After D.1: add "minimum safety grade" as a third limit, default `B`, with stocks graded
+      `None` excluded and counted in the skipped list.
 
 ### C.5 Monthly income report
 
@@ -437,8 +590,9 @@ Read first: `harvest/alerts.py`, `pipeline/trading_data.py`, `pipeline/trading_n
 - [ ] Tests for the job (one row per session, rerun replaces the day) and the section.
 
 Done when (Phase C): with a saved test portfolio, the paycheck section matches a hand-checked
-forecast, an announced dividend on a holding produces one Telegram message, and two nightly runs
-leave two snapshot rows.
+forecast, the buying plan matches a hand-checked allocation and stays inside both limits, an
+announced dividend on a holding produces one Telegram message, and two nightly runs leave two
+snapshot rows.
 
 ## Phase D: Dividend safety and yield signals
 
@@ -537,16 +691,13 @@ Read first: `apps/trading/my_trades.py`, `harvest/trading_store.py` (positions s
       a checkout link created for the logged-in email, and `POST /webhooks/<gateway>` that verifies
       the signature and calls `record_donation`, exactly like the BMC route. The agent never
       handles live keys or enters payment details; the user sets the secrets.
-- [ ] **F.5 "Where should my next Rp X go?"** A calculator on Portfolio Analytics: given an amount
-      and the user's own limits (maximum share per stock and per sector, minimum safety grade),
-      it lists the top-ups among current holdings that add the most yearly income. Copy frames it
-      as arithmetic on the user's rules, not a recommendation.
+- **F.5 "Where should my next Rp X go?"** Merged into C.4 on 2026-11-15. Nothing to do here.
 
 ## Suggested order
 
 A (all) → B.1, B.2 → C.1, C.2, C.3 → B.3, B.4 → C.4 to C.6 → E.1 → D → E.2, E.3 → F.
 
-A and B need no new data. C.1 to C.3 are the first dividend features and share one piece of work
+Within A, the homepage (A.6) comes last. A and B need no new data. C.1 to C.3 are the first dividend features and share one piece of work
 (holdings joined to the dividend history). D depends on FMP limits. F.4 depends on the user.
 
 ## Testing checklist (every phase)
@@ -576,3 +727,8 @@ A and B need no new data. C.1 to C.3 are the first dividend features and share o
 ## Progress log
 
 - 2026-11-12: plan written from a code review. Nothing implemented.
+- 2026-11-15: C.4 rewritten as "Income goal and buying plan" and F.5 merged into it. Decisions D9
+  and D10 added. Nothing implemented.
+- 2026-11-15: A.6 "Homepage: show the supporter offer" added, with the static mockup
+  `docs/home-redesign/home-mockup.html` and the preview config `home-mockup`. The homepage line
+  of A.2 now points to A.6. Nothing implemented.
