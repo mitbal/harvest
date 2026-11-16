@@ -1118,12 +1118,13 @@ def plot_dividend_calendar(div_df, sl='JKSE', closed_dates=None, width=250, heig
     labels = _dividend_labels(div_df)
     values = _color_values(div_df, sl)
 
-    full_chart = alt.hconcat(spacing=10)
+    # Built in one pass: chaining & and | deep-copies everything accumulated so far on each step
+    columns = []
     for i in range(4):
-        column = alt.vconcat(spacing=6)
+        months = []
         for j in range(3):
             idx = (j*4)+i+1
-            c = month_plot(
+            months.append(month_plot(
                 div_df['date'],
                 values,
                 labels=labels,
@@ -1135,9 +1136,9 @@ def plot_dividend_calendar(div_df, sl='JKSE', closed_dates=None, width=250, heig
                 width=width,
                 height=height,
                 closed_dates=closed_dates,
-            )
-            column = column & c
-        full_chart = full_chart | column
+            ))
+        columns.append(alt.vconcat(*months, spacing=6))
+    full_chart = alt.hconcat(*columns, spacing=10)
 
     # Title and color key share one row under the grid, which keeps the whole image within one screen
     footer = []

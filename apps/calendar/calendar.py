@@ -136,6 +136,15 @@ def get_data_from_redis(key):
     return pd.DataFrame(rjson)
 
 
+# cache_resource so the chart is not pickled and copied on every rerun: the cached object is shared
+# across sessions and must not be mutated. The arguments are hashed, so a data refresh or a change
+# of year, list or Syariah filter gives a new entry
+@st.cache_resource(max_entries=8, ttl=60*60, show_spinner=False)
+def full_year_chart(df, sl, closed_dates, title):
+    return hp.plot_dividend_calendar(df, sl=sl, closed_dates=closed_dates, width=CALENDAR_MONTH_WIDTH,
+                                     height=CALENDAR_MONTH_HEIGHT, title=title, legend=True)
+
+
 def load_data(key):
     try:
         return get_data_from_redis(key)
@@ -499,9 +508,7 @@ if view_control == 'Full Year':
     # Sized to fill the content width beside the open sidebar on a 1440px-wide (13" MacBook) window
     # while the whole grid still fits in one screen height
     st.altair_chart(
-        hp.plot_dividend_calendar(df, sl=sl, closed_dates=closed_dates, width=CALENDAR_MONTH_WIDTH,
-                                  height=CALENDAR_MONTH_HEIGHT,
-                                  title=f'Dividend Calendar {projected_year} · {sl}', legend=True),
+        full_year_chart(df, sl, closed_dates, f'Dividend Calendar {projected_year} · {sl}'),
         width='content', theme=None,
     )
     st.caption(f'{COLOR_NOTE} {projection_note}')
