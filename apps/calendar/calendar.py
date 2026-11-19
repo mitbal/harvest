@@ -1,12 +1,8 @@
 import os
-import io
-import json
 import calendar
 from datetime import datetime
 
 import redis
-import holidays
-import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
@@ -16,6 +12,8 @@ import harvest.plot as hp
 from harvest import calendar_grid as cg
 from harvest import chart_style as cs
 from harvest import page_ui as ui
+from harvest import share
+from harvest.calendar_data import add_yield, decode_frame, market_holidays, project_to_next_year, syariah_symbols
 from harvest.calendar_grid import format_dividend
 from harvest.utils import setup_logging
 
@@ -49,16 +47,20 @@ st.html("""
 """)
 ui.inject_styles()
 
-VIEW_OPTIONS = ['Full Year', 'Single Month']
+VIEW_OPTIONS = ['Full Year', 'Single Month', 'Month Tables']
 VIEW_KEY = 'cal_view'
 MONTH_KEY = 'cal_month'
 YEAR_KEY = 'cal_year'
+# Not 'list'/'syariah': main.py copies every query param into st.session_state under its own name
+LIST_KEY = 'cal_list'
+SYARIAH_KEY = 'cal_syariah'
+STOCK_LISTS = ['JKSE', 'S&P500']
 MONTH_NAMES = list(calendar.month_name)[1:]
 
 
 def view_index(qp):
-    """0 (Full Year) or 1 (Single Month) from ?view=yearly|monthly."""
-    return 1 if str(qp.get('view', 'yearly')).lower() == 'monthly' else 0
+    """0 (Full Year), 1 (Single Month) or 2 (Month Tables) from ?view=yearly|monthly|tables."""
+    return {'monthly': 1, 'tables': 2}.get(str(qp.get('view', 'yearly')).lower(), 0)
 
 
 def selected_view(state, qp):
@@ -79,6 +81,28 @@ def seed_year(state, available_years, url_year):
         state[YEAR_KEY] = url_year
 
 
+def list_from_url(qp):
+    """'JKSE' or 'S&P500' from ?list=jkse|sp500 (any case); anything else is JKSE."""
+    return 'S&P500' if str(qp.get('list', 'jkse')).lower() == 'sp500' else 'JKSE'
+
+
+def syariah_from_url(qp):
+    """True for ?syariah=1."""
+    return str(qp.get('syariah', '')) == '1'
+
+
+def seed_stock_list(state, qp):
+    """Seed the stock list control from the URL on first load (keyed and seeded like the year)."""
+    if state.get(LIST_KEY) not in STOCK_LISTS:
+        state[LIST_KEY] = list_from_url(qp)
+
+
+def seed_syariah(state, qp):
+    """Seed the Syariah toggle from the URL on first load; call it only where the toggle is shown (JKSE)."""
+    if SYARIAH_KEY not in state:
+        state[SYARIAH_KEY] = syariah_from_url(qp)
+
+
 # Title and warning go first; they depend on the year picked in the controls below them
 header = st.container(key='cal_header')
 # All options on one row: stock list, calendar view, year, month and the Syariah filter.
@@ -89,7 +113,9 @@ if selected_view(st.session_state, st.query_params) == 'Single Month':
 else:
     controls = st.container(horizontal=True, vertical_alignment='bottom', gap='medium')
 
-sl = controls.segmented_control('Stock list', ['JKSE', 'S&P500'], default='JKSE', required=True)
+# Keyed and seeded from ?list= instead of default=, for the same widget-identity reason as the year below
+seed_stock_list(st.session_state, st.query_params)
+sl = controls.segmented_control('Stock list', STOCK_LISTS, required=True, key=LIST_KEY)
 
 if sl == 'JKSE':
     exch = 'jkse'
@@ -127,13 +153,7 @@ def get_data_from_redis(key):
     if j is None:
         raise MissingDataError(key)
 
-    if isinstance(j, bytes) and j.startswith(b'PAR1'):
-        return pd.read_parquet(io.BytesIO(j))
-
-    rjson = json.loads(j)
-    if 'date' in rjson and 'content' in rjson:
-        return pd.DataFrame(json.loads(rjson['content']))
-    return pd.DataFrame(rjson)
+    return decode_frame(j)
 
 
 # cache_resource so the chart is not pickled and copied on every rerun: the cached object is shared
@@ -164,70 +184,6 @@ def prep_div_table(df, month, market='ID'):
     table['url_link'] = table['symbol'].map(lambda x: f'{SITE_URL}/stock_picker?market={market}&stock={x}')
     table = table.rename(columns={'date': 'ex_date', 'yield': 'div_yield', 'adjDividend': 'dividend'})
     return table[['rank', 'url_link', 'ex_date', 'div_yield', 'dividend', 'price']]
-
-
-def market_holidays(market, years):
-    """{date: holiday name} for days the exchange is closed: IDX (market 'ID') or NYSE (market 'US')."""
-    if market == 'US':
-        closed = dict(holidays.financial_holidays('NYSE', years=years))
-    else:
-        # IDX closes on public holidays, cuti bersama (government category) and the 31 Dec bourse holiday
-        closed = dict(holidays.Indonesia(years=years, categories=('public', 'government'), language='en_US'))
-        for y in years:
-            closed.setdefault(pd.Timestamp(year=y, month=12, day=31).date(), 'IDX Year-End Holiday')
-    return dict(sorted(closed.items()))
-
-
-def project_to_next_year(dates, market='ID'):
-    """Shift ex-dates one year forward so the calendar grid uses the projected year's weekdays.
-
-    DateOffset maps 29 Feb onto 28 Feb instead of raising like Timestamp.replace.
-    Ex-dates are trading days, so a projection landing on a weekend or exchange holiday
-    moves to the next trading day, or back to the previous one if that would leave the month.
-    """
-    projected = pd.Series(pd.to_datetime(dates)) + pd.DateOffset(years=1)
-    if projected.empty:
-        return projected
-
-    years = sorted(projected.dt.year.unique().tolist())
-    closed = np.array(list(market_holidays(market, years)), dtype='datetime64[D]')
-    days = projected.values.astype('datetime64[D]')
-
-    forward = np.busday_offset(days, 0, roll='forward', holidays=closed)
-    backward = np.busday_offset(days, 0, roll='backward', holidays=closed)
-
-    rolled = pd.Series(pd.to_datetime(forward), index=projected.index)
-    leaves_month = rolled.dt.month != projected.dt.month
-    rolled[leaves_month] = pd.to_datetime(backward[leaves_month.to_numpy()])
-    return rolled
-
-
-def add_yield(df):
-    """Add yield (%) and drop rows that are not a real payout or have no usable price.
-
-    A zero or missing price gives an inf/NaN yield that skews the averages and breaks idxmax;
-    a zero dividend (e.g. a non-payer with a 0.0 row) is not a payout.
-    """
-    df = df.copy()
-    adj = pd.to_numeric(df['adjDividend'], errors='coerce')
-    price = pd.to_numeric(df['price'], errors='coerce')
-    valid = (adj > 0) & (price > 0)
-
-    df['yield'] = (adj / price.where(valid)) * 100
-    valid &= np.isfinite(df['yield'])
-
-    dropped = int((~valid).sum())
-    if dropped:
-        logger.warning(f'Dropped {dropped} dividend rows without a positive dividend and price: '
-                       f'{sorted(df.loc[~valid, "symbol"].astype(str).unique().tolist())}')
-    return df[valid].reset_index(drop=True)
-
-
-def syariah_symbols(div_score_df):
-    """Set of Syariah-compliant symbols, or None when the score data does not carry the flag."""
-    if not {'symbol', 'is_syariah'}.issubset(div_score_df.columns):
-        return None
-    return set(div_score_df.loc[div_score_df['is_syariah'].eq(True), 'symbol'])
 
 
 PAYOUT_FREQUENCIES = [
@@ -273,10 +229,14 @@ def parse_query_params(qp, available_years, default_year, current_month):
     """Widget defaults from the URL: (view index, year index, month index), falling back on bad values.
 
     Supported params:
-      ?view=yearly|monthly   (default: yearly)
+      ?view=yearly|monthly|tables   (default: yearly)
       ?year=2025             (source year; defaults to latest completed year)
       ?month=3               (1-12, only relevant when view=monthly)
     Example: ?view=monthly&year=2025&month=6
+
+    Read elsewhere (list_from_url, syariah_from_url), since their controls come first:
+      ?list=jkse|sp500       (stock list; default: jkse)
+      ?syariah=1             (Syariah only; JKSE only)
     """
     view_idx = view_index(qp)
 
@@ -455,8 +415,14 @@ if view_control == 'Single Month':
 if month_index is not None:
     st.query_params.update({'view': 'monthly', 'year': str(selected_year), 'month': str(month_index)})
 else:
-    st.query_params.update({'view': 'yearly', 'year': str(selected_year)})
+    st.query_params.update({'view': 'tables' if view_control == 'Month Tables' else 'yearly',
+                            'year': str(selected_year)})
     st.query_params.pop('month', None)
+# JKSE is the default, so only S&P500 shows in the URL
+if exch == 'sp500':
+    st.query_params['list'] = 'sp500'
+else:
+    st.query_params.pop('list', None)
 
 projected_year = selected_year + 1
 projection_note = (
@@ -485,13 +451,23 @@ df = add_yield(df)
 
 div_score_df = load_data(div_score_key)
 
+syariah_only = False
 if sl == 'JKSE':
     _syariah = syariah_symbols(div_score_df)
     if _syariah is None:
         logger.warning(f'{div_score_key} has no symbol/is_syariah columns; Syariah filter hidden')
-    elif controls.toggle('Syariah only'):
-        # Filter by membership rather than merging, so duplicate score rows cannot duplicate dividend events
-        df = df[df['symbol'].isin(_syariah)]
+    else:
+        # Seeded here, where the toggle is drawn, so ?syariah=1 never carries over to S&P500
+        seed_syariah(st.session_state, st.query_params)
+        syariah_only = controls.toggle('Syariah only', key=SYARIAH_KEY)
+        if syariah_only:
+            # Filter by membership rather than merging, so duplicate score rows cannot duplicate dividend events
+            df = df[df['symbol'].isin(_syariah)]
+# Off, or no toggle (S&P500, missing flags), leaves it out of the URL
+if syariah_only:
+    st.query_params['syariah'] = '1'
+else:
+    st.query_params.pop('syariah', None)
 
 if df.empty:
     # The calendar charts cannot be drawn without at least one dividend date
@@ -511,20 +487,15 @@ if view_control == 'Full Year':
         full_year_chart(df, sl, closed_dates, f'Dividend Calendar {projected_year} · {sl}'),
         width='content', theme=None,
     )
+    # Below the image, so the grid still starts as high and fits the first screen. The image is the
+    # same chart rendered on the server (server.py's /share/calendar routes) with the site name on it
+    _share = share.parse_share_id(share.make_share_id(exch, selected_year, syariah=syariah_only))
+    ui.share_bar(
+        share.image_path(_share.share_id), share.share_path(_share.share_id),
+        filename=share.share_filename(_share), text=share.share_text(_share), title=share.share_title(_share),
+        key='cal_share',
+    )
     st.caption(f'{COLOR_NOTE} {projection_note}')
-
-    # Month tables in the same 4x3 order as the calendar, each ranked by yield
-    st.subheader('Dividends per month')
-    for first_month in (1, 5, 9):
-        row = st.columns(4)
-        for col, month in zip(row, range(first_month, first_month + 4)):
-            with col:
-                st.markdown(f'**{calendar.month_name[month]}**')
-                month_table = prep_div_table(df, month, market=market)
-                if month_table.empty:
-                    st.caption('No ex-dividend dates.')
-                else:
-                    st.dataframe(month_table, hide_index=True, width='stretch', height=213, column_config=column_config)
 
     st.subheader('Dividend statistics')
 
@@ -548,6 +519,22 @@ if view_control == 'Full Year':
     # Frequency covers the whole year
     st.subheader('Payout frequency per year')
     payout_frequency_table(df)
+
+elif view_control == 'Month Tables':
+    # Month tables in the same 4x3 order as the calendar, each ranked by yield
+    st.subheader('Dividends per month')
+    for first_month in (1, 5, 9):
+        row = st.columns(4)
+        for col, month in zip(row, range(first_month, first_month + 4)):
+            with col:
+                st.markdown(f'**{calendar.month_name[month]}**')
+                month_table = prep_div_table(df, month, market=market)
+                if month_table.empty:
+                    st.caption('No ex-dividend dates.')
+                else:
+                    # Five rows per table, so the twelve months stay scannable; the rest scrolls inside the table
+                    st.dataframe(month_table, hide_index=True, width='stretch', height=213, column_config=column_config)
+    st.caption(projection_note)
 
 else:
     month_df = df[df['date'].dt.month == month_index]

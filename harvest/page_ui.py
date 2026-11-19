@@ -251,3 +251,252 @@ def card(key: str, gap='small'):
     gap is st.container's gap between the card's elements ('small', 1rem, by default).
     """
     return st.container(key=f'pdx-card-{key}', gap=gap)
+
+
+# ---------------------------------------------------------------------------
+# Share bar: Copy image, Copy link, Share (where the browser can share files) and Download
+# ---------------------------------------------------------------------------
+
+_SHARE_BAR_HTML = """
+<div class="pdx-share" role="group" aria-label="Share this calendar">
+  <span class="pdx-share-label">Share</span>
+  <button type="button" class="pdx-share-btn" data-act="copy-image">Copy image</button>
+  <button type="button" class="pdx-share-btn" data-act="copy-link">Copy link</button>
+  <button type="button" class="pdx-share-btn" data-act="share" hidden>Share</button>
+  <a class="pdx-share-btn" data-act="download" download>Download</a>
+  <span class="pdx-share-status" role="status" aria-live="polite"></span>
+</div>
+"""
+
+# The page's --pdx-* tokens reach into the component's shadow root; the fallbacks keep it styled without them
+_SHARE_BAR_CSS = """
+.pdx-share {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+  font-family: 'Manrope', system-ui, sans-serif; color: var(--pdx-ink, #10251d);
+}
+.pdx-share-label { font-size: 12.5px; font-weight: 700; color: var(--pdx-muted, #5c6d66); margin-right: 2px; }
+.pdx-share-btn {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; box-sizing: border-box;
+  font: inherit; font-size: 12.5px; font-weight: 700; line-height: 1; text-decoration: none; cursor: pointer;
+  color: var(--pdx-ink-soft, #3c5148); background: #fff;
+  border: 1px solid var(--pdx-line, #dbe3df); border-radius: 99px; white-space: nowrap;
+}
+.pdx-share-btn:hover { background: var(--pdx-mint, #e3f1eb); color: var(--pdx-deep, #052d22); }
+.pdx-share-btn:focus-visible { outline: 2px solid var(--pdx-forest, #073f2e); outline-offset: 2px; }
+.pdx-share-btn[hidden] { display: none; }
+.pdx-share-status { font-size: 12.5px; font-weight: 700; color: var(--pdx-up, #15803d); }
+.pdx-share-status.is-error { color: var(--pdx-down, #c2410c); }
+@media (max-width: 640px) {
+  .pdx-share-label { flex-basis: 100%; }
+  .pdx-share-btn { min-height: 36px; }
+  .pdx-share-status { flex-basis: 100%; }
+}
+"""
+
+_SHARE_BAR_JS = """
+// Per-instance state, keyed by the mount point so two share bars never mix up their images
+const instances = new WeakMap()
+
+const BLOCKED = "Your browser blocked copying the image. Use Download instead."
+const MISSING = "The image is not available right now."
+
+export default function (component) {
+  const { data, parentElement } = component
+  const root = parentElement.querySelector(".pdx-share")
+  if (!root || !data) return
+
+  let st = instances.get(parentElement)
+  if (!st) {
+    st = { url: null, png: null, blob: null, failed: false, timer: null, observer: null }
+    instances.set(parentElement, st)
+  }
+  // A new selection (year, stock list, Syariah) means a different image
+  if (st.url !== data.image_url) {
+    st.url = data.image_url
+    st.png = null
+    st.blob = null
+    st.failed = false
+  }
+
+  const status = root.querySelector(".pdx-share-status")
+  const copyImage = root.querySelector('[data-act="copy-image"]')
+  const copyLink = root.querySelector('[data-act="copy-link"]')
+  const shareBtn = root.querySelector('[data-act="share"]')
+  const download = root.querySelector('[data-act="download"]')
+
+  const say = (text, isError) => {
+    status.textContent = text
+    status.classList.toggle("is-error", !!isError)
+    clearTimeout(st.timer)
+    st.timer = setTimeout(() => { status.textContent = "" }, isError ? 8000 : 3000)
+  }
+
+  // One fetch per image; a failure is remembered and allows a retry on the next click
+  const fetchPng = () => {
+    if (!st.png) {
+      const url = st.url
+      st.png = fetch(url, { credentials: "same-origin" }).then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status)
+        return r.blob()
+      }).then((b) => {
+        const blob = b.type === "image/png" ? b : new Blob([b], { type: "image/png" })
+        if (st.url === url) { st.blob = blob; st.failed = false }
+        return blob
+      })
+      st.png.catch(() => {
+        if (st.url === url) { st.png = null; st.failed = true }
+      })
+    }
+    return st.png
+  }
+  const prefetch = () => { fetchPng().catch(() => {}) }
+
+  const canShareFiles = (() => {
+    try {
+      return !!(navigator.canShare && navigator.share &&
+        navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] }))
+    } catch (e) { return false }
+  })()
+  shareBtn.hidden = !canShareFiles
+
+  download.setAttribute("href", data.image_url)
+  download.setAttribute("download", data.filename)
+  download.setAttribute("aria-label", "Download the calendar image")
+  copyImage.setAttribute("aria-label", "Copy the calendar image")
+  copyLink.setAttribute("aria-label", "Copy a link to this calendar")
+  shareBtn.setAttribute("aria-label", "Share the calendar image")
+
+  // Safari only allows clipboard writes inside the click, so the ClipboardItem is made right here
+  // with a promise for the image instead of awaiting the download first
+  copyImage.onclick = () => {
+    if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === "undefined") {
+      say(BLOCKED, true)
+      return
+    }
+    const png = fetchPng()
+    let item
+    try {
+      item = new ClipboardItem({ "image/png": png })
+    } catch (e) {
+      png.catch(() => {})
+      say(BLOCKED, true)
+      return
+    }
+    navigator.clipboard.write([item]).then(
+      () => say("Image copied"),
+      () => png.then(() => say(BLOCKED, true), () => say(MISSING, true)),
+    )
+  }
+
+  const copyText = (text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text)
+    return new Promise((resolve, reject) => {
+      const area = document.createElement("textarea")
+      area.value = text
+      area.setAttribute("readonly", "")
+      area.style.position = "fixed"
+      area.style.opacity = "0"
+      root.appendChild(area)
+      area.select()
+      let ok = false
+      try { ok = document.execCommand("copy") } catch (e) { ok = false }
+      area.remove()
+      ok ? resolve() : reject(new Error("copy failed"))
+    })
+  }
+
+  // share_url is a path; resolve it on the host the page is served from, so a copied link from
+  // localhost or staging stays there. The component runs in the main document, not an iframe
+  const link = new URL(data.share_url, window.location.origin).href
+
+  copyLink.onclick = () => {
+    copyText(link).then(
+      () => say("Link copied"),
+      () => say("Could not copy. The link is " + link, true),
+    )
+  }
+
+  shareBtn.onclick = () => {
+    const send = (blob) => navigator.share({
+      files: [new File([blob], data.filename, { type: "image/png" })],
+      title: data.title, text: data.text, url: link,
+    })
+    // With the image already here the share sheet opens inside the tap, which Safari insists on
+    const shared = st.blob ? send(st.blob) : fetchPng().then(send)
+    shared.catch((e) => {
+      if (e && e.name === "AbortError") return
+      if (st.failed) say(MISSING, true)
+      else if (e && e.name === "NotAllowedError") say("Tap Share again to open the share sheet.", true)
+      else say("Sharing did not work here. Use Download instead.", true)
+    })
+  }
+
+  // Native download, except when the image is known to be missing or is already in memory
+  download.onclick = (e) => {
+    if (st.failed) {
+      e.preventDefault()
+      say(MISSING, true)
+      prefetch()
+      return
+    }
+    if (st.blob) {
+      e.preventDefault()
+      const href = URL.createObjectURL(st.blob)
+      const a = document.createElement("a")
+      a.href = href
+      a.download = data.filename
+      root.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(href), 10000)
+    }
+  }
+
+  // Fetch the image once someone shows interest, so Share and Copy are quick; never on page load
+  root.onpointerenter = prefetch
+  for (const el of [copyImage, copyLink, shareBtn, download]) el.onfocus = prefetch
+  if (canShareFiles && !st.observer && "IntersectionObserver" in window) {
+    // Phones have no hover: start when the bar scrolls into view, so the share sheet opens on the first tap
+    st.observer = new IntersectionObserver((entries) => {
+      if (entries.some((en) => en.isIntersecting)) prefetch()
+    })
+    st.observer.observe(root)
+  }
+
+  return () => {
+    clearTimeout(st.timer)
+    if (st.observer) { st.observer.disconnect(); st.observer = null }
+  }
+}
+"""
+
+def _share_bar_component():
+    # Registered on every call, like an inline component at the top of a script: the registry belongs to
+    # the Streamlit runtime, so a registration made when this module was first imported can be gone
+    # (a new runtime in tests or after a dev reload). Registering the same name again is cheap.
+    return st.components.v2.component(
+        'pdx_share_bar', html=_SHARE_BAR_HTML, css=_SHARE_BAR_CSS, js=_SHARE_BAR_JS,
+    )
+
+
+def share_bar_data(image_url, share_url, filename, text, title='') -> dict:
+    """What the share bar's script gets. image_url and share_url should be same-origin paths;
+    the script resolves share_url against the page's origin (an absolute URL is kept as is)."""
+    return {
+        'image_url': str(image_url),
+        'share_url': str(share_url),
+        'filename': str(filename),
+        'text': str(text),
+        'title': str(title or text),
+    }
+
+
+def share_bar(image_url, share_url, filename, text, key, title=''):
+    """Copy image, Copy link, Share (phones) and Download buttons for a server-rendered PNG.
+
+    image_url is fetched and downloaded from the same origin, so it works on localhost; share_url is the
+    path of the link people paste, which Copy link and Share turn into a full URL on the page's own host
+    (so a link copied on localhost or staging stays there). When the image is missing the buttons say so
+    instead of failing silently.
+    """
+    return _share_bar_component()(data=share_bar_data(image_url, share_url, filename, text, title), key=key)

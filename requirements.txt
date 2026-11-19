@@ -2,6 +2,8 @@ redis==8.1.0
 numpy==2.5.2
 pandas==3.0.5
 altair==6.2.2
+# Renders the shareable calendar PNG on the server (harvest/share.py)
+vl-convert-python==1.9.0.post1
 lesley==0.4.0
 holidays==0.105
 psutil==7.2.2

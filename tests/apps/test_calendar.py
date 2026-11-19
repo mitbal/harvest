@@ -13,6 +13,9 @@ import pytest
 with patch.dict("os.environ", {"REDIS_URL": "redis://stub", "FMP_API_KEY": "stub"}):
     import apps.calendar.calendar as cal
 
+# The data helpers live in harvest.calendar_data, shared with the share-image route in server.py
+from harvest import calendar_data as cd
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -139,102 +142,102 @@ class TestFormatDividend:
 class TestProjectToNextYear:
 
     def test_shifts_one_year_keeping_month_and_day(self):
-        result = cal.project_to_next_year(pd.Series(["2025-03-10", "2025-11-10"]))
+        result = cd.project_to_next_year(pd.Series(["2025-03-10", "2025-11-10"]))
         assert list(result) == [pd.Timestamp("2026-03-10"), pd.Timestamp("2026-11-10")]
 
     def test_weekday_follows_projected_year(self):
         # 10 Mar 2025 is a Monday; 10 Mar 2026 is a Tuesday
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-03-10")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-03-10")]))
         assert result.iloc[0].day_name() == "Tuesday"
 
     def test_leap_day_maps_to_feb_28(self):
         # 28 Feb 2025 is a Friday, so no weekend roll applies
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2024-02-29")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2024-02-29")]))
         assert result.iloc[0] == pd.Timestamp("2025-02-28")
 
     def test_saturday_rolls_forward_to_monday(self):
         # 14 Mar 2026 is a Saturday
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-03-14")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-03-14")]))
         assert result.iloc[0] == pd.Timestamp("2026-03-16")
 
     def test_sunday_rolls_forward_to_monday(self):
         # 15 Mar 2026 is a Sunday
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-03-15")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-03-15")]))
         assert result.iloc[0] == pd.Timestamp("2026-03-16")
 
     def test_saturday_first_of_month_rolls_to_monday(self):
         # 1 Aug 2026 is a Saturday
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-08-01")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-08-01")]))
         assert result.iloc[0] == pd.Timestamp("2026-08-03")
 
     def test_saturday_end_of_month_rolls_back_to_friday(self):
         # 30 May 2026 is a Saturday; Monday would be 1 Jun
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-05-30")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-05-30")]))
         assert result.iloc[0] == pd.Timestamp("2026-05-29")
 
     def test_sunday_last_of_month_rolls_back_to_friday(self):
         # 31 May 2026 is a Sunday; Monday would be 1 Jun
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-05-31")]))
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-05-31")]))
         assert result.iloc[0] == pd.Timestamp("2026-05-29")
 
     def test_never_lands_on_weekend(self):
         dates = pd.Series(pd.date_range("2025-01-01", "2025-12-31", freq="D"))
-        result = cal.project_to_next_year(dates)
+        result = cd.project_to_next_year(dates)
         assert (result.dt.weekday < 5).all()
         assert (result.dt.month == dates.dt.month).all()
         assert (result.dt.year == 2026).all()
 
     def test_idx_lebaran_rolls_past_cuti_bersama(self):
         # 20 Mar 2026 is cuti bersama, then a weekend, then two more cuti bersama days
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-03-20")]), market="ID")
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-03-20")]), market="ID")
         assert result.iloc[0] == pd.Timestamp("2026-03-25")
 
     def test_idx_year_end_closure_rolls_back(self):
         # 31 Dec 2026 is the IDX bourse holiday; the next trading day is in January
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-12-31")]), market="ID")
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-12-31")]), market="ID")
         assert result.iloc[0] == pd.Timestamp("2026-12-30")
 
     def test_nyse_holiday_rolls_forward(self):
         # 3 Jul 2026 is Independence Day (observed) on NYSE
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-07-03")]), market="US")
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-07-03")]), market="US")
         assert result.iloc[0] == pd.Timestamp("2026-07-06")
 
     def test_nyse_open_on_dec_31(self):
-        result = cal.project_to_next_year(pd.Series([pd.Timestamp("2025-12-31")]), market="US")
+        result = cd.project_to_next_year(pd.Series([pd.Timestamp("2025-12-31")]), market="US")
         assert result.iloc[0] == pd.Timestamp("2026-12-31")
 
     @pytest.mark.parametrize("market", ["ID", "US"])
     def test_never_lands_on_closed_day(self, market):
         dates = pd.Series(pd.date_range("2025-01-01", "2025-12-31", freq="D"))
-        result = cal.project_to_next_year(dates, market=market)
-        closed = set(cal.market_holidays(market, [2026]))
+        result = cd.project_to_next_year(dates, market=market)
+        closed = set(cd.market_holidays(market, [2026]))
         assert not any(d.date() in closed for d in result)
         assert (result.dt.weekday < 5).all()
         assert (result.dt.month == dates.dt.month).all()
 
     def test_keeps_input_index(self):
         dates = pd.Series([pd.Timestamp("2025-03-14"), pd.Timestamp("2025-03-10")], index=[7, 3])
-        result = cal.project_to_next_year(dates)
+        result = cd.project_to_next_year(dates)
         assert list(result.index) == [7, 3]
 
     def test_empty_input(self):
-        result = cal.project_to_next_year(pd.Series([], dtype="datetime64[ns]"))
+        result = cd.project_to_next_year(pd.Series([], dtype="datetime64[ns]"))
         assert result.empty
 
 
 class TestMarketHolidays:
 
     def test_idx_names_in_english(self):
-        closed = cal.market_holidays("ID", [2026])
+        closed = cd.market_holidays("ID", [2026])
         assert closed[pd.Timestamp("2026-03-21").date()] == "Eid al-Fitr"
         assert closed[pd.Timestamp("2026-03-20").date()] == "Eid al-Fitr Joint Holiday"
 
     def test_idx_year_end_closure_named(self):
-        closed = cal.market_holidays("ID", [2026])
+        closed = cd.market_holidays("ID", [2026])
         assert closed[pd.Timestamp("2026-12-31").date()] == "IDX Year-End Holiday"
 
     def test_nyse_names(self):
-        closed = cal.market_holidays("US", [2026])
+        closed = cd.market_holidays("US", [2026])
         assert closed[pd.Timestamp("2026-11-26").date()] == "Thanksgiving Day"
         assert pd.Timestamp("2026-12-31").date() not in closed
 
@@ -300,7 +303,7 @@ class TestAddYield:
         return pd.DataFrame(rows, columns=["date", "symbol", "adjDividend", "price"])
 
     def test_computes_yield_percent(self):
-        result = cal.add_yield(self._df([["2026-03-10", "A", 50.0, 1000.0]]))
+        result = cd.add_yield(self._df([["2026-03-10", "A", 50.0, 1000.0]]))
         assert result.loc[0, "yield"] == pytest.approx(5.0)
 
     @pytest.mark.parametrize("dividend, price", [
@@ -313,22 +316,22 @@ class TestAddYield:
     ])
     def test_drops_invalid_rows(self, dividend, price):
         df = self._df([["2026-03-10", "BAD", dividend, price], ["2026-03-11", "GOOD", 1.0, 100.0]])
-        result = cal.add_yield(df)
+        result = cd.add_yield(df)
         assert result["symbol"].tolist() == ["GOOD"]
         assert np.isfinite(result["yield"]).all()
 
     def test_all_invalid_gives_empty_frame(self):
-        result = cal.add_yield(self._df([["2026-03-10", "A", 1.0, 0.0]]))
+        result = cd.add_yield(self._df([["2026-03-10", "A", 1.0, 0.0]]))
         assert result.empty
         assert "yield" in result.columns
 
     def test_does_not_modify_input(self):
         df = self._df([["2026-03-10", "A", 1.0, 0.0]])
-        cal.add_yield(df)
+        cd.add_yield(df)
         assert "yield" not in df.columns and len(df) == 1
 
     def test_numeric_strings_accepted(self):
-        result = cal.add_yield(self._df([["2026-03-10", "A", "50", "1000"]]))
+        result = cd.add_yield(self._df([["2026-03-10", "A", "50", "1000"]]))
         assert result.loc[0, "yield"] == pytest.approx(5.0)
 
 
@@ -336,20 +339,20 @@ class TestSyariahSymbols:
 
     def test_returns_flagged_symbols(self):
         scores = pd.DataFrame({"symbol": ["BBRI.JK", "TLKM.JK", "BBCA.JK"], "is_syariah": [False, True, False]})
-        assert cal.syariah_symbols(scores) == {"TLKM.JK"}
+        assert cd.syariah_symbols(scores) == {"TLKM.JK"}
 
     def test_missing_column_returns_none(self):
         scores = pd.DataFrame({"symbol": ["TLKM.JK"], "sector": ["Telecom"]})
-        assert cal.syariah_symbols(scores) is None
+        assert cd.syariah_symbols(scores) is None
 
     def test_missing_flag_treated_as_not_syariah(self):
         scores = pd.DataFrame({"symbol": ["A.JK", "B.JK"], "is_syariah": [None, True]})
-        assert cal.syariah_symbols(scores) == {"B.JK"}
+        assert cd.syariah_symbols(scores) == {"B.JK"}
 
     def test_duplicate_score_rows_do_not_duplicate_events(self):
         scores = pd.DataFrame({"symbol": ["TLKM.JK", "TLKM.JK"], "is_syariah": [True, True]})
         events = pd.DataFrame({"symbol": ["TLKM.JK", "TLKM.JK", "BBCA.JK"], "date": ["2026-05-01", "2026-11-01", "2026-06-01"]})
-        filtered = events[events["symbol"].isin(cal.syariah_symbols(scores))]
+        filtered = events[events["symbol"].isin(cd.syariah_symbols(scores))]
         assert len(filtered) == 2
 
 
@@ -365,6 +368,9 @@ class TestParseQueryParams:
 
     def test_monthly_view_year_and_month(self):
         assert self.parse({"view": "Monthly", "year": "2023", "month": "6"}) == (1, 0, 5)
+
+    def test_tables_view(self):
+        assert self.parse({"view": "Tables", "year": "2024"}) == (2, 1, 9)
 
     @pytest.mark.parametrize("qp", [
         {"year": "abc"},
@@ -407,6 +413,7 @@ class TestSelectedView:
     def test_url_decides_on_first_load(self):
         assert cal.selected_view({}, {}) == "Full Year"
         assert cal.selected_view({}, {"view": "Monthly"}) == "Single Month"
+        assert cal.selected_view({}, {"view": "tables"}) == "Month Tables"
         assert cal.selected_view({}, {"view": "weekly"}) == "Full Year"
 
     def test_widget_state_wins_over_url(self):
@@ -417,7 +424,7 @@ class TestSelectedView:
         assert cal.selected_view({cal.VIEW_KEY: None}, {"view": "monthly"}) == "Single Month"
 
     def test_agrees_with_parse_query_params(self):
-        for qp in ({}, {"view": "monthly"}, {"view": "MONTHLY"}, {"view": "x"}):
+        for qp in ({}, {"view": "monthly"}, {"view": "MONTHLY"}, {"view": "TABLES"}, {"view": "x"}):
             view_idx, _, _ = cal.parse_query_params(qp, [2025], 2025, 1)
             assert cal.selected_view({}, qp) == cal.VIEW_OPTIONS[view_idx]
 
@@ -457,6 +464,55 @@ class TestSeedYear:
         state = {cal.YEAR_KEY: 2019}
         cal.seed_year(state, self.YEARS, 2025)
         assert state[cal.YEAR_KEY] == 2025
+
+
+class TestStockListAndSyariahFromUrl:
+
+    @pytest.mark.parametrize("qp, expected", [
+        ({}, "JKSE"),
+        ({"list": "jkse"}, "JKSE"),
+        ({"list": "sp500"}, "S&P500"),
+        ({"list": "SP500"}, "S&P500"),
+        ({"list": "nyse"}, "JKSE"),     # bad values fall back to JKSE
+        ({"list": ""}, "JKSE"),
+    ])
+    def test_list_from_url(self, qp, expected):
+        assert cal.list_from_url(qp) == expected
+
+    @pytest.mark.parametrize("qp, expected", [
+        ({}, False),
+        ({"syariah": "1"}, True),
+        ({"syariah": "0"}, False),
+        ({"syariah": "yes"}, False),
+    ])
+    def test_syariah_from_url(self, qp, expected):
+        assert cal.syariah_from_url(qp) is expected
+
+    def test_seed_stock_list_on_first_load_only(self):
+        state = {}
+        cal.seed_stock_list(state, {"list": "sp500"})
+        assert state[cal.LIST_KEY] == "S&P500"
+        # The widget's own value wins over the URL afterwards
+        state[cal.LIST_KEY] = "JKSE"
+        cal.seed_stock_list(state, {"list": "sp500"})
+        assert state[cal.LIST_KEY] == "JKSE"
+
+    def test_seed_stock_list_replaces_a_bad_stored_value(self):
+        state = {cal.LIST_KEY: None}
+        cal.seed_stock_list(state, {"list": "sp500"})
+        assert state[cal.LIST_KEY] == "S&P500"
+
+    def test_seed_syariah_on_first_load_only(self):
+        state = {}
+        cal.seed_syariah(state, {"syariah": "1"})
+        assert state[cal.SYARIAH_KEY] is True
+        state[cal.SYARIAH_KEY] = False
+        cal.seed_syariah(state, {"syariah": "1"})
+        assert state[cal.SYARIAH_KEY] is False
+
+    def test_keys_do_not_clash_with_url_params(self):
+        # main.py copies every query param into session state under its own name
+        assert cal.LIST_KEY not in ("list", "syariah") and cal.SYARIAH_KEY not in ("list", "syariah")
 
 
 def test_highest_yield_caption():

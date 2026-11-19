@@ -14,7 +14,7 @@ from starlette.middleware import Middleware
 from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from harvest import memwatch, seo, webhooks
+from harvest import memwatch, seo, share, webhooks
 from harvest.utils import setup_logging
 
 
@@ -121,6 +121,49 @@ async def visit_beacon(request):
     return Response(status_code=204)
 
 
+async def calendar_share_png(request):
+    """The Full Year calendar image for a share id, e.g. /share/calendar/jkse-2025.png."""
+    share_id = request.path_params['share_id']
+    if share.parse_share_id(share_id) is None:
+        return Response('Not found', status_code=404, media_type='text/plain')
+    try:
+        png = await run_in_threadpool(share.calendar_share_png, share_id)
+    except Exception:
+        logger.exception('failed to render calendar share image %s', share_id)
+        return Response(status_code=503, headers={'Retry-After': '300'})
+    if png is None:
+        return Response('Not found', status_code=404, media_type='text/plain')
+    return Response(png, media_type='image/png', headers=_CACHE_HEADERS)
+
+
+async def calendar_share_page(request):
+    """Link-preview page for a shared calendar: Open Graph tags for unfurlers, a redirect for people."""
+    calendar_share = share.parse_share_id(request.path_params['share_id'])
+    if calendar_share is None:
+        return HTMLResponse('Not found', status_code=404)
+
+    # Unfurlers fetch the image next, so render it now: a year with no data gets a 404 instead of a
+    # preview with a broken image, and the image is cached by the time they ask. People are sent on
+    # to the live calendar right away, so they don't wait for the render.
+    if is_probable_bot(request.headers.get('user-agent', '')):
+        try:
+            png = await run_in_threadpool(share.calendar_share_png, calendar_share.share_id)
+        except Exception:
+            logger.exception('failed to render calendar share image %s', calendar_share.share_id)
+            return HTMLResponse('Layanan sedang sibuk, coba lagi nanti.', status_code=503, headers={'Retry-After': '300'})
+        if png is None:
+            return HTMLResponse('Not found', status_code=404)
+
+    return HTMLResponse(share.render_share_page(calendar_share), headers=_CACHE_HEADERS)
+
+
+# The .png route comes first: {share_id} alone would also match 'jkse-2025.png'
+SHARE_ROUTES = [
+    Route('/share/calendar/{share_id}.png', calendar_share_png),
+    Route('/share/calendar/{share_id}', calendar_share_page),
+]
+
+
 class StockCanonicalMiddleware:
     """Point ``/stock_picker?stock=BBCA.JK`` at ``/stock_picker/bbca`` via a Link header.
 
@@ -162,6 +205,7 @@ app = st.App(
         Route('/sitemap_full.xml', sitemap_stocks_xml),
         Route('/stock_picker/{ticker}', stock_page),
         Route('/visit/stock_page', visit_beacon, methods=['POST']),
+        *SHARE_ROUTES,
         Route('/webhooks/bmc', webhooks.bmc_webhook, methods=['POST']),
         Route('/webhooks/trakteer', webhooks.trakteer_webhook, methods=['POST']),
         Route('/webhooks/telegram', webhooks.telegram_webhook, methods=['POST']),
