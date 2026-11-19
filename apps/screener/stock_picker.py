@@ -1997,10 +1997,6 @@ _TABLE_PRESETS = {
         'Rank', 'sector', 'industry', 'price', 'lastDiv', 'yield', 'DScore', 'numDividendYear',
         'peRatio', 'medianProfitMargin', 'total_return_1y',
     ],
-    'Dividend income': [
-        'Rank', 'price', 'lastDiv', 'yield', 'avgFlatAnnualDivIncrease',
-        'numDividendYear', 'positiveYear', 'max10CutPct', 'DScore',
-    ],
     'Fundamentals': [
         'Rank', 'price', 'mktCapDisplay', 'peRatio', 'psRatio',
         'revenueGrowth', 'netIncomeGrowth', 'medianProfitMargin',
@@ -2012,7 +2008,6 @@ _TABLE_PRESETS = {
     ],
 }
 _TABLE_PRESET_LABELS = {
-    'Dividend income': 'Dividend',
     'Returns and risk': 'Returns',
 }
 _keep = [c for c in _KEEP_COLS if c in final_df.columns]

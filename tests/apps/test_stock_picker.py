@@ -199,10 +199,9 @@ def test_short_control_labels_map_existing_options():
 
 
 def test_last_dividend_sits_between_price_and_yield():
-    for preset in ('Essentials', 'Dividend income'):
-        columns = sp._TABLE_PRESETS[preset]
-        assert columns.index('lastDiv') == columns.index('price') + 1
-        assert columns.index('yield') == columns.index('lastDiv') + 1
+    columns = sp._TABLE_PRESETS['Essentials']
+    assert columns.index('lastDiv') == columns.index('price') + 1
+    assert columns.index('yield') == columns.index('lastDiv') + 1
 
 
 def test_market_cap_penalty_uses_the_table_currency():
