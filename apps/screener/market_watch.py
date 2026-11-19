@@ -32,15 +32,7 @@ st.html("""
     .st-key-mw_header h1 { font-size: 1.75rem; padding: 0; }
 </style>
 """)
-with st.container(key='mw_header'):
-    st.title(
-        'Market Heatmap',
-        help=(
-            'Tile size and colour follow the selected measures. '
-            'Click a stock tile to open its full analysis in the Ranking Screener; '
-            'click a sector to zoom in.'
-        ),
-    )
+header_slot = st.container(key='mw_header')
 toolbar = st.container(horizontal=True, vertical_alignment='bottom', key='mw_toolbar')
 stats_slot = st.container()
 
@@ -346,6 +338,208 @@ def get_fx_prices(
     return df.sort_values('date')
 
 
+# ── Global indices / currencies as heatmap markets ───────────────────────── #
+
+# label → (region, sub-region); these are the treemap's group levels
+_INDEX_REGIONS = {
+    'IHSG':       ('Asia', 'Southeast Asia'),
+    'STI':        ('Asia', 'Southeast Asia'),
+    'KLCI':       ('Asia', 'Southeast Asia'),
+    'Nikkei 225': ('Asia', 'East Asia'),
+    'KOSPI':      ('Asia', 'East Asia'),
+    'TWSE':       ('Asia', 'East Asia'),
+    'Hang Seng':  ('Asia', 'East Asia'),
+    'Sensex':     ('Asia', 'South Asia'),
+    'S&P 500':    ('Americas', 'North America'),
+    'ASX 200':    ('Oceania', 'Oceania'),
+}
+
+_FX_REGIONS = {
+    'USD/IDR': ('Americas', 'North America'),
+    'EUR/IDR': ('Europe', 'Western Europe'),
+    'GBP/IDR': ('Europe', 'Western Europe'),
+    'SGD/IDR': ('Asia', 'Southeast Asia'),
+    'MYR/IDR': ('Asia', 'Southeast Asia'),
+    'JPY/IDR': ('Asia', 'East Asia'),
+    'CNY/IDR': ('Asia', 'East Asia'),
+    'HKD/IDR': ('Asia', 'East Asia'),
+    'KRW/IDR': ('Asia', 'East Asia'),
+    'AUD/IDR': ('Oceania', 'Oceania'),
+}
+
+_MACRO_CONFIG = {
+    'INDICES': {
+        'symbols': _INDEX_SYMBOLS,
+        'flags': _INDEX_FLAGS,
+        'colors': _INDEX_COLORS,
+        'regions': _INDEX_REGIONS,
+        'fetch': get_index_prices,
+        'group_col': 'index',
+        'noun': 'Index',
+        'plural': 'indices',
+        'close_title': 'Close',
+        'default_visible': ['IHSG', 'S&P 500', 'Nikkei 225'],
+        'anchor': 'IHSG',
+        'show_key': 'mw_show_indices',
+    },
+    'FX': {
+        'symbols': _FX_LABELS,
+        'flags': {label: flag for label, flag, _c in _FX_SYMBOLS.values()},
+        'colors': {label: color for label, _f, color in _FX_SYMBOLS.values()},
+        'regions': _FX_REGIONS,
+        'fetch': get_fx_prices,
+        'group_col': 'pair',
+        'noun': 'Pair',
+        'plural': 'currency pairs',
+        'close_title': 'Rate (IDR)',
+        'default_visible': ['USD/IDR', 'EUR/IDR', 'SGD/IDR'],
+        'anchor': None,
+        'show_key': 'mw_show_fx',
+    },
+}
+
+# Calendar days back from the end date; YTD is resolved by macro_period_start
+_MACRO_PERIODS = {
+    '1D': 1, '1W': 7, '1M': 30, '3M': 90, '6M': 180, 'YTD': None,
+    '1Y': 365, '2Y': 730, '3Y': 1095, '5Y': 1825, '10Y': 3650,
+}
+# A line chart needs more than two points, so it has no 1D window
+_MACRO_LINE_PERIODS = [p for p in _MACRO_PERIODS if p != '1D']
+_MACRO_VIEWS = {'treemap': ':material/grid_view: Treemap', 'line': ':material/show_chart: Line chart'}
+_MACRO_DEFAULT_PERIOD = {'treemap': '1D', 'line': '3M'}
+
+# Index-level moves are smaller than single-stock moves; currencies smaller still
+_MACRO_RETURN_THRESHOLDS = {
+    '1D':  [-3, -2, -1, -0.25, 0.25, 1, 2, 3],
+    '1W':  [-6, -4, -2, -0.5, 0.5, 2, 4, 6],
+    '1M':  [-10, -6, -3, -1, 1, 3, 6, 10],
+    '3M':  [-15, -10, -5, -2, 2, 5, 10, 15],
+    '6M':  [-15, -10, -5, -2, 2, 5, 10, 15],
+    'YTD': [-15, -10, -5, -2, 2, 5, 10, 15],
+    '1Y':  [-25, -15, -8, -3, 3, 8, 15, 25],
+    '2Y':  [-40, -25, -12, -5, 5, 12, 25, 40],
+    '3Y':  [-40, -25, -12, -5, 5, 12, 25, 40],
+    '5Y':  [-60, -40, -20, -10, 10, 20, 40, 60],
+    '10Y': [-100, -50, -25, -10, 10, 25, 50, 100],
+}
+
+
+def macro_return_thresholds(period: str, kind: str) -> list[float]:
+    scale = 0.5 if kind == 'FX' else 1
+    return [round(v * scale, 4) for v in _MACRO_RETURN_THRESHOLDS[period]]
+
+
+def macro_period_start(end: date, period: str) -> date | None:
+    """
+    The date whose close (or the last close before it) is the period's base.
+    None for 1D, whose base is simply the previous close.
+    """
+    if period == '1D':
+        return None
+    if period == 'YTD':
+        return date(end.year, 1, 1) - timedelta(days=1)
+    return end - timedelta(days=_MACRO_PERIODS[period])
+
+
+def calc_period_returns(
+    prices: pd.DataFrame,
+    end: date,
+    base_date: date | None = None,
+) -> pd.DataFrame:
+    """
+    For each series in a long [name, date, close] frame: the last close on or
+    before ``end``, its change on the previous close (``return_1d_pct``), and its
+    change since the last close on or before ``base_date`` (``return_pct``; the
+    1D change when ``base_date`` is None).
+    """
+    columns = ['as_of', 'close', 'base_close', 'return_pct', 'return_1d_pct']
+    if prices.empty:
+        return pd.DataFrame(columns=columns)
+
+    end_ts = pd.Timestamp(end)
+    base_ts = pd.Timestamp(base_date) if base_date is not None else None
+    frame = prices.copy()
+    frame['close'] = pd.to_numeric(frame['close'], errors='coerce')
+    frame = frame[frame['close'].notna() & frame['close'].ne(0) & (frame['date'] <= end_ts)]
+
+    rows = []
+    for name, g in frame.sort_values('date').groupby('name'):
+        last = g.iloc[-1]
+        close = float(last['close'])
+        prev = float(g.iloc[-2]['close']) if len(g) >= 2 else np.nan
+        if base_ts is None:
+            base = prev
+        else:
+            before = g[g['date'] <= base_ts]
+            base = float(before.iloc[-1]['close']) if not before.empty else np.nan
+        rows.append({
+            'name': name,
+            'as_of': pd.Timestamp(last['date']),
+            'close': close,
+            'base_close': base,
+            'return_pct': (close / base - 1) * 100 if np.isfinite(base) else np.nan,
+            'return_1d_pct': (close / prev - 1) * 100 if np.isfinite(prev) else np.nan,
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows).set_index('name')[columns]
+
+
+def comparison_line_chart(
+    norm_df: pd.DataFrame,
+    domain: list[str],
+    colors: list[str],
+    noun: str,
+    close_title: str,
+    anchor: str | None = None,
+    height: int = 420,
+) -> alt.LayerChart:
+    """Rebased (100 = start) lines, with an optional thicker anchor series."""
+    scale = alt.Scale(domain=domain, range=colors)
+    tooltip = [
+        alt.Tooltip('date:T',       title='Date'),
+        alt.Tooltip('name:N',       title=noun),
+        alt.Tooltip('normalized:Q', title='Indexed', format='.2f'),
+        alt.Tooltip('close:Q',      title=close_title, format=',.2f'),
+    ]
+    has_anchor = anchor is not None and anchor in set(norm_df['name'])
+    others = norm_df[norm_df['name'] != anchor] if has_anchor else norm_df
+
+    sel = alt.selection_point(fields=['name'], bind='legend')
+    lines = alt.Chart(others).mark_line(
+        strokeWidth=1.8 if has_anchor else 2.0,
+        interpolate='monotone',
+    ).encode(
+        x=alt.X('date:T', title=''),
+        y=alt.Y('normalized:Q', title='Indexed (100 = period start)',
+                scale=alt.Scale(zero=False)),
+        color=alt.Color('name:N', scale=scale,
+                        legend=alt.Legend(title=noun, orient='bottom')),
+        opacity=alt.condition(sel, alt.value(0.85), alt.value(0.15)),
+        tooltip=tooltip,
+    ).add_params(sel)
+
+    baseline = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
+        strokeDash=[4, 3], color=cs.CHART_NEUTRAL, strokeWidth=1, opacity=0.7
+    ).encode(y='y:Q')
+
+    layers = [baseline, lines]
+    if has_anchor:
+        layers.append(
+            alt.Chart(norm_df[norm_df['name'] == anchor]).mark_line(
+                strokeWidth=3.5, opacity=1.0, interpolate='monotone',
+            ).encode(
+                x='date:T',
+                y=alt.Y('normalized:Q', scale=alt.Scale(zero=False)),
+                color=alt.Color('name:N', scale=scale),
+                tooltip=tooltip,
+            )
+        )
+    layers.append(line_end_labels(norm_df, 'name', scale))
+    return alt.layer(*layers).properties(height=height).resolve_scale(color='shared')
+
+
 def calc_daily_return_for_date(prices_df: pd.DataFrame, target_date: pd.Timestamp) -> pd.DataFrame:
     """
     Given a long-format price DataFrame, compute the 1-day return for
@@ -397,6 +591,9 @@ def select_top_movers(df: pd.DataFrame, limit: int = 20) -> tuple[pd.DataFrame, 
 _MARKET_SESSIONS = {
     'JKSE':  ('Asia/Jakarta', time(9, 0)),
     'SP500': ('America/New_York', time(9, 30)),
+    # Daily closes from many exchanges; the page follows the Jakarta calendar
+    'INDICES': ('Asia/Jakarta', time(0, 0)),
+    'FX':      ('Asia/Jakarta', time(0, 0)),
 }
 
 
@@ -506,9 +703,20 @@ def color_legend_html(title: str, colors: list[str], breaks: list[float], unit: 
 
 
 def line_end_labels(norm_df: pd.DataFrame, group_col: str, color_scale: alt.Scale) -> alt.LayerChart:
-    """Dot + name at each line's last point, so series are not told apart by colour alone."""
+    """
+    Dot + name at each line's last point, so series are not told apart by colour alone.
+    Labels nudged off their dot get a thin leader in the series colour back to it.
+    """
     last = norm_df.sort_values('date').groupby(group_col).tail(1)
     last = last.assign(label_y=dodge_label_positions(last['normalized'], norm_df['normalized']))
+    moved = last[~np.isclose(last['label_y'], last['normalized'])]
+    leaders = alt.Chart(moved).mark_rule(strokeWidth=1, opacity=0.6, x2Offset=6).encode(
+        x='date:T',
+        x2='date:T',
+        y='normalized:Q',
+        y2='label_y:Q',
+        color=alt.Color(f'{group_col}:N', scale=color_scale, legend=None),
+    )
     dots = alt.Chart(last).mark_point(
         filled=True, size=60, opacity=1, stroke=cs.CHART_SURFACE, strokeWidth=2
     ).encode(
@@ -519,25 +727,43 @@ def line_end_labels(norm_df: pd.DataFrame, group_col: str, color_scale: alt.Scal
     names = alt.Chart(last).mark_text(
         align='left', dx=8, fontSize=11, fontWeight=600, color=cs.CHART_TEXT
     ).encode(x='date:T', y='label_y:Q', text=f'{group_col}:N')
-    return dots + names
+    return leaders + dots + names
 
 
 def dodge_label_positions(
-    end_values: pd.Series, all_values: pd.Series, min_gap_ratio: float = 0.07
+    end_values: pd.Series, all_values: pd.Series, min_gap_ratio: float = 0.045
 ) -> pd.Series:
     """
-    Push line-end labels apart vertically so close finishes stay readable.
+    Push line-end labels apart vertically so close finishes stay readable,
+    moving each label as little as possible.
+    Labels that overlap are merged into a block spaced exactly one gap apart and
+    centred on the mean of its members' true values; a label already a gap clear
+    of its neighbours stays exactly on its value. Label order follows value order.
     The gap is a share of the plotted range, since pixel positions are unknown here.
     """
+    if end_values.empty:
+        return end_values.astype(float)
     span = float(all_values.max() - all_values.min()) or 1.0
     gap = span * min_gap_ratio
     ordered = end_values.sort_values()
-    positions = []
-    for value in ordered:
-        positions.append(max(value, positions[-1] + gap) if positions else value)
-    # Re-centre so the stack sits around the true end values, not only above them
-    shift = (sum(positions) - float(ordered.sum())) / len(positions)
-    return pd.Series([p - shift for p in positions], index=ordered.index).reindex(end_values.index)
+    blocks = []  # each block: [true values of its members, centre]
+    for value in ordered.astype(float):
+        blocks.append([[value], value])
+        # Merge with the block below while their edges are closer than one gap
+        while len(blocks) > 1:
+            (low, low_c), (high, high_c) = blocks[-2], blocks[-1]
+            low_top = low_c + (len(low) - 1) / 2 * gap
+            high_bottom = high_c - (len(high) - 1) / 2 * gap
+            if high_bottom - low_top >= gap * (1 - 1e-9):
+                break
+            members = low + high
+            blocks[-2:] = [[members, sum(members) / len(members)]]
+    positions = [
+        centre + (i - (len(members) - 1) / 2) * gap
+        for members, centre in blocks
+        for i in range(len(members))
+    ]
+    return pd.Series(positions, index=ordered.index).reindex(end_values.index)
 
 
 def build_tree_input(
@@ -623,31 +849,45 @@ def get_usdidr_period_fx_factor(fmp_key: str, date_to_str: str, n_days: int) -> 
 
 # ── URL query params — read once at the top ──────────────────────────────── #
 # Supported params:
-#   market  : 'JKSE' | 'SP500'
+#   market  : 'JKSE' | 'SP500' | 'INDICES' | 'FX'
 #   date    : 'YYYY-MM-DD'
+#   group   : '1' | '0'
+# Stock markets (JKSE, SP500) only:
 #   size    : 'Market Cap' | 'Revenue' | 'Net Income' | 'Dividend Yield'
 #   color   : any label from _COLOR_OPTION_COL_MAP
 #   sector  : sector name | 'ALL'
-#   group   : '1' | '0'
 #   mcap    : integer (billions)
+# Global indices and currencies (INDICES, FX) only:
+#   view    : 'treemap' | 'line'
+#   period  : any key of _MACRO_PERIODS ('1D' is treemap only)
+#   region  : region name | 'ALL'        (treemap)
+#   show    : comma-separated labels     (line chart)
 
 _qp = st.query_params
 
 # ── Primary controls ──────────────────────────────────────────────────────── #
 
-_MARKET_OPTIONS = ['Indonesian Stock (JKSE)', 'S&P 500 (US)']
+_MARKET_CODES = {
+    'Indonesian Stock (JKSE)': 'JKSE',
+    'S&P 500 (US)':            'SP500',
+    'Global Indices':          'INDICES',
+    'Currencies (vs IDR)':     'FX',
+}
+_MARKET_OPTIONS = list(_MARKET_CODES)
+_CODE_TO_MARKET = {code: label for label, code in _MARKET_CODES.items()}
 _MARKET_SHORT_LABELS = {
     'Indonesian Stock (JKSE)': 'IDX',
-    'S&P 500 (US)': 'S&P 500',
+    'S&P 500 (US)':            'S&P 500',
+    'Global Indices':          'Indices',
+    'Currencies (vs IDR)':     'Currencies',
 }
-_market_qp      = _qp.get('market', '')
-_market_default = (
-    'S&P 500 (US)' if _market_qp.upper() == 'SP500'
-    else 'Indonesian Stock (JKSE)'
-)
+_MACRO_MARKETS = ('INDICES', 'FX')
+_DEFAULT_MARKET = 'Indonesian Stock (JKSE)'
+_market_default = _CODE_TO_MARKET.get(_qp.get('market', '').upper(), _DEFAULT_MARKET)
+
 
 def _market_code(market_label: str) -> str:
-    return 'SP500' if market_label == 'S&P 500 (US)' else 'JKSE'
+    return _MARKET_CODES.get(market_label, 'JKSE')
 
 
 def _latest_trading_date(market_label: str) -> date:
@@ -656,12 +896,12 @@ def _latest_trading_date(market_label: str) -> date:
 
 
 def _show_latest_date():
-    market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    market = st.session_state.get('mw_sl', _DEFAULT_MARKET)
     st.session_state['mw_date'] = _latest_trading_date(market)
 
 
 def _reset_heatmap_filters():
-    market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    market = st.session_state.get('mw_sl', _DEFAULT_MARKET)
     st.session_state['mw_date'] = _latest_trading_date(market)
     st.session_state['mw_size'] = 'Market Cap'
     st.session_state['mw_color'] = '1D Return %'
@@ -670,17 +910,39 @@ def _reset_heatmap_filters():
     st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
 
 
+def _reset_macro_filters():
+    market = st.session_state.get('mw_sl', _DEFAULT_MARKET)
+    cfg = _MACRO_CONFIG[_market_code(market)]
+    view = st.session_state.get('mw_view', 'treemap')
+    st.session_state['mw_date'] = _latest_trading_date(market)
+    st.session_state['mw_period'] = _MACRO_DEFAULT_PERIOD[view]
+    st.session_state['mw_region'] = 'ALL'
+    st.session_state['mw_group'] = False
+    st.session_state[cfg['show_key']] = list(cfg['default_visible'])
+
+
+def _macro_view_changed():
+    # A line chart has no 1D window; move to the line chart's default period
+    if st.session_state.get('mw_view') == 'line' and st.session_state.get('mw_period') == '1D':
+        st.session_state['mw_period'] = _MACRO_DEFAULT_PERIOD['line']
+
+
 def _market_changed():
-    market = st.session_state.get('mw_sl', 'Indonesian Stock (JKSE)')
+    market = st.session_state.get('mw_sl', _DEFAULT_MARKET)
     # The URL still names the market being left. If the user was on that
     # market's latest session, follow to the new market's latest session
     # (Jakarta and New York sessions fall on different calendar dates).
-    previous = 'S&P 500 (US)' if st.query_params.get('market') == 'SP500' else 'Indonesian Stock (JKSE)'
+    previous = _CODE_TO_MARKET.get(st.query_params.get('market', '').upper(), _DEFAULT_MARKET)
     if st.session_state.get('mw_date') == _latest_trading_date(previous):
         st.session_state['mw_date'] = _latest_trading_date(market)
-    st.session_state['mw_color'] = '1D Return %'
-    st.session_state['mw_sector'] = 'ALL'
-    st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
+    if _market_code(market) in _MACRO_MARKETS:
+        st.session_state['mw_region'] = 'ALL'
+        st.session_state['mw_group'] = False
+    else:
+        st.session_state['mw_color'] = '1D Return %'
+        st.session_state['mw_sector'] = 'ALL'
+        st.session_state['mw_group'] = True
+        st.session_state['mw_mcap'] = 1 if market == 'S&P 500 (US)' else 10
 
 
 stock_select = toolbar.segmented_control(
@@ -696,6 +958,20 @@ stock_select = toolbar.segmented_control(
 
 sl = _market_code(stock_select)
 redis_key = 'div_score_jkse' if sl == 'JKSE' else 'div_score_sp500'
+
+with header_slot:
+    st.title(
+        'Market Heatmap',
+        help=(
+            'Each tile is one index or currency pair, coloured by its return over the '
+            'selected period; click a region to zoom in. Switch to Line chart to compare '
+            'the path over the period, rebased to 100.'
+            if sl in _MACRO_MARKETS else
+            'Tile size and colour follow the selected measures. '
+            'Click a stock tile to open its full analysis in the Ranking Screener; '
+            'click a sector to zoom in.'
+        ),
+    )
 
 market_tz = ZoneInfo(_MARKET_SESSIONS[sl][0])
 market_today = datetime.now(market_tz).date()
@@ -726,6 +1002,329 @@ toolbar.button(
     help='Jump to the latest trading session',
     on_click=_show_latest_date,
 )
+
+
+# ── Global indices / currencies ───────────────────────────────────────────── #
+
+def render_macro_market(kind: str, end: date) -> None:
+    """Treemap or line chart of global indices or currency pairs (vs IDR)."""
+    cfg = _MACRO_CONFIG[kind]
+    labels = list(cfg['symbols'].values())
+    label_to_sym = {label: sym for sym, label in cfg['symbols'].items()}
+
+    _view_qp = _qp.get('view', '')
+    view = toolbar.segmented_control(
+        'View',
+        list(_MACRO_VIEWS),
+        default=_view_qp if _view_qp in _MACRO_VIEWS else 'treemap',
+        required=True,
+        format_func=_MACRO_VIEWS.get,
+        key='mw_view',
+        on_change=_macro_view_changed,
+        label_visibility='collapsed',
+    )
+
+    period_options = list(_MACRO_PERIODS) if view == 'treemap' else _MACRO_LINE_PERIODS
+    _period_qp = _qp.get('period', '')
+    period = toolbar.selectbox(
+        'Period',
+        options=period_options,
+        index=period_options.index(
+            _period_qp if _period_qp in period_options else _MACRO_DEFAULT_PERIOD[view]
+        ),
+        format_func=lambda value: f'Period: {value}',
+        key='mw_period',
+        label_visibility='collapsed',
+        width=130,
+    )
+
+    regions = sorted({region for region, _sub in cfg['regions'].values()})
+    _region_qp = _qp.get('region', 'ALL')
+    _region_default = _region_qp if _region_qp in regions else 'ALL'
+    _group_default = _qp.get('group', '0') == '1'
+    _show_qp = [lbl for lbl in _qp.get('show', '').split(',') if lbl in labels]
+    _show_default = _show_qp or list(cfg['default_visible'])
+
+    if view == 'treemap':
+        _active_filters = sum([
+            st.session_state.get('mw_region', _region_default) != 'ALL',
+            st.session_state.get('mw_group', _group_default),
+        ])
+        _filter_help = 'Filters: region, grouping'
+    else:
+        _active_filters = int(
+            sorted(st.session_state.get(cfg['show_key'], _show_default))
+            != sorted(cfg['default_visible'])
+        )
+        _filter_help = f'Choose the {cfg["plural"]} to compare'
+
+    region_filter, group_secs, visible = 'ALL', _group_default, _show_default
+    with toolbar.popover(
+        f':material/tune: {_active_filters}' if _active_filters else ':material/tune:',
+        help=_filter_help,
+    ):
+        if view == 'treemap':
+            region_filter = st.selectbox(
+                'Region',
+                options=['ALL'] + regions,
+                index=(['ALL'] + regions).index(_region_default),
+                format_func=lambda value: 'All regions' if value == 'ALL' else value,
+                key='mw_region',
+            )
+            group_secs = st.toggle(
+                f'Group {cfg["plural"]} by region', value=_group_default, key='mw_group'
+            )
+        else:
+            visible = st.multiselect(
+                f'Show {cfg["plural"]}',
+                options=labels,
+                default=_show_default,
+                key=cfg['show_key'],
+            )
+        st.button(
+            'Reset filters',
+            icon=':material/restart_alt:',
+            on_click=_reset_macro_filters,
+            width='stretch',
+        )
+
+    # ── Sync widget state → URL query params ──────────────────────────────── #
+    for _stale in ('size', 'color', 'sector', 'mcap', 'region', 'show'):
+        if _stale in _qp:
+            del _qp[_stale]
+    _qp['market'] = kind
+    _qp['date'] = end.strftime('%Y-%m-%d')
+    _qp['view'] = view
+    _qp['period'] = period
+    _qp['group'] = '1' if group_secs else '0'
+    if view == 'treemap':
+        _qp['region'] = region_filter
+    else:
+        _qp['show'] = ','.join(visible)
+
+    # ── Fetch closes ──────────────────────────────────────────────────────── #
+    if view == 'treemap':
+        names = [
+            lbl for lbl in labels
+            if region_filter == 'ALL' or cfg['regions'][lbl][0] == region_filter
+        ]
+    else:
+        names = [lbl for lbl in labels if lbl in visible]
+    if not names:
+        st.info(f'Select at least one of the {cfg["plural"]} to display.')
+        return
+
+    base_date = macro_period_start(end, period)
+    # A short buffer so the base close exists across weekends and holidays
+    fetch_from = (base_date or end) - timedelta(days=10)
+    prices = cfg['fetch'](
+        api_key,
+        fetch_from.strftime('%Y-%m-%d'),
+        end.strftime('%Y-%m-%d'),
+        tuple(label_to_sym[lbl] for lbl in names),
+    ).rename(columns={cfg['group_col']: 'name'})
+    prices = prices[prices['name'].isin(names)] if not prices.empty else prices
+    if prices.empty:
+        st.warning(
+            f'Could not load {cfg["plural"]} prices. Check FMP API key or network.',
+            icon='⚠️',
+        )
+        return
+
+    rets = calc_period_returns(prices, end, base_date)
+    fx_note = (
+        'Green means the currency gained against the rupiah (the rupiah weakened).'
+        if kind == 'FX' else None
+    )
+
+    # ── Status line ───────────────────────────────────────────────────────── #
+    status_col = 'return_pct'
+    valid = rets[status_col].dropna()
+    if not valid.empty:
+        latest_close = rets['as_of'].max().date()
+        n_up, n_down = int((valid > 0).sum()), int((valid < 0).sum())
+        details = [
+            'Source: FMP daily closes',
+            f'Latest close: {latest_close}',
+            (
+                f'{period} return compares each latest close on or before {end} '
+                + ('with the previous close.' if base_date is None
+                   else f'with the last close on or before {base_date}.')
+            ),
+        ]
+        stale = rets[rets['as_of'].dt.date < latest_close]
+        if not stale.empty:
+            details.append(
+                'Not yet closed on that date (holiday or time zone): '
+                + ', '.join(f'{name} ({ts.date()})' for name, ts in stale['as_of'].items())
+            )
+        if fx_note:
+            details.append(fx_note)
+        badge = (
+            f':gray-badge[{latest_close}]' if latest_close == end
+            else f':orange-badge[:material/info: Showing {latest_close}]'
+        )
+        with stats_slot:
+            st.caption(
+                f'{badge}&ensp;**{n_up}** of {len(valid)} {cfg["plural"]} up over {period} '
+                f'(:green[▲ {n_up}] :red[▼ {n_down}])'
+                f'&ensp;·&ensp;Median **{float(valid.median()):+.2f}%**',
+                help='  \n'.join(details),
+            )
+
+    if view == 'treemap':
+        _render_macro_treemap(kind, cfg, rets, period, group_secs, fx_note)
+    else:
+        _render_macro_lines(cfg, prices, rets, period, base_date or end, visible)
+
+
+def _render_macro_treemap(kind, cfg, rets, period, group_secs, fx_note):
+    color_label = f'{period} Return %'
+    rets = rets.dropna(subset=['return_pct'])
+    if rets.empty:
+        st.info(
+            f'No {cfg["plural"]} have a {period} return for this date. '
+            'Try another date or period.',
+            icon=':material/filter_alt_off:',
+        )
+        return
+
+    # Every tile is the same size: there is no shared weight across markets
+    tree_input = pd.DataFrame({
+        'sector':    [cfg['regions'][name][0] for name in rets.index],
+        'industry':  [cfg['regions'][name][1] for name in rets.index],
+        'Weight':    1.0,
+        color_label: rets['return_pct'].to_numpy(),
+    }, index=pd.Index(rets.index, name='stock'))
+
+    color_threshold = macro_return_thresholds(period, kind)
+    tree_data = hd.prep_treemap(
+        tree_input,
+        size_var='Weight',
+        color_var=color_label,
+        color_threshold=color_threshold,
+        add_label='color_var',
+        group_secs=group_secs,
+    )
+    option = hp.plot_treemap(
+        tree_data,
+        size_var='Weight',
+        color_var=color_label,
+        show_gradient=True,
+        colormap='red_green',
+        group_secs=group_secs,
+    )
+    option['title'] = {'show': False}
+    option.setdefault('aria', {})['description'] = (
+        f'Treemap of {cfg["plural"]}{", grouped by region" if group_secs else ""}; '
+        f'tile color represents the {period} return.'
+    )
+    # Tile size carries no information here, so the tooltip shows only the return
+    option['tooltip'] = {
+        'formatter': hp.JsCode(
+            "function(info){var v=info.value||[];var p=[];"
+            "for(var i=1;i<info.treePathInfo.length;i+=1){"
+            "p.push(String(info.treePathInfo[i].name).split('\\n')[0]);}"
+            "var r=(typeof v[1]==='number')?(v[1]>=0?'+':'')+v[1].toFixed(2)+'%':'N/A';"
+            f"return '<div class=\"tooltip-title\">'+p.join(' / ')+'</div>{color_label}: '+r;}}"
+        ).js_code,
+    }
+    _series = option['series'][0]
+    _series.pop('width', None)
+    _series.pop('height', None)
+    _series.update({'top': 0, 'left': 0, 'right': 0, 'bottom': 28})
+    _series['levels'][0]['upperLabel'] = {'show': False}
+
+    treemap_height = remaining_viewport_height('mw_viewport', reserve=64)
+    st_echarts(
+        option,
+        height=f'{treemap_height}px',
+        width='100%',
+        key=f'mw_treemap_{kind.lower()}',
+    )
+    st.html(color_legend_html(
+        color_label,
+        hp.treemap_bin_colors('red_green', len(color_threshold) + 1),
+        color_threshold,
+        unit='%',
+    ))
+    if fx_note:
+        st.caption(f'Rates are IDR per one unit of the foreign currency. {fx_note}')
+
+    with st.expander(f'{cfg["noun"]} returns table', expanded=False):
+        table = rets.assign(
+            flag=[cfg['flags'].get(name, '') for name in rets.index],
+            region=[cfg['regions'][name][0] for name in rets.index],
+            as_of=rets['as_of'].dt.date,
+        ).sort_values('return_pct', ascending=False).reset_index(names='name')
+        st.dataframe(
+            table[['flag', 'name', 'region', 'as_of', 'close', 'return_1d_pct', 'return_pct']],
+            column_config={
+                'flag': st.column_config.TextColumn('', width='small'),
+                'name': st.column_config.TextColumn(cfg['noun']),
+                'region': st.column_config.TextColumn('Region'),
+                'as_of': st.column_config.DateColumn('Latest close'),
+                'close': st.column_config.NumberColumn(cfg['close_title'], format='%,.2f'),
+                'return_1d_pct': st.column_config.NumberColumn('1D Return %', format='%+.2f%%'),
+                'return_pct': st.column_config.NumberColumn(color_label, format='%+.2f%%'),
+            },
+            hide_index=True,
+        )
+
+
+def _render_macro_lines(cfg, prices, rets, period, line_start, visible):
+    windowed = prices[prices['date'] >= pd.Timestamp(line_start)]
+    norm_df, shared_start = normalize_on_shared_date(windowed, group_col='name')
+    if norm_df.empty:
+        st.info(
+            f'The selected {cfg["plural"]} have no shared trading dates in this period.',
+            icon=':material/filter_alt_off:',
+        )
+        return
+
+    domain = [lbl for lbl in cfg['colors'] if lbl in visible]
+    chart = comparison_line_chart(
+        norm_df,
+        domain=domain,
+        colors=[cfg['colors'][lbl] for lbl in domain],
+        noun=cfg['noun'],
+        close_title=cfg['close_title'],
+        anchor=cfg['anchor'],
+        height=max(320, remaining_viewport_height('mw_viewport', reserve=200) - 40),
+    )
+    st.altair_chart(chart, width='stretch', theme=None)
+    if shared_start is not None:
+        st.caption(
+            f'All selected {cfg["plural"]} are rebased to 100 on their first shared '
+            f'trading date: {shared_start.date()}.'
+            + (' Rates are IDR per one unit of the foreign currency.'
+               if cfg['group_col'] == 'pair' else '')
+        )
+
+    # Period return from the rebased lines, so the cards match the chart ends
+    period_rets = norm_df.sort_values('date').groupby('name')['normalized'].last() - 100
+    ordered = sorted(
+        [lbl for lbl in visible if lbl in period_rets.index],
+        key=lambda lbl: (lbl != cfg['anchor'], -period_rets[lbl]),
+    )
+    st.markdown(f'**{cfg["noun"]} returns over {period}, with 1D change**')
+    cards_per_row = 5
+    for row_start in range(0, len(ordered), cards_per_row):
+        row = ordered[row_start: row_start + cards_per_row]
+        for col, lbl in zip(st.columns(len(row)), row):
+            d_ret = rets['return_1d_pct'].get(lbl, np.nan)
+            col.metric(
+                label=f'{cfg["flags"].get(lbl, "")} {lbl}',
+                value=f'{period_rets[lbl]:+.2f}%',
+                delta=f'{d_ret:+.2f}% 1D' if np.isfinite(d_ret) else None,
+                help=f'Return over **{period}** | 1-day change on the latest close',
+            )
+
+
+if sl in _MACRO_MARKETS:
+    render_macro_market(sl, selected_date)
+    st.stop()
+
 
 # ── Load universe ─────────────────────────────────────────────────────────── #
 
@@ -881,6 +1480,9 @@ with toolbar.popover(
     )
 
 # ── Sync widget state → URL query params ──────────────────────────────────── #
+for _stale in ('view', 'period', 'region', 'show'):
+    if _stale in _qp:
+        del _qp[_stale]
 _qp['market']  = sl
 _qp['date']    = selected_date.strftime('%Y-%m-%d')
 _qp['size']    = size_var
@@ -1302,408 +1904,3 @@ else:
                 column_config=cfig_g,
                 hide_index=True,
             )
-
-    load_macro_context = st.toggle(
-        'Load global index and currency analysis',
-        value=False,
-        key='mw_load_macro',
-        help=(
-            'These comparisons use additional external requests. Keep this off '
-            'when you only need the stock heatmap.'
-        ),
-    )
-    if not load_macro_context:
-        st.caption(
-            'Global indices and currency pairs are loaded on demand to keep the '
-            'primary heatmap responsive.'
-        )
-        st.stop()
-
-    # ── Global Index Comparison ───────────────────────────────────────────── #
-
-    st.divider()
-    st.subheader('Global index comparison')
-    st.caption('Normalized performance (rebased to 100) vs IHSG — select a time window to compare.')
-
-    _PERIOD_OPTIONS = {
-        '1W':   7,
-        '1M':   30,
-        '3M':   90,
-        '6M':   180,
-        'YTD':  None,   # handled specially
-        '1Y':   365,
-        '2Y':   730,
-        '3Y':   1095,
-        '5Y':   1825,
-        '10Y':  3650,
-    }
-
-    idx_col1, idx_col2 = st.columns([3, 1])
-    with idx_col2:
-        period_label = st.selectbox(
-            'Period',
-            options=list(_PERIOD_OPTIONS.keys()),
-            index=2,          # default 3M
-            key='mw_idx_period',
-        )
-        visible_indices = st.multiselect(
-            'Show indices',
-            options=list(_INDEX_SYMBOLS.values()),
-            default=['IHSG', 'S&P 500', 'Nikkei 225'],
-            key='mw_idx_visible',
-        )
-
-    # Compute date range for index fetch
-    idx_to   = _effective_date
-    if period_label == 'YTD':
-        idx_from = date(idx_to.year, 1, 1)
-    else:
-        idx_from = idx_to - timedelta(days=_PERIOD_OPTIONS[period_label])
-
-    idx_from_str = idx_from.strftime('%Y-%m-%d')
-    idx_to_str   = idx_to.strftime('%Y-%m-%d')
-
-    selected_index_symbols = tuple(
-        symbol for symbol, label in _INDEX_SYMBOLS.items() if label in visible_indices
-    )
-    idx_prices_df = get_index_prices(
-        api_key, idx_from_str, idx_to_str, selected_index_symbols
-    )
-
-    with idx_col1:
-        if idx_prices_df.empty:
-            st.warning('Could not load index price data. Check FMP API key or network.', icon='⚠️')
-        else:
-            # Filter to selected indices
-            idx_prices_df = idx_prices_df[idx_prices_df['index'].isin(visible_indices)]
-
-            if idx_prices_df.empty:
-                st.info('Select at least one index to display.')
-            else:
-                norm_df, idx_shared_start = normalize_on_shared_date(
-                    idx_prices_df, group_col='index'
-                )
-                idx_prices_df = norm_df
-                if idx_shared_start is not None:
-                    st.caption(
-                        f'All selected indices are rebased from their first shared '
-                        f'trading date: {idx_shared_start.date()}.'
-                    )
-
-                # Colour scale
-                domain_idx    = [lbl for lbl in _INDEX_COLORS if lbl in visible_indices]
-                range_idx     = [_INDEX_COLORS[lbl] for lbl in domain_idx]
-
-                # Highlight IHSG with a thicker, full-opacity line
-                norm_others = norm_df[norm_df['index'] != 'IHSG']
-                norm_ihsg   = norm_df[norm_df['index'] == 'IHSG']
-
-                sel = alt.selection_point(fields=['index'], bind='legend')
-
-                base_line = alt.Chart(norm_others).mark_line(
-                    strokeWidth=1.8,
-                    opacity=0.75,
-                    interpolate='monotone',
-                ).encode(
-                    x=alt.X('date:T', title=''),
-                    y=alt.Y('normalized:Q', title='Indexed (100 = period start)',
-                            scale=alt.Scale(zero=False)),
-                    color=alt.Color(
-                        'index:N',
-                        scale=alt.Scale(domain=domain_idx, range=range_idx),
-                        legend=alt.Legend(title='Index', orient='bottom'),
-                    ),
-                    opacity=alt.condition(sel, alt.value(0.85), alt.value(0.15)),
-                    tooltip=[
-                        alt.Tooltip('date:T',         title='Date'),
-                        alt.Tooltip('index:N',        title='Index'),
-                        alt.Tooltip('normalized:Q',   title='Indexed',  format='.2f'),
-                        alt.Tooltip('close:Q',        title='Close',    format=',.2f'),
-                    ],
-                ).add_params(sel)
-
-                ihsg_line = alt.Chart(norm_ihsg).mark_line(
-                    strokeWidth=3.5,
-                    opacity=1.0,
-                    interpolate='monotone',
-                    strokeDash=[],
-                ).encode(
-                    x=alt.X('date:T'),
-                    y=alt.Y('normalized:Q', scale=alt.Scale(zero=False)),
-                    color=alt.Color(
-                        'index:N',
-                        scale=alt.Scale(domain=domain_idx, range=range_idx),
-                    ),
-                    tooltip=[
-                        alt.Tooltip('date:T',         title='Date'),
-                        alt.Tooltip('index:N',        title='Index'),
-                        alt.Tooltip('normalized:Q',   title='Indexed',  format='.2f'),
-                        alt.Tooltip('close:Q',        title='Close',    format=',.2f'),
-                    ],
-                )
-
-                baseline_rule = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                    strokeDash=[4, 3], color=cs.CHART_NEUTRAL, strokeWidth=1, opacity=0.7
-                ).encode(y='y:Q')
-
-                perf_chart = (
-                    alt.layer(
-                        baseline_rule, base_line, ihsg_line,
-                        line_end_labels(
-                            norm_df, 'index',
-                            alt.Scale(domain=domain_idx, range=range_idx),
-                        ),
-                    )
-                    .properties(height=360)
-                    .resolve_scale(color='shared')
-                )
-                st.altair_chart(perf_chart, width='stretch', theme=None)
-
-    # ── Index metric cards (1D return + period return) ───────────────────────#
-
-    if not idx_prices_df.empty:
-        # Fetch a 1-week window around selected_date to compute the 1D return
-        all_idx_full = get_index_prices(
-            api_key,
-            (idx_to - timedelta(days=7)).strftime('%Y-%m-%d'),
-            idx_to_str,
-            selected_index_symbols,
-        )
-
-        if not all_idx_full.empty:
-            all_idx_full   = all_idx_full[all_idx_full['index'].isin(visible_indices)]
-            target_ts_idx  = pd.Timestamp(idx_to)
-
-            # Also compute period return from the already-fetched norm_df
-            # norm_df is in scope from the block above (inside idx_col1 `with`).
-            # Re-compute it safely here using idx_prices_df (already filtered).
-            def _period_return(g):
-                g = g.sort_values('date')
-                if len(g) < 2:
-                    return None
-                return (g['close'].iloc[-1] / g['close'].iloc[0] - 1) * 100
-
-            period_rets = (
-                idx_prices_df
-                .groupby('index')
-                .apply(_period_return, include_groups=False)
-                .dropna()
-            )  # Series: index → period_return_pct
-
-            def _get_1d_return(g):
-                g = g.sort_values('date')
-                today_row  = g[g['date'] == target_ts_idx]
-                prev_rows  = g[g['date'] < target_ts_idx]
-                if today_row.empty or prev_rows.empty:
-                    return None
-                close      = float(today_row['close'].iloc[0])
-                prev_close = float(prev_rows.iloc[-1]['close'])
-                return (close / prev_close - 1) * 100 if prev_close else None
-
-            daily_rets = (
-                all_idx_full
-                .groupby('index')
-                .apply(_get_1d_return, include_groups=False)
-                .dropna()
-            )  # Series: index → 1d_return_pct
-
-            # Build sorted order: IHSG first, then descending by period return
-            all_labels = [lbl for lbl in _INDEX_SYMBOLS.values() if lbl in visible_indices]
-            sorted_labels = sorted(
-                all_labels,
-                key=lambda lbl: (lbl != 'IHSG', -(period_rets.get(lbl, float('-inf')))),
-            )
-
-            st.markdown(
-                f'**Index returns over {period_label}, with 1D change**'
-            )
-            # Render cards in rows of 5
-            cards_per_row = 5
-            for row_start in range(0, len(sorted_labels), cards_per_row):
-                row_labels = sorted_labels[row_start: row_start + cards_per_row]
-                cols = st.columns(len(row_labels))
-                for col, lbl in zip(cols, row_labels):
-                    d_ret  = daily_rets.get(lbl)
-                    p_ret  = period_rets.get(lbl)
-                    p_str  = f'{p_ret:+.2f}%'  if p_ret  is not None else 'N/A'
-                    # Signed delta string so Streamlit picks arrow and colour from it
-                    d_str  = f'{d_ret:+.2f}% 1D' if d_ret is not None else None
-                    flag    = _INDEX_FLAGS.get(lbl, '')
-                    col.metric(
-                        label=f'{flag} {lbl}',
-                        value=p_str,
-                        delta=d_str,
-                        help=f'Period return over **{period_label}** | 1-day return on {date_to_str}',
-                    )
-
-    # ── Currency Watch (Forex vs IDR) ─────────────────────────────────────── #
-
-    st.divider()
-    st.subheader('Currency watch vs Indonesian rupiah')
-    st.caption('Exchange rates of major currencies against IDR — normalized to 100 at the start of the selected period.')
-
-    fx_col1, fx_col2 = st.columns([3, 1])
-    with fx_col2:
-        fx_period_label = st.selectbox(
-            'Period',
-            options=list(_PERIOD_OPTIONS.keys()),
-            index=2,          # default 3M
-            key='mw_fx_period',
-        )
-        all_fx_labels = [v[0] for v in _FX_SYMBOLS.values()]
-        visible_pairs = st.multiselect(
-            'Show pairs',
-            options=all_fx_labels,
-            default=['USD/IDR', 'EUR/IDR', 'SGD/IDR'],
-            key='mw_fx_visible',
-        )
-
-    # Compute date range for FX fetch
-    fx_to = _effective_date
-    if fx_period_label == 'YTD':
-        fx_from = date(fx_to.year, 1, 1)
-    else:
-        fx_from = fx_to - timedelta(days=_PERIOD_OPTIONS[fx_period_label])
-
-    fx_from_str = fx_from.strftime('%Y-%m-%d')
-    fx_to_str   = fx_to.strftime('%Y-%m-%d')
-
-    selected_fx_symbols = tuple(
-        symbol for symbol, label in _FX_LABELS.items() if label in visible_pairs
-    )
-    fx_prices_df = get_fx_prices(
-        api_key, fx_from_str, fx_to_str, selected_fx_symbols
-    )
-
-    with fx_col1:
-        if fx_prices_df.empty:
-            st.warning('Could not load currency rate data. Check FMP API key or network.', icon='⚠️')
-        else:
-            fx_filtered = fx_prices_df[fx_prices_df['pair'].isin(visible_pairs)]
-
-            if fx_filtered.empty:
-                st.info('Select at least one currency pair to display.')
-            else:
-                fx_norm_df, fx_shared_start = normalize_on_shared_date(
-                    fx_filtered, group_col='pair'
-                )
-                if fx_shared_start is not None:
-                    st.caption(
-                        f'All selected pairs are rebased from their first shared '
-                        f'trading date: {fx_shared_start.date()}.'
-                    )
-
-                # Build color scale from label → color
-                fx_domain = [v[0] for v in _FX_SYMBOLS.values() if v[0] in visible_pairs]
-                fx_range  = [v[2] for v in _FX_SYMBOLS.values() if v[0] in visible_pairs]
-
-                fx_sel = alt.selection_point(fields=['pair'], bind='legend')
-
-                fx_line = alt.Chart(fx_norm_df).mark_line(
-                    strokeWidth=2.0,
-                    interpolate='monotone',
-                ).encode(
-                    x=alt.X('date:T', title=''),
-                    y=alt.Y('normalized:Q', title='Indexed (100 = period start)',
-                            scale=alt.Scale(zero=False)),
-                    color=alt.Color(
-                        'pair:N',
-                        scale=alt.Scale(domain=fx_domain, range=fx_range),
-                        legend=alt.Legend(title='Currency pair', orient='bottom'),
-                    ),
-                    opacity=alt.condition(fx_sel, alt.value(0.9), alt.value(0.15)),
-                    tooltip=[
-                        alt.Tooltip('date:T',       title='Date'),
-                        alt.Tooltip('pair:N',       title='Pair'),
-                        alt.Tooltip('normalized:Q', title='Indexed',      format='.2f'),
-                        alt.Tooltip('close:Q',      title='Rate (IDR)',   format=',.2f'),
-                    ],
-                ).add_params(fx_sel)
-
-                fx_baseline = alt.Chart(pd.DataFrame({'y': [100]})).mark_rule(
-                    strokeDash=[4, 3], color=cs.CHART_NEUTRAL, strokeWidth=1, opacity=0.7
-                ).encode(y='y:Q')
-
-                fx_chart = (
-                    alt.layer(
-                        fx_baseline, fx_line,
-                        line_end_labels(
-                            fx_norm_df, 'pair',
-                            alt.Scale(domain=fx_domain, range=fx_range),
-                        ),
-                    )
-                    .properties(height=360)
-                    .resolve_scale(color='shared')
-                )
-                st.altair_chart(fx_chart, width='stretch', theme=None)
-
-    # ── FX metric cards (1D return + period return) ──────────────────────── #
-
-    if not fx_prices_df.empty and visible_pairs:
-        # Fetch a short window around selected_date for 1D return calculation
-        fx_full = get_fx_prices(
-            api_key,
-            (fx_to - timedelta(days=7)).strftime('%Y-%m-%d'),
-            fx_to_str,
-            selected_fx_symbols,
-        )
-
-        if not fx_full.empty:
-            fx_full = fx_full[fx_full['pair'].isin(visible_pairs)]
-            target_ts_fx = pd.Timestamp(fx_to)
-
-            def _fx_period_return(g):
-                g = g.sort_values('date')
-                if len(g) < 2:
-                    return None
-                return (g['close'].iloc[-1] / g['close'].iloc[0] - 1) * 100
-
-            fx_period_df = fx_prices_df[fx_prices_df['pair'].isin(visible_pairs)]
-            fx_period_rets = (
-                fx_period_df
-                .groupby('pair')
-                .apply(_fx_period_return, include_groups=False)
-                .dropna()
-            )
-
-            def _fx_1d_return(g):
-                g = g.sort_values('date')
-                today_row = g[g['date'] == target_ts_fx]
-                prev_rows = g[g['date'] < target_ts_fx]
-                if today_row.empty or prev_rows.empty:
-                    return None
-                close     = float(today_row['close'].iloc[0])
-                prev_close = float(prev_rows.iloc[-1]['close'])
-                return (close / prev_close - 1) * 100 if prev_close else None
-
-            fx_daily_rets = (
-                fx_full
-                .groupby('pair')
-                .apply(_fx_1d_return, include_groups=False)
-                .dropna()
-            )
-
-            # Sort by period return descending
-            sorted_pairs = sorted(
-                visible_pairs,
-                key=lambda lbl: -(fx_period_rets.get(lbl, float('-inf'))),
-            )
-
-            st.markdown(f'**Currency returns over {fx_period_label}, with 1D change**')
-            fx_cards_per_row = 5
-            for row_start in range(0, len(sorted_pairs), fx_cards_per_row):
-                row_pairs = sorted_pairs[row_start: row_start + fx_cards_per_row]
-                fx_cols = st.columns(len(row_pairs))
-                for col, lbl in zip(fx_cols, row_pairs):
-                    sym = _FX_LABEL_TO_SYM.get(lbl, '')
-                    flag   = _FX_FLAGS.get(sym, '')
-                    d_ret  = fx_daily_rets.get(lbl)
-                    p_ret  = fx_period_rets.get(lbl)
-                    p_str  = f'{p_ret:+.2f}%' if p_ret is not None else 'N/A'
-                    d_str  = f'{d_ret:+.2f}% 1D' if d_ret is not None else None
-                    col.metric(
-                        label=f'{flag} {lbl}',
-                        value=p_str,
-                        delta=d_str,
-                        help=f'IDR per 1 unit of foreign currency — period return over **{fx_period_label}** | 1-day return on {date_to_str}',
-                    )

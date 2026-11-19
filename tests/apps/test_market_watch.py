@@ -413,7 +413,7 @@ class TestDodgeLabelPositions:
         ends = pd.Series([101.0, 101.2, 95.0], index=["IHSG", "S&P 500", "Nikkei"])
         all_values = pd.Series([90.0, 110.0])
         pos = mw.dodge_label_positions(ends, all_values)
-        assert abs(pos["S&P 500"] - pos["IHSG"]) >= 0.07 * 20 - 1e-9
+        assert abs(pos["S&P 500"] - pos["IHSG"]) >= 0.045 * 20 - 1e-9
         assert list(pos.index) == list(ends.index)
 
     def test_well_separated_labels_stay_put(self):
@@ -421,3 +421,87 @@ class TestDodgeLabelPositions:
         pos = mw.dodge_label_positions(ends, pd.Series([90.0, 110.0]))
         assert pos["A"] == pytest.approx(90.0)
         assert pos["B"] == pytest.approx(110.0)
+
+    def test_cluster_is_spaced_by_gap_around_its_mean(self):
+        # Range 0..100 -> gap 4.5; the three close finishes overlap, "Far" does not
+        ends = pd.Series([50.0, 51.0, 52.0, 90.0], index=["A", "B", "C", "Far"])
+        pos = mw.dodge_label_positions(ends, pd.Series([0.0, 100.0]))
+        assert pos["B"] - pos["A"] == pytest.approx(4.5)
+        assert pos["C"] - pos["B"] == pytest.approx(4.5)
+        assert pos[["A", "B", "C"]].mean() == pytest.approx(51.0)
+        assert pos["Far"] == pytest.approx(90.0)
+
+    def test_merged_block_rechecks_the_block_below(self):
+        # A sits just clear of B, but once B and C merge the block reaches down to A
+        ends = pd.Series([40.0, 45.0, 46.0], index=["A", "B", "C"])
+        pos = mw.dodge_label_positions(ends, pd.Series([0.0, 100.0]))
+        assert pos["B"] - pos["A"] == pytest.approx(4.5)
+        assert pos["C"] - pos["B"] == pytest.approx(4.5)
+        assert pos.mean() == pytest.approx(ends.mean())
+
+    def test_single_and_empty(self):
+        one = mw.dodge_label_positions(pd.Series([7.0], index=["A"]), pd.Series([0.0, 10.0]))
+        assert one["A"] == pytest.approx(7.0)
+        assert mw.dodge_label_positions(pd.Series([], dtype=float), pd.Series([0.0, 1.0])).empty
+
+
+class TestMacroPeriodStart:
+
+    def test_one_day_has_no_base_date(self):
+        assert mw.macro_period_start(mw.date(2024, 3, 15), "1D") is None
+
+    def test_ytd_uses_last_day_of_previous_year(self):
+        assert mw.macro_period_start(mw.date(2024, 3, 15), "YTD") == mw.date(2023, 12, 31)
+
+    def test_fixed_window_counts_calendar_days(self):
+        assert mw.macro_period_start(mw.date(2024, 3, 15), "1M") == mw.date(2024, 2, 14)
+
+
+class TestCalcPeriodReturns:
+
+    def _prices(self):
+        return pd.DataFrame({
+            "name": ["X", "X", "X", "Y", "Y"],
+            "date": pd.to_datetime([
+                "2024-01-01", "2024-01-08", "2024-01-09", "2024-01-01", "2024-01-08",
+            ]),
+            "close": [100.0, 110.0, 121.0, 50.0, 45.0],
+        })
+
+    def test_one_day_return_uses_previous_close(self):
+        result = mw.calc_period_returns(self._prices(), mw.date(2024, 1, 9))
+        assert abs(result.loc["X", "return_pct"] - 10.0) < 1e-9
+        assert abs(result.loc["X", "return_1d_pct"] - 10.0) < 1e-9
+
+    def test_period_return_uses_last_close_on_or_before_base(self):
+        result = mw.calc_period_returns(
+            self._prices(), mw.date(2024, 1, 9), base_date=mw.date(2024, 1, 5)
+        )
+        assert abs(result.loc["X", "return_pct"] - 21.0) < 1e-9
+        assert abs(result.loc["Y", "return_pct"] + 10.0) < 1e-9
+
+    def test_series_without_close_on_end_date_uses_its_latest(self):
+        result = mw.calc_period_returns(self._prices(), mw.date(2024, 1, 9))
+        assert result.loc["Y", "as_of"] == pd.Timestamp("2024-01-08")
+
+    def test_missing_base_is_nan(self):
+        result = mw.calc_period_returns(
+            self._prices(), mw.date(2024, 1, 9), base_date=mw.date(2023, 12, 1)
+        )
+        assert result["return_pct"].isna().all()
+
+    def test_empty_input(self):
+        empty = pd.DataFrame(columns=["name", "date", "close"])
+        assert mw.calc_period_returns(empty, mw.date(2024, 1, 9)).empty
+
+
+class TestMacroConfig:
+
+    def test_every_label_has_a_region(self):
+        for cfg in mw._MACRO_CONFIG.values():
+            for label in cfg["symbols"].values():
+                assert label in cfg["regions"]
+                assert label in cfg["colors"]
+
+    def test_currency_scale_is_narrower(self):
+        assert mw.macro_return_thresholds("1D", "FX")[-1] < mw.macro_return_thresholds("1D", "INDICES")[-1]
