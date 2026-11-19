@@ -259,9 +259,14 @@ def render_backtest(stock: str, prices: pd.DataFrame, divs: pd.DataFrame, params
                               help="Average worst mark-to-market loss while holding")
             metrics[5].metric("Compounded", _pct(stats['compounded']),
                               help="Growth of capital when every trade is taken in sequence")
+            entry_note = (
+                "bought in equal amounts on every window session"
+                if params['entry_rule'] == dp.ENTRY_AVERAGE
+                else f"{int(trades['dip_triggered'].sum())} of {len(trades)} entries on a dip"
+            )
             st.caption(
                 f"Average holding {stats['avg_days']:.0f} days | "
-                f"{int(trades['dip_triggered'].sum())} of {len(trades)} entries on a dip | "
+                f"{entry_note} | "
                 f"return per month held {stats['return_per_month']:+.2f}% | "
                 f"compounded CAGR {stats['cagr']:+.1f}%"
             )
@@ -814,6 +819,46 @@ def render_announced(access: bool) -> None:
     render_announced_detail(table.iloc[position], trades_by_row.get(table.index[position]))
 
 
+def render_waiting(waiting: pd.DataFrame, access: bool) -> None:
+    """Stocks inside their entry window whose dip rule has not fired yet."""
+    ui.section('In window, waiting for a dip', len(waiting), 'Closest to its buy level first')
+    dips = waiting['detail'].map(lambda d: d.get('dip') or {})
+    averages = dips.map(lambda dip: f"MA{dip['ma_days']}" if dip.get('ma_days') else None)
+    if not access:
+        notes = {}
+        for symbol, vs_ma, average in zip(waiting['symbol'], waiting['vs_ma'], averages):
+            if pd.notna(vs_ma) and average:
+                notes[symbol] = f"{abs(vs_ma):.1f}% {'above' if vs_ma >= 0 else 'below'} {average}"
+        ui.tickers(waiting['symbol'], notes)
+        return
+    rows = pd.DataFrame({
+        'Stock': waiting['symbol'].map(ui.short),
+        'Window closes': [
+            ui.day(d['window_end'], est) for d, est in zip(waiting['detail'], waiting['key_date_estimated'])
+        ],
+        'Average': averages,
+        'Price vs average': waiting['vs_ma'],
+        # Rows stored before the trigger price was published lack it.
+        'Buy at or below': pd.to_numeric(dips.map(lambda dip: dip.get('trigger_price')), errors='coerce'),
+        'Historical run-up': waiting['detail'].map(lambda d: (d.get('history') or {}).get('avg_return')),
+        'Won': waiting['detail'].map(lambda d: (d.get('history') or {}).get('win_rate')),
+    })
+    st.dataframe(
+        rows, hide_index=True, width='stretch',
+        column_config={
+            'Window closes': st.column_config.TextColumn(help='~ means the ex-date is estimated from last year'),
+            'Average': st.column_config.TextColumn(help='The moving average this stock\'s setup uses'),
+            'Price vs average': st.column_config.NumberColumn(
+                format='%+.1f%%',
+                help='The setup buys when the price closes at or below the average minus its dip percentage'),
+            'Buy at or below': st.column_config.NumberColumn(format='%.0f', help='Close that triggers the dip rule'),
+            'Historical run-up': st.column_config.NumberColumn(
+                format='%+.1f%%', help='Average return of this setup on the stock since 2015, after costs'),
+            'Won': st.column_config.NumberColumn(format='%.0f%%', help='Share of those trades that made money'),
+        },
+    )
+
+
 def render_today(access: bool) -> None:
     if 'dp_toast' in st.session_state:
         st.toast(st.session_state.pop('dp_toast'), icon=':material/bookmark_added:')
@@ -835,9 +880,15 @@ def render_today(access: bool) -> None:
     soon = signals[signals['status'] == 'opening_soon'].copy()
     soon['days_to_window'] = soon['detail'].map(lambda d: d.get('days_to_window', 0))
     soon = soon.sort_values('days_to_window')
+    # Closest to its dip trigger first.
+    waiting = signals[signals['status'] == 'waiting'].copy()
+    waiting['vs_ma'] = pd.to_numeric(
+        waiting['detail'].map(lambda d: (d.get('dip') or {}).get('vs_ma_pct')), errors='coerce')
+    waiting = waiting.sort_values('vs_ma', na_position='last')
 
     metrics = st.container(horizontal=True)
     metrics.metric('Entry windows open', len(actionable))
+    metrics.metric('Waiting for a dip', len(waiting))
     metrics.metric(f'Opening in {SOON_METRIC_DAYS} days', int((soon['days_to_window'] <= SOON_METRIC_DAYS).sum()))
     email = current_email()
     if email:
@@ -867,6 +918,9 @@ def render_today(access: bool) -> None:
                     render_signal_card(signal, can_track=access)
         if not access and len(actionable) > 1:
             ui.unlock_prompt(list(actionable['symbol'].iloc[1:]), noun='entry window', lead='Also open')
+
+    if not waiting.empty:
+        render_waiting(waiting, access)
 
     render_announced(access)
 
@@ -1388,10 +1442,12 @@ else:
         bt_entry_rule = entry_cols[1].selectbox(
             "Entry Rule", list(dp.ENTRY_LABELS), format_func=dp.ENTRY_LABELS.get, key="dpb_entry_rule",
             help="The dip rule buys on the first close below the moving average inside the window, "
-                 "or on the last day of the window if no dip happens.",
+                 "or on the last day of the window if no dip happens. Averaging in buys equal amounts "
+                 "on every session of the window.",
         )
         bt_ma = entry_cols[2].number_input("Dip Moving Average", min_value=5, max_value=250, step=5, key="dpb_ma")
         bt_dip = entry_cols[3].number_input("Dip Below Average %", min_value=0.0, max_value=30.0, step=0.5, key="dpb_dip")
+        st.caption("Averaging in is a Lab research option. Averaging setups are not published to Today.")
 
         st.markdown("#### Exit Rules & Costs")
         exit_cols = st.columns(4)

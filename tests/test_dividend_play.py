@@ -81,6 +81,57 @@ def test_dip_rule_falls_back_to_window_end():
     assert trade['entry_date'] >= pd.Timestamp('2023-06-10')
 
 
+def _averaging_window(dates, ex_date, start_days=90, end_days=30):
+    ex = pd.Timestamp(ex_date)
+    return (dates >= ex - pd.Timedelta(days=start_days)) & (dates <= ex - pd.Timedelta(days=end_days))
+
+
+def test_average_entry_costs_the_harmonic_mean_of_the_window():
+    dates = pd.bdate_range('2023-01-02', '2023-08-31')
+    close = np.linspace(100, 150, len(dates))
+    prices = pd.DataFrame({'date': dates, 'close': close})
+    divs = pd.DataFrame({'date': ['2023-07-14'], 'dividend': [2.0]})
+
+    trade = dp.backtest_dividend_play(
+        prices, divs, entry_start_days=90, entry_end_days=30,
+        entry_rule=dp.ENTRY_AVERAGE, exit_rule=dp.EXIT_CUM,
+    ).iloc[0]
+
+    in_window = _averaging_window(dates, '2023-07-14')
+    window = close[in_window]
+    assert np.isclose(trade['entry_price'], len(window) / np.sum(1 / window))
+    assert window[0] < trade['entry_price'] < window[-1]
+    assert trade['entry_date'] == dates[in_window][0]
+    assert not trade['dip_triggered']
+    assert trade['exit_date'] == pd.Timestamp('2023-07-13')
+    invested_days = (trade['exit_date'] - dates[in_window]).days
+    assert trade['days_held'] == int(round(invested_days.to_numpy().mean()))
+
+
+def test_average_entry_checks_take_profit_only_after_the_window():
+    dates = pd.bdate_range('2023-01-02', '2023-08-31')
+    in_window = _averaging_window(dates, '2023-07-14')
+    close = np.full(len(dates), 100.0)
+    close[in_window] = np.linspace(100, 130, in_window.sum())
+    average = in_window.sum() / np.sum(1 / close[in_window])
+    after = np.flatnonzero(in_window)[-1] + 1
+    close[after:after + 5] = average * 1.02
+    close[after + 5:] = average * 1.15
+    prices = pd.DataFrame({'date': dates, 'close': close})
+    divs = pd.DataFrame({'date': ['2023-07-14'], 'dividend': [2.0]})
+    kwargs = dict(entry_start_days=90, entry_end_days=30, exit_rule=dp.EXIT_CUM, take_profit_pct=10.0)
+
+    fixed = dp.backtest_dividend_play(prices, divs, entry_rule=dp.ENTRY_FIXED, **kwargs).iloc[0]
+    trade = dp.backtest_dividend_play(prices, divs, entry_rule=dp.ENTRY_AVERAGE, **kwargs).iloc[0]
+
+    # A single buy at the window start hits the target inside the window; averaging cannot.
+    assert fixed['exit_date'] <= dates[in_window][-1]
+    assert trade['exit_reason'] == 'Take profit'
+    assert trade['exit_date'] == dates[after + 5]
+    assert np.isclose(trade['total_return'], 15.0)
+    assert trade['max_drawdown'] == 0.0
+
+
 def test_events_without_enough_history_are_skipped():
     prices = _prices(start='2023-05-01', ex_dates=['2023-06-15'])
     divs = pd.DataFrame({'date': ['2023-06-15'], 'dividend': [5.0]})
@@ -190,6 +241,19 @@ def test_summarize_and_best_stock_setups_rank_the_stronger_window_first():
     assert (best['entry_start_days'] == 90).all()
 
 
+def test_format_setup_describes_averaging_in():
+    setup = {**dp.BASELINE_SETUP, 'entry_rule': dp.ENTRY_AVERAGE}
+
+    assert dp.format_setup(setup) == 'Buy 90-30d before ex, average in; sell before ex'
+
+
+def test_every_search_preset_tests_averaging_in():
+    for preset in dp.SEARCH_PRESETS.values():
+        grid = dp.build_setup_grid(**preset)
+        assert any(setup['entry_rule'] == dp.ENTRY_AVERAGE for setup in grid)
+        assert any(setup['entry_rule'] == dp.ENTRY_FIXED for setup in grid)
+
+
 # ── Shortlist, selection and scanning helpers ──────────────────────────── #
 
 def _universe():
@@ -262,6 +326,8 @@ def test_scan_signal_maps_entry_status():
     assert dp.scan_signal(status('Buy zone - dip active'), dp.ENTRY_DIP, 45) == dp.SIGNAL_BUY
     assert dp.scan_signal(status('Waiting', 30), dp.ENTRY_DIP, 45) == dp.SIGNAL_SOON
     assert dp.scan_signal(status('Waiting', 60), dp.ENTRY_DIP, 45) == dp.SIGNAL_LATER
+    assert dp.scan_signal(status('In entry window'), dp.ENTRY_AVERAGE, 45) == dp.SIGNAL_BUY
+    assert dp.scan_signal(status('Waiting', 60), dp.ENTRY_AVERAGE, 45) == dp.SIGNAL_LATER
 
 
 # ── Announced dividends ─────────────────────────────────────────────────── #

@@ -35,7 +35,9 @@ SETUP = {
 
 
 def _signal(symbol, status, avg_return, **detail):
-    window_start = AS_OF - pd.Timedelta(days=10) if status == "actionable" else AS_OF + pd.Timedelta(days=12)
+    in_window = status in ("actionable", "waiting")
+    window_start = AS_OF - pd.Timedelta(days=10) if in_window else AS_OF + pd.Timedelta(days=12)
+    window_end = AS_OF + pd.Timedelta(days=20) if in_window else AS_OF + pd.Timedelta(days=72)
     return {
         "symbol": symbol, "status": status,
         "entry_price": 4012.0 if status == "actionable" else None,
@@ -44,7 +46,8 @@ def _signal(symbol, status, avg_return, **detail):
         "detail": {
             "company": f"PT {symbol[:4]} Tbk", "yield": 6.2, "next_dividend": 150.0,
             "setup": "Buy 90-30d before ex, dip 0% < MA20; sell 10d after ex",
-            "window_start": window_start.date().isoformat(), "days_to_window": 12,
+            "window_start": window_start.date().isoformat(), "window_end": window_end.date().isoformat(),
+            "days_to_window": 12,
             "window": {"day": 8, "of": 43, "sessions_left": 35},
             "dip": {"rule": True, "ma_days": 20, "pct": 0.0, "active": True, "vs_ma_pct": -2.5},
             "holdout": {"level": "global", "trades": 40, "wins": 30, "win_rate": 75.0, "avg_return": avg_return},
@@ -52,6 +55,22 @@ def _signal(symbol, status, avg_return, **detail):
             **detail,
         },
     }
+
+
+def _signals(*extra):
+    return [
+        _signal("BBRI.JK", "actionable", 5.0),
+        _signal("TLKM.JK", "actionable", 3.0),
+        _signal("ASII.JK", "opening_soon", 2.0),
+        *extra,
+    ]
+
+
+def _waiting(symbol, vs_ma_pct, trigger_price=None):
+    dip = {"rule": True, "ma_days": 20, "pct": 0.0, "active": False, "vs_ma_pct": vs_ma_pct}
+    if trigger_price is not None:
+        dip["trigger_price"] = trigger_price
+    return _signal(symbol, "waiting", 1.0, dip=dip)
 
 
 @pytest.fixture
@@ -62,11 +81,7 @@ def client():
     store.write_setups(fake, "dividend_play", [
         {"scope": "global", "params": SETUP, "holdout": {"level": "global", "trades": 40, "win_rate": 75.0, "avg_trade": 4.1}},
     ])
-    store.write_signals(fake, "dividend_play", AS_OF, [
-        _signal("BBRI.JK", "actionable", 5.0),
-        _signal("TLKM.JK", "actionable", 3.0),
-        _signal("ASII.JK", "opening_soon", 2.0),
-    ])
+    store.write_signals(fake, "dividend_play", AS_OF, _signals())
     dividends = {
         symbol: pd.DataFrame({
             "date": [f"{year}-06-15" for year in range(2015, AS_OF.year)],
@@ -198,6 +213,45 @@ def test_today_free_shows_one_card_and_names_only(run_page, tier):
     assert "Unlock the trading lab" in [b.label for b in app.button]
     if tier == "logged_out":
         assert _metric(app, "Your positions") == "–"
+
+
+def test_today_hides_the_waiting_section_without_waiting_signals(run_page):
+    app = run_page("premium")
+
+    assert not app.exception
+    assert _metric(app, "Waiting for a dip") == "0"
+    assert "In window, waiting for a dip" not in _texts(app)
+    assert _dataframe(app, "Window closes") is None
+
+
+def test_today_premium_lists_stocks_waiting_for_a_dip(run_page, client):
+    # UNVR is closer to its trigger than ASII; an older row without the trigger price still renders.
+    store.write_signals(client, "dividend_play", AS_OF, [
+        *_signals()[:2], _waiting("UNVR.JK", 1.2, 3950.0), _waiting("TBIG.JK", 4.0),
+    ])
+    app = run_page("premium")
+
+    assert not app.exception
+    assert _metric(app, "Waiting for a dip") == "2"
+    assert "In window, waiting for a dip" in _texts(app)
+    table = _dataframe(app, "Window closes")
+    assert table["Stock"].tolist() == ["UNVR", "TBIG"]
+    assert table["Average"].tolist() == ["MA20", "MA20"]
+    assert table["Price vs average"].tolist() == [1.2, 4.0]
+    assert table["Buy at or below"].iloc[0] == 3950.0 and pd.isna(table["Buy at or below"].iloc[1])
+    assert table["Window closes"].iloc[0].startswith("~")  # estimated ex-date
+    assert _metric(app, "Entry windows open") == "2"
+
+
+def test_today_free_names_stocks_waiting_for_a_dip(run_page, client):
+    store.write_signals(client, "dividend_play", AS_OF, _signals(_waiting("UNVR.JK", 1.2, 3950.0)))
+    app = run_page("free")
+
+    assert not app.exception
+    text = _texts(app)
+    assert "In window, waiting for a dip" in text
+    assert "1.2% above MA20" in text
+    assert _dataframe(app, "Window closes") is None
 
 
 def test_today_premium_judges_announced_dividends(run_page):

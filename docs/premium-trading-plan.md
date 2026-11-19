@@ -178,7 +178,7 @@ create table if not exists trading_signals (
   tool text not null,
   symbol text not null,
   as_of date not null,
-  status text not null,                 -- 'actionable' | 'opening_soon' | 'candidate'
+  status text not null,                 -- 'actionable' | 'waiting' | 'opening_soon' | 'candidate'
   entry_price numeric,
   stop_price numeric,
   target_price numeric,
@@ -338,8 +338,9 @@ Read first: `apps/trading/dividend_play.py`, `harvest/dividend_play.py`, `tests/
       per-stock setups to `trading_setups`, records a `trading_runs` row.
 - [x] `pipeline/trading_scan.py::dividend_play()`: for each shortlist stock, use
       `estimate_next_ex_dates` and `entry_status` with the stored setup. Write `trading_signals`:
-      `actionable` when inside the entry window (and dip rule satisfied if any), `opening_soon`
-      when the window opens within 45 days. Fill `detail` with: company name, yield, setup
+      `actionable` when inside the entry window (and dip rule satisfied if any), `waiting` when
+      inside the window with the dip rule not yet met, `opening_soon` when the window opens
+      within 45 days. Fill `detail` with: company name, yield, setup
       description (`format_setup`), window day N of M, sessions left, holdout wins/trades and avg
       return after costs.
 - [x] Announced vs estimated cum date: use announced dates from the existing dividend calendar
@@ -572,8 +573,8 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
   - `pipeline/trading_data.py` (loaders: `div_score_jkse` from Redis plus FMP profiles for
     company name and liquidity, dividend pickle from Supabase storage, prices strictly from R2),
     `pipeline/trading_optimize.py`, `pipeline/trading_scan.py`. Scan `as_of` is the latest
-    price date. `actionable` = page "Buy Zone", `opening_soon` = window opens within 45 days;
-    "in window, waiting for the dip" is not published (counted in run stats). Dip-rule entry
+    price date. `actionable` = page "Buy Zone", `opening_soon` = window opens within 45 days,
+    `waiting` = in window, waiting for the dip (no prices; `detail.dip.trigger_price`). Dip-rule entry
     price is the dip level (MA x (1 - dip%)). Key date is the cum date (last IDX session before
     the ex-date); `exit_by` is the cum date or the first session `hold_after_days` after ex.
   - Dry run on real data (in-memory store): optimize 16 s (129 stocks x 180 setups, global setup

@@ -21,7 +21,7 @@ import pandas as pd
 TOOLS = ('dividend_play', 'swing', 'long_term')
 RUN_KINDS = ('optimize', 'scan', 'track')
 RUN_STATUSES = ('running', 'ok', 'failed')
-SIGNAL_STATUSES = ('actionable', 'opening_soon', 'candidate')
+SIGNAL_STATUSES = ('actionable', 'waiting', 'opening_soon', 'candidate')
 
 SIGNAL_COLUMNS = [
     'tool', 'symbol', 'as_of', 'status', 'entry_price', 'stop_price', 'target_price',

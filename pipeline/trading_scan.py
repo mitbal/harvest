@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # A stock whose latest close is older than this is skipped instead of signalled.
 MAX_PRICE_AGE_DAYS = 7
-SIGNAL_STATUS = {dp.SIGNAL_BUY: "actionable", dp.SIGNAL_SOON: "opening_soon"}
+SIGNAL_STATUS = {dp.SIGNAL_BUY: "actionable", dp.SIGNAL_WAIT: "waiting", dp.SIGNAL_SOON: "opening_soon"}
 
 
 def _finite(value) -> Optional[float]:
@@ -71,7 +71,11 @@ def dividend_play_signal(
     as_of: pd.Timestamp,
     opening_within: int = dp.DEFAULT_OPENING_WITHIN,
 ) -> Optional[dict]:
-    """The stored signal for one stock, or None when it is neither actionable nor opening soon."""
+    """The stored signal for one stock, or None when it is neither actionable, waiting nor opening soon.
+
+    A waiting signal is inside its entry window with the dip rule not yet met; like an
+    opening-soon one it carries no entry, stop or target price.
+    """
     event = dp.next_play_event(divs, setup, as_of)
     if event is None:
         return None
@@ -123,6 +127,8 @@ def dividend_play_signal(
             "pct": setup["dip_pct"],
             "active": status["dip_active"],
             "vs_ma_pct": _finite(status["vs_sma"]),
+            # The close at or below which the dip rule fires.
+            "trigger_price": _finite(status["sma"] * (1 - setup["dip_pct"] / 100)),
         },
         "holdout": {
             "level": holdout.get("level"),
@@ -138,7 +144,7 @@ def dividend_play_signal(
             "avg_days": _finite(history.get("avg_days", np.nan)),
         },
     }
-    if signal == dp.SIGNAL_BUY:
+    if signal in (dp.SIGNAL_BUY, dp.SIGNAL_WAIT):
         detail["window"] = window_progress(status["window_start"], status["window_end"], as_of)
 
     return {
@@ -218,6 +224,7 @@ def dividend_play(client, as_of=None, opening_within: int = dp.DEFAULT_OPENING_W
             "global_setup": "global" in setups,
             "shortlist": len(symbols),
             "actionable": sum(s["status"] == "actionable" for s in signals),
+            "waiting": sum(s["status"] == "waiting" for s in signals),
             "opening_soon": sum(s["status"] == "opening_soon" for s in signals),
             **counts,
             "alerts": alert_stats,

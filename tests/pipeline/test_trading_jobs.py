@@ -79,10 +79,23 @@ def test_fixed_entry_inside_window_is_actionable():
     assert detail["company"] == "PT Test Tbk"
 
 
-def test_dip_rule_needs_the_dip_before_it_is_actionable():
-    rising = _prices(np.linspace(900, 1000, 120))
+def test_dip_rule_inside_window_above_the_average_is_waiting():
+    closes = np.linspace(900, 1000, 120)
+    setup = {**DIP_SETUP, "dip_pct": 2.0, "take_profit_pct": 10.0, "stop_loss_pct": 5.0}
 
-    assert _signal(rising, _divs("2025-12-04"), DIP_SETUP) is None
+    signal = _signal(_prices(closes), _divs("2025-12-04"), setup)
+
+    assert signal["status"] == "waiting"
+    assert signal["entry_price"] is None
+    assert signal["stop_price"] is None and signal["target_price"] is None
+    detail = signal["detail"]
+    assert detail["window"]["of"] == 43
+    assert detail["window"]["day"] + detail["window"]["sessions_left"] == 43
+    assert detail["window_end"] == "2026-11-04"
+    dip = detail["dip"]
+    assert dip["active"] is False
+    assert dip["vs_ma_pct"] > 0
+    assert dip["trigger_price"] == pytest.approx(closes[-20:].mean() * 0.98)
 
 
 def test_active_dip_is_actionable_at_the_dip_level_with_exits():
@@ -97,6 +110,8 @@ def test_active_dip_is_actionable_at_the_dip_level_with_exits():
     assert signal["target_price"] == pytest.approx(sma * 1.10)
     assert signal["stop_price"] == pytest.approx(sma * 0.95)
     assert signal["detail"]["dip"]["active"] is True
+    assert signal["detail"]["dip"]["trigger_price"] == pytest.approx(sma)
+    assert "window" in signal["detail"]
 
 
 def test_window_opening_soon_and_later():
@@ -172,7 +187,7 @@ def test_scan_publishes_signals_with_stock_setups_first():
     assert signals.loc["SOON.JK", "status"] == "opening_soon"
     assert "STALE.JK" not in signals.index
     assert stats["as_of"] == "2026-10-05"
-    assert stats["actionable"] == 1 and stats["opening_soon"] == 2
+    assert stats["actionable"] == 1 and stats["waiting"] == 0 and stats["opening_soon"] == 2
     assert stats["stale_prices"] == 1 and stats["no_data"] == 1
     run = store.latest_run(client, "dividend_play", "scan")
     assert run["as_of"] == "2026-10-05" and run["stats"]["actionable"] == 1
@@ -239,7 +254,11 @@ def test_optimize_publishes_global_and_stock_setups():
     assert stats["stock_setups"] == len(stock_scopes) > 0
     assert all(setups[s]["holdout"]["level"] == "stock" for s in stock_scopes)
     run = store.latest_run(client, "dividend_play", "optimize")
-    assert run["stats"]["setups_searched"] == len(dp.build_setup_grid(**dp.SEARCH_PRESETS["Quick"]))
+    quick_grid = dp.build_setup_grid(**dp.SEARCH_PRESETS["Quick"])
+    published_grid = [setup for setup in quick_grid if setup["entry_rule"] != dp.ENTRY_AVERAGE]
+    assert len(published_grid) < len(quick_grid)
+    assert run["stats"]["setups_searched"] == len(published_grid)
+    assert all(setup["params"]["entry_rule"] != dp.ENTRY_AVERAGE for setup in setups.values())
     assert setups["global"]["run_id"] == run["id"]
     portfolio = run["stats"]["portfolio"]
     assert portfolio["stats"]["start"] >= run["stats"]["holdout_from"]
@@ -248,6 +267,26 @@ def test_optimize_publishes_global_and_stock_setups():
     assert portfolio["stats"]["benchmark"]["total_return"] == 0.0
     assert portfolio["curve"][0]["account"] == pytest.approx(100.0, abs=5.0)
     assert set(load_bars.call_args.args[0]) <= set(symbols)
+
+
+def test_optimize_never_searches_averaging_setups():
+    client = FakeSupabase()
+    symbols = [f"S{i:02d}.JK" for i in range(25)]
+    data = {s: _run_up_history(i) for i, s in enumerate(symbols)}
+    a, b, c = _loaders(_universe(symbols), {s: d[1] for s, d in data.items()}, {s: d[0] for s, d in data.items()})
+    searched = []
+    evaluate = dp.evaluate_stock_setups
+
+    def record(symbol, play, setups, split, costs):
+        searched.extend(setups)
+        return evaluate(symbol, play, setups, split, costs)
+
+    with a, b, c, patch.object(trading_optimize.dp, "evaluate_stock_setups", side_effect=record), \
+            patch.object(trading_data, "load_ohlcv_histories", side_effect=OSError("skip portfolio")):
+        trading_optimize.dividend_play(client, as_of=AS_OF, preset="Quick")
+
+    assert searched
+    assert all(setup["entry_rule"] != dp.ENTRY_AVERAGE for setup in searched)
 
 
 def test_portfolio_failure_does_not_fail_the_optimize_run():

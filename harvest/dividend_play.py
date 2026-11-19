@@ -18,12 +18,14 @@ import pandas as pd
 
 ENTRY_FIXED = 'fixed'
 ENTRY_DIP = 'dip'
+ENTRY_AVERAGE = 'average'
 EXIT_CUM = 'cum'
 EXIT_AFTER = 'after'
 
 ENTRY_LABELS = {
     ENTRY_DIP: 'Buy the dip',
     ENTRY_FIXED: 'Buy at window start',
+    ENTRY_AVERAGE: 'Average in across the window',
 }
 EXIT_LABELS = {
     EXIT_CUM: 'Sell before ex-date',
@@ -60,13 +62,16 @@ BASELINE_SETUP = {
 SEARCH_PRESETS = {
     'Quick': dict(
         windows=[(90, 30), (150, 60)],
-        entries=[(ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 50, 0.0)],
+        entries=[(ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 50, 0.0), (ENTRY_AVERAGE, 50, 0.0)],
         exits=[(EXIT_CUM, 0), (EXIT_AFTER, 5)],
         exit_limits=[(0.0, 0.0)],
     ),
     'Balanced': dict(
         windows=[(60, 20), (90, 30), (120, 45), (150, 60), (180, 90)],
-        entries=[(ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 20, 0.0), (ENTRY_DIP, 50, 0.0), (ENTRY_DIP, 50, 3.0)],
+        entries=[
+            (ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 20, 0.0), (ENTRY_DIP, 50, 0.0), (ENTRY_DIP, 50, 3.0),
+            (ENTRY_AVERAGE, 50, 0.0),
+        ],
         exits=[(EXIT_CUM, 0), (EXIT_AFTER, 3), (EXIT_AFTER, 10)],
         exit_limits=[(0.0, 0.0), (10.0, 0.0), (15.0, 8.0)],
     ),
@@ -75,6 +80,7 @@ SEARCH_PRESETS = {
         entries=[
             (ENTRY_FIXED, 50, 0.0), (ENTRY_DIP, 20, 0.0), (ENTRY_DIP, 20, 2.0),
             (ENTRY_DIP, 50, 0.0), (ENTRY_DIP, 50, 3.0), (ENTRY_DIP, 100, 5.0),
+            (ENTRY_AVERAGE, 50, 0.0),
         ],
         exits=[(EXIT_CUM, 0), (EXIT_AFTER, 3), (EXIT_AFTER, 10), (EXIT_AFTER, 20)],
         exit_limits=[(0.0, 0.0), (8.0, 0.0), (10.0, 0.0), (15.0, 8.0), (20.0, 10.0)],
@@ -172,7 +178,15 @@ def _simulate(
     sell_fee_pct: float,
     dividend_tax_pct: float,
 ) -> list[dict]:
+    """Run one setup over every ex-date; see :func:`backtest_dividend_play`.
+
+    For ``average`` entries the position is complete at the window's last
+    session, so the exit path, take-profit, stop-loss and ``max_drawdown`` are
+    all measured from the average cost after the window closes; drawdown during
+    the accumulation phase is not included.
+    """
     dates, close = data.dates, data.close
+    averaging = entry_rule == ENTRY_AVERAGE
     if data.empty or entry_start_days <= entry_end_days:
         return []
     first_date, last_date = dates[0], dates[-1]
@@ -201,6 +215,8 @@ def _simulate(
                 entry_idx, dip_triggered = i0 + int(hits[0]), True
             else:
                 entry_idx = i1
+        elif averaging:
+            entry_idx = i1
 
         if exit_rule == EXIT_AFTER:
             target = ex_date + hold_offset
@@ -214,7 +230,11 @@ def _simulate(
         if planned_idx <= entry_idx:
             continue
 
-        entry_price = close[entry_idx]
+        if averaging:
+            window = close[i0:i1 + 1]
+            entry_price = len(window) / np.sum(1.0 / window)
+        else:
+            entry_price = close[entry_idx]
         path = close[entry_idx + 1:planned_idx + 1]
         earned = np.where(dates[entry_idx + 1:planned_idx + 1] >= ex_date, dividend, 0.0)
         path_returns = (path + earned) / entry_price - 1
@@ -240,13 +260,16 @@ def _simulate(
         trades.append({
             'ex_date': ex_date,
             'dividend': float(dividend),
-            'entry_date': dates[entry_idx],
+            'entry_date': dates[i0] if averaging else dates[entry_idx],
             'entry_price': float(entry_price),
             'dip_triggered': dip_triggered,
             'exit_date': dates[exit_idx],
             'exit_price': float(exit_price),
             'exit_reason': exit_reason,
-            'days_held': int((dates[exit_idx] - dates[entry_idx]).astype(int)),
+            'days_held': (
+                int(round(float((dates[exit_idx] - dates[i0:i1 + 1]).astype(int).mean())))
+                if averaging else int((dates[exit_idx] - dates[entry_idx]).astype(int))
+            ),
             'collected_dividend': collected,
             'price_return': float(price_return),
             'dividend_return': float(dividend_return),
@@ -282,6 +305,12 @@ def backtest_dividend_play(
     - ``dip``: buy at the first close that is at least ``dip_pct`` percent below
       its ``dip_ma_days`` simple moving average; if none occurs, buy at the last
       close of the window so every dividend still gets a trade.
+    - ``average``: buy equal money amounts at every close of the window, so the
+      cost is the harmonic mean of those closes. The position is complete at
+      the window's last close; exits, take-profit and stop-loss are evaluated
+      only after it, against the average cost. ``entry_date`` is the first buy
+      and ``days_held`` is the average time the money was invested.
+      ``max_drawdown`` excludes the accumulation phase.
 
     Exit:
 
@@ -422,10 +451,12 @@ def build_setup_grid(windows, entries, exits, exit_limits) -> list[dict]:
 
 
 def format_setup(setup: dict) -> str:
-    entry = (
-        f"dip {setup['dip_pct']:g}% < MA{setup['dip_ma_days']}"
-        if setup['entry_rule'] == ENTRY_DIP else 'window start'
-    )
+    if setup['entry_rule'] == ENTRY_DIP:
+        entry = f"dip {setup['dip_pct']:g}% < MA{setup['dip_ma_days']}"
+    elif setup['entry_rule'] == ENTRY_AVERAGE:
+        entry = 'average in'
+    else:
+        entry = 'window start'
     exit_text = (
         'sell before ex' if setup['exit_rule'] == EXIT_CUM
         else f"sell {setup['hold_after_days']}d after ex"
@@ -871,7 +902,7 @@ def short_play_verdict(
 def scan_signal(status: dict, entry_rule: str, opening_within: int) -> str:
     """Scanner signal for an :func:`entry_status` result."""
     in_window = status['status'] in ('In entry window', 'Buy zone - dip active')
-    if entry_rule == ENTRY_FIXED and in_window:
+    if entry_rule in (ENTRY_FIXED, ENTRY_AVERAGE) and in_window:
         return SIGNAL_BUY
     if status['status'] == 'Buy zone - dip active':
         return SIGNAL_BUY

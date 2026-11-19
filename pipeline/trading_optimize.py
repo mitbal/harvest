@@ -151,7 +151,11 @@ def dividend_play(client, as_of=None, preset: str = DIVIDEND_PLAY_PRESET) -> dic
         histories = trading_data.load_price_histories(
             symbols, start - pd.Timedelta(days=dp.PRICE_WARMUP_DAYS),
         )
-        setups = dp.build_setup_grid(**dp.SEARCH_PRESETS[preset])
+        # Today cards and the track record model one limit-order fill, so averaging-in stays Lab-only.
+        setups = [
+            setup for setup in dp.build_setup_grid(**dp.SEARCH_PRESETS[preset])
+            if setup["entry_rule"] != dp.ENTRY_AVERAGE
+        ]
         split = dp.holdout_split_date(start, as_of, dp.DEFAULT_VALIDATION_PCT)
         costs = dp.trade_costs()
 

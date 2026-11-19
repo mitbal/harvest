@@ -51,7 +51,7 @@ create table if not exists trading_signals (
   tool text not null,
   symbol text not null,
   as_of date not null,
-  status text not null,                 -- 'actionable' | 'opening_soon' | 'candidate'
+  status text not null,                 -- 'actionable' | 'waiting' | 'opening_soon' | 'candidate'
   entry_price numeric,
   stop_price numeric,
   target_price numeric,
