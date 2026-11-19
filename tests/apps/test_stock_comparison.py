@@ -282,3 +282,227 @@ class TestComparisonHelpers:
         stocks, limited = sc.parse_stock_query("C,A,X,B,D,E,F,A", ["A", "B", "C", "D", "E", "F"])
         assert stocks == ["C", "A", "B", "D", "E"]
         assert limited is True
+
+
+class TestStockGroups:
+
+    def test_filters_out_unknown_tickers(self):
+        valid = ["BBCA.JK", "BMRI.JK", "BBNI.JK", "TLKM.JK", "ISAT.JK", "EXCL.JK"]
+        groups = sc.available_stock_groups("JKSE", valid)
+        assert groups["Big banks"] == ["BBCA.JK", "BMRI.JK", "BBNI.JK"]
+        assert groups["Telco"] == ["TLKM.JK", "ISAT.JK", "EXCL.JK"]
+
+    def test_drops_groups_with_fewer_than_two_valid_tickers(self):
+        groups = sc.available_stock_groups("JKSE", ["BBCA.JK", "TLKM.JK", "HMSP.JK", "GGRM.JK"])
+        assert list(groups) == ["Tobacco"]
+
+    def test_unknown_market_returns_empty(self):
+        assert sc.available_stock_groups("NASDAQ", ["AAPL", "MSFT"]) == {}
+
+    def test_declared_groups_have_two_to_max_unique_tickers(self):
+        for market, groups in sc.STOCK_GROUPS.items():
+            for name, stocks in groups.items():
+                assert 2 <= len(set(stocks)) <= sc.MAX_STOCKS, (market, name)
+                assert len(set(stocks)) == len(stocks), (market, name)
+
+
+def _prices(dates, closes):
+    return pd.DataFrame({"date": dates, "close": closes, "adjClose": closes})
+
+
+def _business_prices(start, periods, close=100.0):
+    dates = pd.bdate_range(start, periods=periods)
+    return _prices(dates.strftime("%Y-%m-%d"), [close] * periods)
+
+
+class TestHistoryHelpers:
+
+    def test_normalize_view_accepts_history(self):
+        assert sc.normalize_view("history") == "history"
+        assert sc.normalize_view("HISTORY") == "history"
+
+    def test_build_performance_frame_handles_messy_prices(self):
+        raw = pd.DataFrame({
+            "date": ["2024-01-03", "2024-01-01", "2024-01-02", "2024-01-02", "bad", "2024-01-04"],
+            "close": [12, 10, "x", 11, 5, -3],
+        })
+        frame = sc.build_performance_frame(raw, None)
+        assert frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-01", "2024-01-02", "2024-01-03"]
+        assert frame["price"].tolist() == [10, 11, 12]
+        assert frame["total"].tolist() == [10, 11, 12]
+
+    @pytest.mark.parametrize("prices", [None, pd.DataFrame(), pd.DataFrame({"date": ["2024-01-01"]})])
+    def test_build_performance_frame_empty_prices(self, prices):
+        frame = sc.build_performance_frame(prices, None)
+        assert frame.empty
+        assert list(frame.columns) == ["date", "price", "total", "value"]
+
+    def test_dividend_reinvested_on_next_trading_day(self):
+        prices = _prices(["2024-01-01", "2024-01-03", "2024-01-04"], [100, 100, 110])
+        # Ex-date 2024-01-02 has no price, so it is reinvested at the 2024-01-03 close.
+        divs = pd.DataFrame({"date": ["2024-01-02"], "adjDividend": [10]})
+        frame = sc.build_performance_frame(prices, divs, include_dividends=True)
+        assert frame["total"].tolist() == pytest.approx([100, 110, 121])
+        assert frame["value"].tolist() == pytest.approx([100, 110, 121])
+        price_only = sc.build_performance_frame(prices, divs, include_dividends=False)
+        assert price_only["value"].tolist() == pytest.approx([100, 100, 110])
+
+    def test_dividends_outside_price_history_ignored(self):
+        prices = _prices(["2024-01-01", "2024-01-02"], [100, 100])
+        divs = pd.DataFrame({"date": ["2023-12-01", "2024-02-01"], "adjDividend": [5, 5]})
+        frame = sc.build_performance_frame(prices, divs)
+        assert frame["total"].tolist() == pytest.approx([100, 100])
+
+    def test_rebase_to_common_start_date(self):
+        old = sc.build_performance_frame(_prices(["2020-01-01", "2021-01-04", "2022-01-03"], [50, 100, 150]), None)
+        new = sc.build_performance_frame(_prices(["2021-01-04", "2022-01-03"], [20, 10]), None)
+        long_df, common_start, limiting = sc.rebase_performance({"OLD": old, "NEW": new}, pd.Timestamp("2019-01-01"))
+        assert common_start == pd.Timestamp("2021-01-04")
+        assert limiting == "NEW"
+        starts = long_df.groupby("stock")["date"].min()
+        assert (starts == common_start).all()
+        assert long_df[long_df["date"] == common_start]["value"].tolist() == [100.0, 100.0]
+        assert long_df[long_df["stock"] == "OLD"]["value"].tolist() == pytest.approx([100, 150])
+        assert long_df[long_df["stock"] == "NEW"]["value"].tolist() == pytest.approx([100, 50])
+
+    def test_rebase_uses_period_start_when_all_stocks_cover_it(self):
+        frame = sc.build_performance_frame(_prices(["2020-01-01", "2020-06-01", "2021-01-01"], [100, 200, 300]), None)
+        long_df, common_start, limiting = sc.rebase_performance({"A": frame, "B": frame}, pd.Timestamp("2020-03-01"))
+        assert common_start == pd.Timestamp("2020-03-01")
+        assert limiting is None
+        # Base is the last close on or before the start (100), so 2020-06-01 is 200.
+        assert long_df[long_df["stock"] == "A"]["value"].tolist() == pytest.approx([100, 200, 300])
+
+    def test_rebase_empty_input(self):
+        long_df, common_start, limiting = sc.rebase_performance({"A": sc.build_performance_frame(None, None)}, pd.Timestamp("2020-01-01"))
+        assert long_df.empty
+        assert common_start is None
+        assert limiting is None
+
+    def test_total_return_exceeds_price_return_with_dividend(self):
+        prices = _business_prices("2022-01-03", 600)
+        divs = pd.DataFrame({"date": ["2022-06-01"], "adjDividend": [5]})
+        frame = sc.build_performance_frame(prices, divs)
+        long_df, _, _ = sc.rebase_performance({"A": frame}, pd.Timestamp("2022-01-03"))
+        summary = sc.performance_summary(long_df, ["A"])
+        assert summary.loc["A", "Price return"] == pytest.approx(0)
+        assert summary.loc["A", "Total return"] == pytest.approx(0.05)
+        assert summary.loc["A", "Total return"] > summary.loc["A", "Price return"]
+        assert np.isfinite(summary.loc["A", "Annualised total return"])
+
+    def test_max_drawdown(self):
+        frame = sc.build_performance_frame(
+            _prices(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"], [100, 200, 100, 150]), None
+        )
+        long_df, _, _ = sc.rebase_performance({"A": frame}, None)
+        summary = sc.performance_summary(long_df, ["A"])
+        assert summary.loc["A", "Max drawdown"] == pytest.approx(-0.5)
+        assert summary.loc["A", "Price return"] == pytest.approx(0.5)
+
+    def test_annualised_na_under_one_year(self):
+        frame = sc.build_performance_frame(_business_prices("2024-01-01", 100), None)
+        long_df, _, _ = sc.rebase_performance({"A": frame}, None)
+        summary = sc.performance_summary(long_df, ["A"])
+        assert np.isnan(summary.loc["A", "Annualised total return"])
+        assert sc.format_signed_pct(summary.loc["A", "Annualised total return"]) == "N/A"
+
+    def test_annualised_over_two_years(self):
+        frame = sc.build_performance_frame(_prices(["2020-01-01", "2022-01-01"], [100, 121]), None)
+        long_df, _, _ = sc.rebase_performance({"A": frame}, None)
+        summary = sc.performance_summary(long_df, ["A"])
+        assert summary.loc["A", "Annualised total return"] == pytest.approx(0.1, abs=1e-3)
+
+    def test_summary_missing_stock_is_na(self):
+        frame = sc.build_performance_frame(_prices(["2024-01-01", "2024-01-02"], [100, 110]), None)
+        long_df, _, _ = sc.rebase_performance({"A": frame}, None)
+        summary = sc.performance_summary(long_df, ["A", "MISSING"])
+        assert summary.loc["MISSING"].isna().all()
+        assert sc.performance_summary(pd.DataFrame(columns=["stock", "date", "price", "total", "value"]), ["A"]).loc["A"].isna().all()
+
+    def test_format_signed_pct(self):
+        assert sc.format_signed_pct(0.1234) == "+12.3%"
+        assert sc.format_signed_pct(-0.05) == "-5.0%"
+        assert sc.format_signed_pct(np.nan) == "N/A"
+        assert sc.format_signed_pct(None) == "N/A"
+
+    def test_thin_series_keeps_first_and_last(self):
+        frame = sc.build_performance_frame(_business_prices("2020-01-01", 2000), None)
+        long_df, _, _ = sc.rebase_performance({"A": frame}, None)
+        thinned = sc.thin_series(long_df, max_points=100)
+        assert len(thinned) <= 100
+        assert thinned["date"].iloc[0] == long_df["date"].iloc[0]
+        assert thinned["date"].iloc[-1] == long_df["date"].iloc[-1]
+
+
+class TestYearlyDividends:
+
+    TODAY = pd.Timestamp("2026-06-30")
+    YEARS = list(range(2017, 2027))
+
+    @pytest.fixture
+    def divs(self):
+        return pd.DataFrame({
+            "date": ["2020-05-01", "2020-11-01", "2022-05-01", "2026-03-01", "2026-03-01", "2026-12-01"],
+            "adjDividend": [10, 10, 30, 5, 5, 99],
+        })
+
+    @pytest.fixture
+    def prices(self):
+        return _prices(
+            ["2021-12-30", "2021-12-31", "2022-12-30", "2023-06-30", "2026-06-29", "2026-06-30"],
+            [190, 200, 300, 250, 400, 500],
+        )
+
+    def test_per_share_zero_fills_from_first_year(self, divs, prices):
+        result = sc.yearly_dividends(divs, prices, self.YEARS, "Per share", today=self.TODAY)
+        values = dict(zip(result["year"], result["value"]))
+        assert list(values) == list(range(2020, 2027))
+        assert values[2020] == pytest.approx(20)
+        assert values[2021] == 0
+        assert values[2022] == pytest.approx(30)
+        # Exact duplicate row is dropped and the December ex-date is in the future.
+        assert values[2026] == pytest.approx(5)
+
+    def test_current_year_flagged_as_ytd(self, divs, prices):
+        result = sc.yearly_dividends(divs, prices, self.YEARS, "Per share", today=self.TODAY)
+        assert result.loc[result["is_ytd"], "year"].tolist() == [2026]
+
+    def test_growth_index_base_year_is_first_positive_in_window(self, divs, prices):
+        result = sc.yearly_dividends(divs, prices, range(2021, 2027), "Growth index", today=self.TODAY)
+        values = dict(zip(result["year"], result["value"]))
+        # 2021 paid nothing, so the base is 2022 (30) and 2021 is not shown.
+        assert list(values) == [2022, 2023, 2024, 2025, 2026]
+        assert values[2022] == pytest.approx(100)
+        assert values[2023] == 0
+        assert values[2026] == pytest.approx(5 / 30 * 100)
+
+    def test_yield_uses_year_end_close_and_latest_close(self, divs, prices):
+        result = sc.yearly_dividends(divs, prices, self.YEARS, "Yield at year-end price", today=self.TODAY)
+        values = dict(zip(result["year"], result["value"]))
+        # 2020 has no price history, so it is absent rather than zero.
+        assert 2020 not in values
+        assert values[2021] == 0
+        assert values[2022] == pytest.approx(30 / 300 * 100)
+        assert values[2023] == 0
+        assert 2024 not in values
+        assert values[2026] == pytest.approx(5 / 500 * 100)
+
+    @pytest.mark.parametrize("raw_divs", [None, pd.DataFrame(), pd.DataFrame({"date": ["2020-01-01"], "adjDividend": ["x"]})])
+    @pytest.mark.parametrize("measure", list(sc._DIV_MEASURES))
+    def test_no_dividends_returns_empty(self, raw_divs, measure):
+        result = sc.yearly_dividends(raw_divs, _prices(["2020-12-31"], [100]), self.YEARS, measure, today=self.TODAY)
+        assert result.empty
+        assert list(result.columns) == ["year", "value", "is_ytd"]
+
+    def test_yield_without_prices_is_empty(self, divs):
+        result = sc.yearly_dividends(divs, pd.DataFrame(), self.YEARS, "Yield at year-end price", today=self.TODAY)
+        assert result.empty
+
+    def test_growth_index_all_zero_in_window_is_empty(self):
+        divs = pd.DataFrame({"date": ["2015-05-01"], "adjDividend": [10]})
+        result = sc.yearly_dividends(divs, None, self.YEARS, "Growth index", today=self.TODAY)
+        assert result.empty
+
+    def test_unknown_measure_raises(self):
+        with pytest.raises(ValueError):
+            sc.yearly_dividends(None, None, self.YEARS, "Bogus", today=self.TODAY)

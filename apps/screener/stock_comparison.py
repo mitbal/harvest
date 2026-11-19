@@ -22,13 +22,21 @@ st.set_page_config(page_title='Stock Comparison - Panen Dividen')
 hp.enable_chart_theme()
 st.title('Stock Comparison')
 st.caption(
-    'Compare 2-5 stocks across income, valuation, quality, growth, returns, and risk. '
+    'Compare 2-5 stocks across income, valuation, quality, growth, returns, and risk, or over time in History. '
     'Unavailable or financially invalid values are excluded rather than treated as zero.'
 )
 
 MAX_STOCKS = 5
 _STOCK_PALETTE = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00']
-_VIEW_LABELS = {'table': 'Table', 'dist': 'Distribution', 'scatter': 'Scatter'}
+_VIEW_LABELS = {'table': 'Table', 'dist': 'Distribution', 'scatter': 'Scatter', 'history': 'History'}
+_HIST_PERIODS = {'1Y': 1, '3Y': 3, '5Y': 5, '10Y': 10}
+_HIST_DEFAULT_PERIOD = '5Y'
+_HIST_YEARS = 10
+_DIV_MEASURES = ('Per share', 'Growth index', 'Yield at year-end price')
+# A one-year window ends on the last trading day, which can be a few days (or a long
+# holiday) short of 365 calendar days; still annualise those rather than show N/A.
+_MIN_ANNUALISE_DAYS = 350
+_MAX_CHART_POINTS = 800
 _VIEW_KEYS = {label: key for key, label in _VIEW_LABELS.items()}
 _MARKET_QP_MAP = {'jkse': 'Indonesian Stock', 'sp500': 'S&P 500 (US and World Stock)'}
 _MARKET_QP_REV = {value: key for key, value in _MARKET_QP_MAP.items()}
@@ -94,6 +102,32 @@ CHART_METRIC_OPTIONS = {
     )
 }
 
+# Stocks that investors routinely weigh against each other, per market. At most MAX_STOCKS each.
+STOCK_GROUPS = {
+    'JKSE': {
+        'Big banks': ['BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK'],
+        'Regional banks': ['BJBR.JK', 'BJTM.JK', 'BNGA.JK', 'BDMN.JK', 'NISP.JK'],
+        'Telco': ['TLKM.JK', 'ISAT.JK', 'EXCL.JK'],
+        'Coal': ['ADRO.JK', 'ITMG.JK', 'PTBA.JK', 'BSSR.JK', 'HRUM.JK'],
+        'Consumer': ['ICBP.JK', 'INDF.JK', 'UNVR.JK', 'MYOR.JK', 'SIDO.JK'],
+        'Tobacco': ['HMSP.JK', 'GGRM.JK'],
+        'Astra group': ['ASII.JK', 'UNTR.JK', 'AUTO.JK', 'AALI.JK'],
+        'Cement': ['SMGR.JK', 'INTP.JK'],
+        'Poultry': ['CPIN.JK', 'JPFA.JK'],
+    },
+    'S&P500': {
+        'Big tech': ['AAPL', 'MSFT', 'GOOG', 'AMZN', 'META'],
+        'Banks': ['JPM', 'BAC', 'WFC', 'C', 'GS'],
+        'Payments': ['V', 'MA', 'AXP'],
+        'Oil majors': ['XOM', 'CVX', 'COP'],
+        'Pharma': ['JNJ', 'PFE', 'MRK', 'ABBV', 'LLY'],
+        'Beverages': ['KO', 'PEP'],
+        'Retail': ['WMT', 'COST', 'TGT'],
+        'Home improvement': ['HD', 'LOW'],
+        'Telecom': ['T', 'VZ', 'TMUS'],
+    },
+}
+
 
 @st.cache_resource
 def get_logger(name, level=logging.INFO):
@@ -134,6 +168,18 @@ def get_div_score_table(key='jkse_div_score'):
         cp_df[['price', 'changes', 'beta']], left_on='stock', right_on='symbol', how='left'
     )
     return final_df.set_index('stock')
+
+
+@st.cache_data(max_entries=64, ttl=60 * 60, show_spinner=False)
+def get_stock_history(stock, market):
+    """Return (daily price DataFrame, dividend DataFrame or None) for about the last ten years."""
+    start_from = (pd.Timestamp.today() - pd.DateOffset(years=_HIST_YEARS, days=30)).strftime('%Y-%m-%d')
+    price_df = hd.get_daily_stock_price(stock, start_from=start_from)
+    # raise_errors: a failed FMP request must not be cached for an hour as "pays no dividends".
+    div_df = hd.get_dividend_history_single_stock(
+        stock, source='dag' if market == 'JKSE' else 'fmp', raise_errors=True
+    )
+    return price_df, div_df
 
 
 _KEEP_COLS = [
@@ -290,6 +336,17 @@ def parse_stock_query(raw, valid_stocks, limit=MAX_STOCKS):
     return stocks[:limit], len(stocks) > limit
 
 
+def available_stock_groups(market, valid_stocks, limit=MAX_STOCKS):
+    """Preset groups for a market, keeping only tickers in the universe and groups with at least two left."""
+    valid_set = set(valid_stocks)
+    groups = {}
+    for name, stocks in STOCK_GROUPS.get(market, {}).items():
+        kept = [stock for stock in stocks if stock in valid_set][:limit]
+        if len(kept) >= 2:
+            groups[name] = kept
+    return groups
+
+
 def split_valid_size(df, spec):
     """Return (rows with a valid size value, tickers dropped for an invalid one)."""
     values = pd.to_numeric(df[spec.source], errors='coerce') if spec.source in df.columns else pd.Series(np.nan, index=df.index)
@@ -297,6 +354,201 @@ def split_valid_size(df, spec):
     kept = df[mask].copy()
     kept[spec.source] = values[mask]
     return kept, df.loc[~mask, 'stock'].tolist()
+
+
+def _clean_prices(price_df):
+    """Daily closes as (date, close): parsed, positive, one row per date, oldest first."""
+    if not isinstance(price_df, pd.DataFrame) or price_df.empty or not {'date', 'close'} <= set(price_df.columns):
+        return pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'), 'close': pd.Series(dtype=float)})
+    prices = pd.DataFrame({
+        'date': pd.to_datetime(price_df['date'], errors='coerce'),
+        'close': pd.to_numeric(price_df['close'], errors='coerce'),
+    }).replace([np.inf, -np.inf], np.nan).dropna()
+    prices = prices[prices['close'] > 0]
+    prices['date'] = prices['date'].dt.normalize().astype('datetime64[ns]')
+    prices = prices.sort_values('date', kind='stable').drop_duplicates('date', keep='last')
+    return prices.reset_index(drop=True)
+
+
+def _clean_dividends(div_df):
+    """Dividends as (date, adjDividend): parsed, non-negative, summed per ex-date, oldest first."""
+    if not isinstance(div_df, pd.DataFrame) or div_df.empty or not {'date', 'adjDividend'} <= set(div_df.columns):
+        return pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'), 'adjDividend': pd.Series(dtype=float)})
+    divs = pd.DataFrame({
+        'date': pd.to_datetime(div_df['date'], errors='coerce'),
+        'adjDividend': pd.to_numeric(div_df['adjDividend'], errors='coerce'),
+    }).replace([np.inf, -np.inf], np.nan).dropna()
+    divs = divs[divs['adjDividend'] >= 0]
+    divs['date'] = divs['date'].dt.normalize().astype('datetime64[ns]')
+    # Exact repeats are feed duplicates; distinct amounts on one date are separate payments.
+    divs = divs.drop_duplicates()
+    divs = divs.groupby('date', as_index=False)['adjDividend'].sum()
+    return divs.sort_values('date').reset_index(drop=True)
+
+
+def build_performance_frame(price_df, div_df, include_dividends=True):
+    """Daily price and total-return series for one stock.
+
+    Uses the unadjusted ``close`` plus ``adjDividend`` (the convention of
+    harvest.simulator and the pipeline's total_return_*); ``adjClose`` already
+    folds dividends in, so adding dividends to it would count them twice.
+    Each dividend is reinvested at the close on its ex-date, or on the next
+    trading day when the ex-date has no price. Returns columns ``date``,
+    ``price`` (close), ``total`` (close x accumulated shares, starting from one
+    share) and ``value`` (``total`` or ``price`` per ``include_dividends``).
+    """
+    prices = _clean_prices(price_df)
+    if prices.empty:
+        return pd.DataFrame({
+            'date': pd.Series(dtype='datetime64[ns]'),
+            'price': pd.Series(dtype=float), 'total': pd.Series(dtype=float), 'value': pd.Series(dtype=float),
+        })
+    closes = prices['close'].to_numpy(dtype=float)
+    growth = np.ones(len(prices))
+    divs = _clean_dividends(div_df)
+    divs = divs[divs['date'] >= prices['date'].iloc[0]]
+    if not divs.empty:
+        positions = prices['date'].searchsorted(divs['date'], side='left')
+        for position, amount in zip(positions, divs['adjDividend'].to_numpy(dtype=float)):
+            if position < len(prices):
+                growth[position] *= 1 + amount / closes[position]
+    total = closes * np.cumprod(growth)
+    return pd.DataFrame({
+        'date': prices['date'].to_numpy(),
+        'price': closes,
+        'total': total,
+        'value': total if include_dividends else closes,
+    })
+
+
+def rebase_performance(frames_by_stock, period_start=None):
+    """Rebase every stock's series to 100 on one common start date.
+
+    The common start is the latest of ``period_start`` and each stock's first
+    price date. Each stock's base is its last observation on or before that
+    date, so every line starts at exactly 100 on the same day. Returns
+    ``(long_df, common_start, limiting_stock)``; ``limiting_stock`` names the
+    stock that pushed the start past ``period_start``, else None.
+    """
+    columns = ['stock', 'date', 'price', 'total', 'value']
+    usable = {stock: frame for stock, frame in frames_by_stock.items() if frame is not None and not frame.empty}
+    if not usable:
+        return pd.DataFrame(columns=columns), None, None
+    firsts = {stock: pd.Timestamp(frame['date'].iloc[0]) for stock, frame in usable.items()}
+    limiting_stock = max(firsts, key=firsts.get)
+    common_start = firsts[limiting_stock]
+    if period_start is None:
+        limiting_stock = None
+    elif pd.Timestamp(period_start) >= common_start:
+        common_start, limiting_stock = pd.Timestamp(period_start).normalize(), None
+
+    pieces = []
+    for stock, frame in usable.items():
+        position = int(frame['date'].searchsorted(common_start, side='right')) - 1
+        base = frame.iloc[position]
+        after = frame.iloc[position + 1:]
+        piece = {'stock': stock, 'date': [common_start, *after['date']]}
+        for col in ('price', 'total', 'value'):
+            piece[col] = [100.0, *(after[col].to_numpy(dtype=float) / float(base[col]) * 100)]
+        pieces.append(pd.DataFrame(piece))
+    long_df = pd.concat(pieces, ignore_index=True)
+    long_df['date'] = pd.to_datetime(long_df['date'])
+    return long_df[columns], common_start, limiting_stock
+
+
+def performance_summary(long_df, stocks=None):
+    """Price return, total return, annualised total return and max drawdown per stock, as fractions (NaN = N/A)."""
+    columns = ['Price return', 'Total return', 'Annualised total return', 'Max drawdown']
+    if stocks is None:
+        stocks = list(dict.fromkeys(long_df['stock'])) if not long_df.empty else []
+    rows = []
+    for stock in stocks:
+        group = long_df[long_df['stock'] == stock].sort_values('date') if not long_df.empty else long_df
+        row = dict.fromkeys(columns, np.nan)
+        if len(group) >= 2:
+            price, total = group['price'].to_numpy(dtype=float), group['total'].to_numpy(dtype=float)
+            row['Price return'] = price[-1] / price[0] - 1
+            row['Total return'] = total[-1] / total[0] - 1
+            days = (pd.Timestamp(group['date'].iloc[-1]) - pd.Timestamp(group['date'].iloc[0])).days
+            if days >= _MIN_ANNUALISE_DAYS and total[-1] > 0:
+                row['Annualised total return'] = (total[-1] / total[0]) ** (365.25 / days) - 1
+            row['Max drawdown'] = float(np.min(total / np.maximum.accumulate(total) - 1))
+        rows.append({'Stock': stock, **row})
+    return pd.DataFrame(rows, columns=['Stock', *columns]).set_index('Stock')
+
+
+def format_signed_pct(value):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 'N/A'
+    if not np.isfinite(numeric):
+        return 'N/A'
+    return f'{numeric * 100:+.1f}%'
+
+
+def thin_series(long_df, max_points=_MAX_CHART_POINTS):
+    """Keep at most about ``max_points`` evenly spaced rows per stock, always keeping the first and last."""
+    if long_df.empty:
+        return long_df
+    pieces = []
+    for _, group in long_df.groupby('stock', sort=False):
+        if len(group) > max_points:
+            keep = np.unique(np.linspace(0, len(group) - 1, max_points).round().astype(int))
+            group = group.iloc[keep]
+        pieces.append(group)
+    return pd.concat(pieces, ignore_index=True)
+
+
+def yearly_dividends(div_df, price_df, years, measure='Per share', today=None):
+    """Yearly dividend figures for one stock, grouped by ex-date calendar year.
+
+    ``measure`` is one of ``_DIV_MEASURES``: ``Per share`` sums ``adjDividend``;
+    ``Growth index`` rebases to 100 in the first shown year with a positive
+    dividend; ``Yield at year-end price`` divides by that year's last close
+    (the latest close for the current year) x 100. Years from the stock's
+    first dividend year onward are zero-filled; earlier years are absent, as
+    are years without a price for the yield measure. Ex-dates after ``today``
+    are ignored. Returns columns ``year``, ``value`` and ``is_ytd``.
+    """
+    if measure not in _DIV_MEASURES:
+        raise ValueError(f'Unknown dividend measure: {measure}')
+    empty = pd.DataFrame({'year': pd.Series(dtype=int), 'value': pd.Series(dtype=float), 'is_ytd': pd.Series(dtype=bool)})
+    today = (pd.Timestamp.today() if today is None else pd.Timestamp(today)).normalize()
+    years = sorted({int(year) for year in years})
+    divs = _clean_dividends(div_df)
+    divs = divs[divs['date'] <= today]
+    if divs.empty or not years:
+        return empty
+    per_year = divs.groupby(divs['date'].dt.year)['adjDividend'].sum()
+    first_year = int(per_year.index.min())
+    shown = [year for year in years if year >= first_year]
+    if not shown:
+        return empty
+    amounts = pd.Series([float(per_year.get(year, 0.0)) for year in shown], index=shown, dtype=float)
+
+    if measure == 'Per share':
+        values = amounts
+    elif measure == 'Growth index':
+        positive = amounts[amounts > 0]
+        if positive.empty:
+            return empty
+        values = amounts[amounts.index >= positive.index[0]] / positive.iloc[0] * 100
+    else:
+        prices = _clean_prices(price_df)
+        prices = prices[prices['date'] <= today]
+        if prices.empty:
+            return empty
+        year_end = prices.groupby(prices['date'].dt.year)['close'].last()
+        values = (amounts / year_end.reindex(amounts.index) * 100).dropna()
+
+    if values.empty:
+        return empty
+    return pd.DataFrame({
+        'year': values.index.astype(int),
+        'value': values.to_numpy(dtype=float),
+        'is_ytd': values.index == today.year,
+    })
 
 
 def _sync_query(key, value, remove_empty=False):
@@ -316,7 +568,12 @@ def _metric_hint(label):
 
 market_key = str(st.query_params.get('market', 'jkse')).lower()
 market_key = market_key if market_key in _MARKET_QP_MAP else 'jkse'
-if st.session_state.get('_comp_last_qp_market') != market_key:
+# Also reseed when the widget state is gone (Streamlit drops it after leaving the page):
+# a segmented control has no first-option fallback like a radio, so it would come back as None.
+if (
+    st.session_state.get('_comp_last_qp_market') != market_key
+    or st.session_state.get('comp_sl') not in _MARKET_QP_REV
+):
     st.session_state['comp_sl'] = _MARKET_QP_MAP[market_key]
     st.session_state['_comp_last_qp_market'] = market_key
 
@@ -328,11 +585,13 @@ def _market_changed():
     st.session_state['_comp_last_qp_market'] = query_value
 
 
-stock_select = st.sidebar.radio(
+market_col, syariah_col = st.columns([3, 1], vertical_alignment='bottom')
+stock_select = market_col.segmented_control(
     'Stock market',
     list(_MARKET_QP_MAP.values()),
     key='comp_sl',
     on_change=_market_changed,
+    required=True,
 )
 market = 'JKSE' if stock_select == _MARKET_QP_MAP['jkse'] else 'S&P500'
 _sync_query('market', _MARKET_QP_REV[stock_select])
@@ -359,7 +618,7 @@ except Exception as exc:
 if market != 'JKSE':
     final_df = final_df.drop('GOOGL', errors='ignore')
 if market == 'JKSE' and 'is_syariah' in final_df.columns:
-    if st.sidebar.toggle('Syariah only', key='comp_syariah'):
+    if syariah_col.toggle('Syariah only', key='comp_syariah'):
         final_df = final_df[final_df['is_syariah'].eq(True)]
 
 filtered_df = get_processed_df(final_df[[col for col in _KEEP_COLS if col in final_df.columns]])
@@ -403,6 +662,35 @@ selected_stocks = select_col.multiselect(
 _sync_query('stocks', ','.join(selected_stocks), remove_empty=True)
 st.session_state['_comp_last_qp_stocks'] = ','.join(selected_stocks)
 
+stock_groups = available_stock_groups(market, stock_options)
+
+
+def _group_picked():
+    group = st.session_state.get('comp_group')
+    if group not in stock_groups:
+        return
+    stocks = stock_groups[group]
+    query_value = ','.join(stocks)
+    st.session_state['comp_stocks'] = list(stocks)
+    st.session_state['_comp_last_qp_stocks'] = query_value
+    _sync_query('stocks', query_value, remove_empty=True)
+    logger.info('COMPARISON | event=group_select | market=%s | group=%s', market, group)
+
+
+if stock_groups:
+    # Derive the highlight from the current selection so it clears after manual edits and matches shared URLs.
+    st.session_state['comp_group'] = next(
+        (name for name, stocks in stock_groups.items() if set(stocks) == set(selected_stocks)), None
+    )
+    st.pills(
+        'Popular comparisons',
+        options=list(stock_groups),
+        selection_mode='single',
+        key='comp_group',
+        on_change=_group_picked,
+        help='Fill the selection with a group of stocks that are commonly compared with each other.',
+    )
+
 if len(selected_stocks) < 2:
     st.info('Select at least two stocks to start. A focused comparison supports up to five.')
     st.stop()
@@ -433,6 +721,7 @@ def _view_changed():
 view_label = st.segmented_control(
     'Comparison view',
     list(_VIEW_LABELS.values()),
+    required=True,
     key='comp_view',
     on_change=_view_changed,
 )
@@ -582,6 +871,132 @@ elif active_view == 'dist':
                 'Peer context': rank['text'] if rank else 'No valid peer comparison',
             })
         st.dataframe(pd.DataFrame(summary).set_index('Stock'), width='stretch')
+
+
+elif active_view == 'history':
+    today_ts = pd.Timestamp.today().normalize()
+    histories, failed = {}, []
+    with st.spinner('Loading price and dividend history...'):
+        for stock in selected_stocks:
+            try:
+                histories[stock] = get_stock_history(stock, market)
+            except Exception:
+                logger.exception('COMPARISON | event=history_load_error | market=%s | stock=%s', market, stock)
+                failed.append(stock)
+    no_prices = [stock for stock, (price_df, _) in histories.items() if _clean_prices(price_df).empty]
+    problems = []
+    if failed:
+        problems.append(f'History could not be loaded for: {", ".join(failed)}.')
+    if no_prices:
+        problems.append(f'No price history is available for: {", ".join(no_prices)}.')
+    if problems:
+        st.warning(' '.join(problems) + ' The other stocks are still shown.')
+
+    st.subheader('Performance')
+    requested_period = str(st.query_params.get('hist_period', _HIST_DEFAULT_PERIOD)).upper()
+    requested_period = requested_period if requested_period in _HIST_PERIODS else _HIST_DEFAULT_PERIOD
+    ctrl_a, ctrl_b = st.columns([3, 2])
+    period = ctrl_a.segmented_control(
+        'Period', list(_HIST_PERIODS), default=requested_period, required=True, key='comp_hist_period'
+    ) or requested_period
+    _sync_query('hist_period', period)
+    if st.session_state.get('_comp_logged_hist_period') != period:
+        logger.info('COMPARISON | event=history_period | period=%s | stocks=%s', period, ','.join(selected_stocks))
+        st.session_state['_comp_logged_hist_period'] = period
+    include_dividends = ctrl_b.toggle(
+        'Include dividends', value=True, key='comp_hist_include_div',
+        help='On: total return, with each dividend reinvested at the close on its ex-date. Off: price change only.',
+    )
+
+    period_start = today_ts - pd.DateOffset(years=_HIST_PERIODS[period])
+    frames = {
+        stock: build_performance_frame(price_df, div_df, include_dividends)
+        for stock, (price_df, div_df) in histories.items()
+    }
+    frames = {stock: frame for stock, frame in frames.items() if not frame.empty}
+    perf_df, common_start, limiting_stock = rebase_performance(frames, period_start)
+    plotted = [stock for stock in selected_stocks if stock in frames]
+    color_scale = alt.Scale(domain=plotted, range=[stock_colors[stock] for stock in plotted])
+
+    if perf_df.empty:
+        st.info('No price history is available for the selected stocks.')
+    else:
+        if limiting_stock:
+            st.caption(
+                f'{limiting_stock} has price history only from {common_start:%d %b %Y}, so every line starts '
+                f'at 100 on that date rather than at the start of the {period} period.'
+            )
+        value_title = 'Total return index' if include_dividends else 'Price index'
+        chart = alt.Chart(thin_series(perf_df)).mark_line(strokeWidth=2).encode(
+            x=alt.X('date:T', title=None),
+            y=alt.Y('value:Q', title=f'{value_title} (start = 100)', scale=alt.Scale(zero=False)),
+            color=alt.Color('stock:N', title='Stock', scale=color_scale, sort=plotted),
+            tooltip=[
+                alt.Tooltip('stock:N', title='Stock'),
+                alt.Tooltip('date:T', title='Date', format='%d %b %Y'),
+                alt.Tooltip('value:Q', title=value_title, format=',.1f'),
+            ],
+        ).properties(height=420)
+        st.altair_chart(chart, width='stretch', theme=None)
+
+        summary = performance_summary(perf_df, plotted)
+        st.dataframe(summary.map(format_signed_pct), width='stretch')
+        st.caption(
+            f'From {common_start:%d %b %Y} to each stock\'s latest close. Total return reinvests every dividend '
+            'at the close on its ex-date; taxes and fees are ignored. Max drawdown is the largest peak-to-trough '
+            'fall in total return. Annualised return is N/A for windows shorter than one year.'
+        )
+
+    st.subheader('Dividends by year')
+    measure = st.segmented_control(
+        'Measure', list(_DIV_MEASURES), default=_DIV_MEASURES[0], required=True, key='comp_hist_div_measure'
+    ) or _DIV_MEASURES[0]
+    years = list(range(today_ts.year - _HIST_YEARS + 1, today_ts.year + 1))
+    pieces = []
+    for stock, (price_df, div_df) in histories.items():
+        yearly = yearly_dividends(div_df, price_df, years, measure, today=today_ts)
+        if not yearly.empty:
+            pieces.append(yearly.assign(stock=stock))
+    div_chart_df = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame()
+
+    if div_chart_df.empty or not (div_chart_df['value'] > 0).any():
+        st.info(f'None of the selected stocks paid a dividend between {years[0]} and {years[-1]}.')
+    else:
+        currency = currency_suffix.split()[-1]
+        if measure == 'Per share':
+            div_chart_df['display'] = div_chart_df['value'].map(lambda value: f'{value:,.2f} {currency}')
+            y_title = f'Dividend per share ({currency})'
+        elif measure == 'Growth index':
+            div_chart_df['display'] = div_chart_df['value'].map(lambda value: f'{value:,.1f}')
+            y_title = 'Dividend growth index (first year = 100)'
+        else:
+            div_chart_df['display'] = div_chart_df['value'].map(lambda value: f'{value:.2f}%')
+            y_title = 'Dividend yield at year-end price (%)'
+        div_stocks = [stock for stock in selected_stocks if stock in set(div_chart_df['stock'])]
+        div_color_scale = alt.Scale(domain=div_stocks, range=[stock_colors[stock] for stock in div_stocks])
+        chart = alt.Chart(div_chart_df).mark_bar().encode(
+            x=alt.X('year:O', title=None, scale=alt.Scale(domain=years), axis=alt.Axis(labelAngle=0)),
+            xOffset=alt.XOffset('stock:N', sort=div_stocks, scale=alt.Scale(domain=div_stocks)),
+            y=alt.Y('value:Q', title=y_title),
+            color=alt.Color('stock:N', title='Stock', scale=div_color_scale, sort=div_stocks),
+            opacity=alt.condition('datum.is_ytd', alt.value(.45), alt.value(1)),
+            tooltip=[
+                alt.Tooltip('stock:N', title='Stock'),
+                alt.Tooltip('year:O', title='Year'),
+                alt.Tooltip('display:N', title=measure),
+            ],
+        ).properties(height=380)
+        st.altair_chart(chart, width='stretch', theme=None)
+        caption = (
+            f'Dividends are grouped by ex-date calendar year and include all dividend types, so the latest figure '
+            f'can differ from the table\'s Last Dividend (latest finalized fiscal year, ordinary dividends only). '
+            f'{today_ts.year} is year to date and drawn lighter.'
+        )
+        if measure == 'Growth index':
+            caption += ' Each stock is rebased to 100 in its first year with a dividend in this window.'
+        elif measure == 'Yield at year-end price':
+            caption += f' Yield uses each year\'s last close; {today_ts.year} uses the latest close.'
+        st.caption(caption)
 
 
 else:
