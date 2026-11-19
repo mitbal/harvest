@@ -1007,6 +1007,7 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
 
     time_range = ctrl_cols[0].segmented_control(
         'Time Range',
+        required=True,
         options=['3M', '6M', '1Y', '3Y', 'All'],
         default='1Y',
         key=f'pm_range_{stock_name}',
@@ -1814,6 +1815,7 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     section = st.segmented_control(
         'Research section',
+        required=True,
         options=list(_RESEARCH_SECTIONS.values()),
         key=widget_key,
         on_change=_research_section_changed,
@@ -1873,7 +1875,8 @@ st.session_state.setdefault('_stock_picker_viewed', None)
 
 full_table_section = st.container(border=True)
 
-# Table controls share a single row: stock list, ranking style, and table view
+# Table controls share a single row: stock list, ranking style, Syariah and ownership
+# toggles (JKSE only), and table view
 table_controls = full_table_section.container(
     horizontal=True,
     vertical_alignment='bottom',
@@ -1897,6 +1900,7 @@ def _market_changed():
 with table_controls:
     stock_select = st.segmented_control(
         'Stock List Selection',
+        required=True,
         options=stock_options,
         default=stock_options[default_sl],
         format_func=_STOCK_LIST_LABELS.get,
@@ -1907,6 +1911,7 @@ with table_controls:
     # Deselecting the active option returns None, which falls back to the default ranking.
     rank_by = st.segmented_control(
         'Rank by',
+        required=True,
         options=RANK_OPTIONS,
         default=RANK_OPTIONS[0],
         key='rank_by',
@@ -1919,7 +1924,6 @@ if stock_select == 'Indonesian Stock':
 else:
     sl = 'S&P500'
 
-table_preset_slot = table_controls.container(width='content')
 filter_controls = full_table_section.container(
     horizontal=True,
     vertical_alignment='bottom',
@@ -1943,8 +1947,9 @@ def filter_by_ownership(df, choice):
 
 is_syariah = False
 if sl == 'JKSE':
-    syariah_filter = filter_controls.segmented_control(
+    syariah_filter = table_controls.segmented_control(
         'Syariah filter',
+        required=True,
         options=['All', 'Syariah only'],
         default='All',
         width='content',
@@ -1965,12 +1970,16 @@ if sl != 'JKSE':
 # Old cached tables have no state_owned column until the pipeline reruns
 ownership_filter = 'All'
 if sl == 'JKSE' and 'state_owned' in final_df.columns:
-    ownership_filter = filter_controls.segmented_control(
+    ownership_filter = table_controls.segmented_control(
         'Ownership filter',
+        required=True,
         options=list(OWNERSHIP_OPTIONS),
         default='All',
         width='content',
     )
+
+# Created after the Syariah and Ownership toggles so Table view ends the control row
+table_preset_slot = table_controls.container(width='content')
 
 # ---------------------------------------------------------------------------
 # Column pruning — keep only columns actually used in the page
@@ -2409,6 +2418,7 @@ with full_table_section:
 
         table_preset = table_preset_slot.segmented_control(
             'Table view',
+            required=True,
             options=list(_TABLE_PRESETS),
             default='Essentials',
             format_func=lambda preset: _TABLE_PRESET_LABELS.get(preset, preset),
@@ -2571,6 +2581,7 @@ if 'overview' in st.query_params and st.query_params['overview'].lower() == 'tru
 default_view = 'Score overview' if default_dashboard else 'Research'
 mode = st.segmented_control(
     'Analysis view',
+    required=True,
     options=['Research', 'Score overview'],
     default=default_view,
     help='Research shows one detailed analysis at a time. Score overview summarizes relative rankings.',
