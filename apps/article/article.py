@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 import streamlit as st
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 @st.cache_resource
@@ -63,8 +64,8 @@ if st.session_state.selected_article:
 
 else:
     # Main Page: Article Selection View
-    st.title('Panen Dividen Articles')
-    st.write('Select an article to read more about dividend investing and market analysis.')
+    ui.page_title('Panen Dividen Articles',
+                  'Select an article to read more about dividend investing and market analysis.')
     
     # Render articles as cards in a grid
     cols = st.columns(3)

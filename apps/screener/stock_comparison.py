@@ -13,6 +13,7 @@ import streamlit as st
 
 import harvest.data as hd
 import harvest.plot as hp
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 
@@ -20,10 +21,10 @@ mimetypes.add_type('image/svg+xml', '.svg')
 
 st.set_page_config(page_title='Stock Comparison - Panen Dividen')
 hp.enable_chart_theme()
-st.title('Stock Comparison')
-st.caption(
+ui.page_title(
+    'Stock Comparison',
     'Compare 2-5 stocks across income, valuation, quality, growth, returns, and risk, or over time in History. '
-    'Unavailable or financially invalid values are excluded rather than treated as zero.'
+    'Unavailable or financially invalid values are excluded rather than treated as zero.',
 )
 
 MAX_STOCKS = 5

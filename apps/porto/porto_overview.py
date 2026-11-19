@@ -17,6 +17,7 @@ import harvest.plot as hp
 import harvest.data as hd
 import harvest.portfolio as hpf
 from harvest import chart_style as cs
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 # Must be the very first Streamlit command
@@ -279,11 +280,11 @@ data_input_expand_flag = st.session_state['porto_df'] is None
 # --- Header ---
 col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
-    st.title('Portfolio Analytics')
     if st.user.is_logged_in:
-        st.markdown(f"**Welcome back, {st.user.name.split()[0]}!** Here's your harvest overview for today.")
+        porto_subtitle = f"Welcome back, {st.user.name.split()[0]}! Here's your harvest overview for today."
     else:
-        st.markdown("Analyze your portfolio performance and dividend growth.")
+        porto_subtitle = 'Analyze your portfolio performance and dividend growth.'
+    ui.page_title('Portfolio Analytics', porto_subtitle)
 
 with col_head2:
     if st.user.is_logged_in:

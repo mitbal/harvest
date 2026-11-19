@@ -17,6 +17,7 @@ import harvest.plot as hp
 import harvest.data as hd
 import harvest.prices as hprices
 from harvest import chart_style as cs
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 from harvest.viewport import remaining_viewport_height
 
@@ -25,11 +26,10 @@ st.set_page_config(page_title='Market Heatmap - Panen Dividen', layout='wide')
 hp.enable_chart_theme()
 
 # The heatmap should fill the first screen, so this page trims Streamlit's
-# default top padding and uses a compact title. Scoped to this page's elements.
+# default top padding. Scoped to this page's elements.
 st.html("""
 <style>
     [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
-    .st-key-mw_header h1 { font-size: 1.75rem; padding: 0; }
 </style>
 """)
 header_slot = st.container(key='mw_header')
@@ -960,7 +960,7 @@ sl = _market_code(stock_select)
 redis_key = 'div_score_jkse' if sl == 'JKSE' else 'div_score_sp500'
 
 with header_slot:
-    st.title(
+    ui.page_title(
         'Market Heatmap',
         help=(
             'Each tile is one index or currency pair, coloured by its return over the '

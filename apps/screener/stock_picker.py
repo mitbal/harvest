@@ -21,12 +21,14 @@ from datetime import date, datetime, timedelta
 import harvest.plot as hp
 import harvest.data as hd
 from harvest import chart_style as cs
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 
 st.set_page_config(page_title='Dividend Ranking - Panen Dividen', layout='wide')
 hp.enable_chart_theme()
-st.title('Dividend Ranking')
+ui.page_title('Dividend Ranking',
+              'Rank stocks by dividend score, then open any one for its full analysis.')
 
 api_key = os.getenv('FMP_API_KEY')
 redis_url = os.getenv('REDIS_URL')

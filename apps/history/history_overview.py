@@ -11,8 +11,10 @@ import plotly.graph_objects as go
 
 import streamlit as st
 
+from harvest import page_ui as ui
+
 st.set_page_config(layout='wide')
-st.title('Historical Insight')
+ui.page_title('Historical Insight')
 
 with st.expander('Data Input', expanded=True):
     method = st.radio('Method', ['Upload CSV', 'Paste Raw', 'Form'], horizontal=True)

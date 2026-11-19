@@ -29,7 +29,6 @@ hp.enable_chart_theme()
 st.html("""
 <style>
     [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
-    .st-key-cal_header h1 { font-size: 1.75rem; padding: 0; }
     /* Single Month: tighter cards so the month grid fits the first screen. The main-block prefix
        outranks the shared card padding in page_ui, which is injected after this block */
     [data-testid="stMainBlockContainer"] .st-key-pdx-card-cal-controls { padding: 8px 16px; }
@@ -38,8 +37,6 @@ st.html("""
     [data-testid="stMainBlockContainer"] :is(.st-key-cal_prev, .st-key-cal_next) button {
         min-height: 32px; padding-top: 0; padding-bottom: 0;
     }
-    /* Single Month: subtitle beside the title, bottoms lined up; it wraps under the title when narrow */
-    .st-key-cal_title_row .pdx .pdx-sub { margin: 0; padding-bottom: 3px; }
     @media (max-width: 640px) {
         [data-testid="stMainBlockContainer"] .st-key-pdx-card-cal-grid { padding: 14px 14px; }
     }
@@ -432,12 +429,11 @@ projection_note = (
 with header:
     if view_control == 'Single Month':
         # Title and subtitle share one line (wrapping on narrow screens) so the month grid starts higher
-        with st.container(horizontal=True, vertical_alignment='bottom', key='cal_title_row'):
-            st.title(f'Dividend Calendar {projected_year}', width='content')
-            st.html(f'<div class="pdx"><p class="pdx-sub">Projected ex-dates, based on what each company '
-                    f'paid in {ui.esc(selected_year)}</p></div>', width='content')
+        ui.page_title(f'Dividend Calendar {projected_year}',
+                      f'Projected ex-dates, based on what each company paid in {selected_year}',
+                      subtitle_inline=True)
     else:
-        st.title(f'Dividend Calendar {projected_year}')
+        ui.page_title(f'Dividend Calendar {projected_year}')
     if selected_year >= current_year:
         st.warning(f'{selected_year} is not over yet, so this projection only includes ex-dividend dates up to today.')
 

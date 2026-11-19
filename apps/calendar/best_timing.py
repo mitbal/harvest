@@ -16,6 +16,7 @@ import streamlit as st
 import harvest.data as hd
 import harvest.plot as hp
 from harvest import chart_style as cs
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 
@@ -24,7 +25,8 @@ current_year = datetime.today().year
 st.set_page_config(page_title='Best Timing - Panen Dividen')
 hp.enable_chart_theme()
 
-st.title('Best Timing')
+ui.page_title('Best Timing',
+              'When to buy before the ex-date, and how long prices take to recover after it.')
 
 # URL params keep the view shareable: ?market=jkse|sp500&start=YYYY&end=YYYY&sector=<name>
 _MARKET_QP_MAP = {'jkse': 'JKSE', 'sp500': 'S&P500'}

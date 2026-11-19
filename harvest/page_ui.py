@@ -1,4 +1,5 @@
-"""Shared look for the custom-styled pages (Payout Calendar month view, Compounding Simulator).
+"""Shared look for the custom-styled pages (Payout Calendar month view, Compounding Simulator),
+plus ``page_title()``, the page header every non-Trading page uses.
 
 Plain HTML pieces rendered with ``st.html``. Every dynamic string goes through ``esc()``.
 Cards are ``st.container(key='pdx-card-...')`` so native widgets and charts can sit inside them.
@@ -191,6 +192,55 @@ def inject_styles() -> None:
 
 def render(markup: str) -> None:
     st.html(f'<div class="pdx">{markup}</div>')
+
+
+# Page header for every page outside Trading (those keep their hero banner from trading_ui).
+# Scoped to the header's own container, so it works whether or not the page calls inject_styles().
+_TITLE_KEY = 'pdx-page-title'
+_TITLE_STYLES = f"""
+<style>
+{FONT_IMPORT}
+[data-testid="stMainBlockContainer"] .st-key-{_TITLE_KEY} :is(h1, p) {{
+  font-family: 'Manrope', system-ui, sans-serif; margin: 0;
+}}
+[data-testid="stMainBlockContainer"] .st-key-{_TITLE_KEY} h1 {{
+  font-size: 1.75rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; padding: 0;
+}}
+/* Streamlit pulls every heading up by -1rem to cancel the gap below it. This container has no gap,
+   so with a subtitle under the title that pull would put it on top of the title. Without one the
+   pull stays, so the page's next element sits as close to the title as on a plain st.title. */
+[data-testid="stMainBlockContainer"] .st-key-{_TITLE_KEY}:has(.pdx-title-sub:not(.is-inline)) [data-testid="stMarkdownContainer"] {{
+  margin-bottom: 0;
+}}
+.st-key-{_TITLE_KEY} .pdx-title-sub {{
+  color: {_T['muted']}; font-size: .95rem; line-height: 1.45; max-width: 75ch; margin-top: .3rem;
+}}
+/* Inline subtitle sits beside the title, bottoms lined up, and wraps under it when narrow */
+.st-key-{_TITLE_KEY} .pdx-title-sub.is-inline {{ margin-top: 0; padding-bottom: 3px; }}
+@media (max-width: 640px) {{
+  [data-testid="stMainBlockContainer"] .st-key-{_TITLE_KEY} h1 {{ font-size: 1.5rem; }}
+}}
+</style>
+"""
+
+
+def page_title(title: str, subtitle: str | None = None, *,
+               help: str | None = None, subtitle_inline: bool = False) -> None:
+    """The page header: Manrope title with an optional muted subtitle.
+
+    ``help`` adds Streamlit's tooltip icon to the title. ``subtitle_inline`` puts the subtitle on the
+    title's line instead of under it, for pages that need the first screen for content.
+    """
+    with st.container(key=_TITLE_KEY, gap=None):
+        st.html(_TITLE_STYLES)
+        if subtitle and subtitle_inline:
+            with st.container(horizontal=True, vertical_alignment='bottom', gap='small'):
+                st.title(title, anchor=False, help=help, width='content')
+                st.html(f'<p class="pdx-title-sub is-inline">{esc(subtitle)}</p>', width='content')
+            return
+        st.title(title, anchor=False, help=help)
+        if subtitle:
+            st.html(f'<p class="pdx-title-sub">{esc(subtitle)}</p>')
 
 
 def chip(text, tone: str = '') -> str:

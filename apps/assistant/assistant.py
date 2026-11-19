@@ -7,6 +7,7 @@ import redis
 import streamlit as st
 from openai import OpenAI
 
+from harvest import page_ui as ui
 from harvest.utils import setup_logging
 
 
@@ -146,8 +147,8 @@ if st.sidebar.button("Reset Chat"):
     st.rerun()
 
 # Main chat interface
-st.title("🧞‍♂️ Om Jin the Financial Advisor")
-st.caption(f"Granting Financial Freedom wishes since 1825 BC")
+ui.page_title('🧞‍♂️ Om Jin the Financial Advisor',
+              'Granting Financial Freedom wishes since 1825 BC')
 
 
 avatars = {

@@ -770,14 +770,11 @@ RENDERERS = {
 ################################################################################
 
 # Page-only sizing so the assumptions, tiles and chart fit the first screen (1440x800). Selectors
-# use this page's own keys (sim cards, panes, sim_header), so the calendar page is untouched. The
+# use this page's own keys (sim cards and panes), so the calendar page is untouched. The
 # main-block prefix outranks the shared card and tile rules in page_ui, injected after this block.
 st.html("""
 <style>
     [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
-    .st-key-sim_header h1 { font-size: 1.75rem; padding: 0; }
-    /* The shared -.6rem pull-up assumes a full-size h1 and overlaps this one */
-    .st-key-sim_header .pdx .pdx-sub { margin-top: 4px; }
     [data-testid="stMainBlockContainer"] [class*="st-key-pdx-card-sim"] { padding: 14px 16px; gap: .6rem; }
     [data-testid="stMainBlockContainer"] [class*="st-key-sim-fields-"] { gap: .6rem; }
     [data-testid="stMainBlockContainer"] [class*="st-key-pdx-pane-right-sim"] { gap: .75rem; }
@@ -794,9 +791,7 @@ st.html("""
 """)
 ui.inject_styles()
 
-with st.container(key='sim_header'):
-    st.title('Compounding Simulator')
-    ui.render('<p class="pdx-sub">See what reinvested dividends grow into over time</p>')
+ui.page_title('Compounding Simulator', 'See what reinvested dividends grow into over time')
 
 _default_mode = parse_sim_param(st.query_params)
 sim_mode = st.segmented_control(
