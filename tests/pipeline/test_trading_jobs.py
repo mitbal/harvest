@@ -395,10 +395,12 @@ def test_swing_signal_needs_todays_bar_and_a_setup():
         ) is None
 
 
-def _patch_swing_inputs(shortlist, histories, regime=None, breadth=None):
+def _patch_swing_inputs(shortlist, histories, regime=None, breadth=None, eligibility=None):
+    """Patch the optimizer's backtest inputs; no eligibility means no point-in-time mask."""
     index = next(iter(histories.values()))["close"]
-    return patch.object(trading_optimize, "swing_inputs", return_value=(
-        shortlist, histories, regime if regime is not None else pd.Series("bear", index=index.index),
+    return patch.object(trading_optimize, "swing_backtest_inputs", return_value=(
+        shortlist, histories, eligibility if eligibility is not None else {},
+        regime if regime is not None else pd.Series("bear", index=index.index),
         breadth if breadth is not None else pd.Series(dtype=float), index,
     ))
 
@@ -432,6 +434,26 @@ def test_swing_optimize_publishes_a_walk_forward_winner():
     portfolio = store.latest_run(client, "swing", "optimize")["stats"]["portfolio"]
     assert portfolio["stats"]["trades_offered"] == stats["walk_forward"]["trades"]
     assert portfolio["stats"]["trades_taken"] > 0
+    assert stats["universe"] == "point_in_time"
+
+
+def test_swing_optimize_counts_no_setups_on_days_off_the_shortlist():
+    client = FakeSupabase()
+    store.write_setups(client, "swing", [{"scope": "global", "params": SWING_SETUP, "holdout": {}}])
+    symbols = [f"S{i}.JK" for i in range(6)]
+    histories = {s: _cycles(i) for i, s in enumerate(symbols)}
+    never = {s: pd.Series(False, index=frame.index) for s, frame in histories.items()}
+    with _patch_swing_inputs(pd.DataFrame({"stock": symbols}), histories, eligibility=never), \
+            patch.object(sw, "preset_combos", return_value=[
+                (sw.STRATEGY_REGIME_RSI, 14, 30, 50, 45, 5, 5.0, 2.0),
+                (sw.STRATEGY_REGIME_RSI, 7, 30, 50, 45, 5, 5.0, 2.0),
+            ]):
+        # The same stocks publish a winner without the mask (test above); with it, no setup counts.
+        with pytest.raises(RuntimeError, match="No swing backtests"):
+            trading_optimize.swing(client, as_of=AS_OF)
+
+    assert store.read_setups(client, "swing")["global"]["params"] == SWING_SETUP  # nothing new published
+    assert store.latest_run(client, "swing", "optimize")["status"] == "failed"
 
 
 def test_swing_optimize_publishes_nothing_without_an_edge():

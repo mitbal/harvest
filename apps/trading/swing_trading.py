@@ -499,13 +499,13 @@ def render_no_setup(search: dict | None) -> None:
         if record.get('trades'):
             st.caption(
                 f"Last search {ui.day(search['as_of'])}: {stats.get('combinations')} setups on "
-                f"{stats.get('shortlist')} stocks. Picking the best setup every six months would have made "
+                f"{stats.get('stocks_with_prices') or stats.get('shortlist')} stocks. Picking the best setup every six months would have made "
                 f"{record['trades']} trades averaging {record['avg_trade']:+.2f}% after costs, which doesn't pass."
             )
         else:
             st.caption(
                 f"Last search {ui.day(search['as_of'])}: none of {stats.get('combinations')} setups on "
-                f"{stats.get('shortlist')} stocks made money after costs in the three years before any test window."
+                f"{stats.get('stocks_with_prices') or stats.get('shortlist')} stocks made money after costs in the three years before any test window."
             )
     st.caption('Signals appear here automatically when a setup passes. The Lab has the full research.')
 

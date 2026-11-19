@@ -100,6 +100,35 @@ def test_market_breadth_needs_minimum_universe():
     assert breadth.iloc[-1] == 100.0
 
 
+def test_market_breadth_counts_only_that_days_members():
+    grouped = {**{f"S{i}": _closes(np.linspace(100, 120, 30)) for i in range(3)},
+               "OFF": _closes(np.linspace(120, 100, 30))}
+    members = pd.DataFrame(True, index=grouped["OFF"].index, columns=list(grouped))
+    members["OFF"] = False
+
+    assert sw.build_market_breadth(grouped, window=5, min_stocks=3).iloc[-1] == 75.0
+    assert sw.build_market_breadth(grouped, window=5, min_stocks=3, members=None).iloc[-1] == 75.0
+    assert sw.build_market_breadth(grouped, window=5, min_stocks=3, members=members).iloc[-1] == 100.0
+    # With the falling stock out, only three members count, so four are too many to ask for.
+    assert sw.build_market_breadth(grouped, window=5, min_stocks=4, members=members).empty
+
+
+def test_momentum_percentiles_rank_only_that_days_members():
+    grouped = {"A": _closes(np.linspace(100, 110, 20)), "B": _closes(np.linspace(100, 130, 20)),
+               "OFF": _closes(np.linspace(100, 150, 20))}
+    members = pd.DataFrame(True, index=grouped["A"].index, columns=list(grouped))
+    members["OFF"] = False
+
+    everyone = sw.build_momentum_percentiles(grouped, {5})[5].iloc[-1]
+    unchanged = sw.build_momentum_percentiles(grouped, {5}, members=None)[5].iloc[-1]
+    ranked = sw.build_momentum_percentiles(grouped, {5}, members=members)[5].iloc[-1]
+
+    assert everyone.tolist() == pytest.approx([100 / 3, 200 / 3, 100.0])
+    assert unchanged.tolist() == pytest.approx(everyone.tolist())
+    assert ranked[["A", "B"]].tolist() == [50.0, 100.0]  # the strongest stock was not a member
+    assert np.isnan(ranked["OFF"])
+
+
 # ── Ranking and selection ───────────────────────────────────────────────── #
 
 def test_format_strategy_params_trims_zeros():
@@ -317,6 +346,46 @@ def test_backtest_costs_follow_the_vectorbt_trade_return():
     assert trade["return_pct"] == pytest.approx((105 * (1 - 0.0025) / 100 - 1.0015) * 100)
 
 
+def test_eligible_mask_keeps_only_setups_on_eligible_days():
+    rows = [(100, 100, 100, 100)] * 60 + [(100, 101, 99.5, 100), (101, 106, 100.5, 104)]
+    frame = _bars(rows)
+    regime = pd.Series("bull", index=frame.index)
+    off_on_setup_day = pd.Series(True, index=frame.index)
+    off_on_setup_day.iloc[59] = False
+
+    def run(eligible):
+        with patch_components(frame, setup_at=59):
+            trades, _ = sw.backtest_trades(frame, regime, sw.STRATEGY_REGIME_RSI, 14, 30, 50, 45, 5, 5.0, 2.0,
+                                           buy_fee=0.15, sell_fee=0.15, sell_tax=0.1, eligible=eligible)
+        return trades
+
+    unmasked = run(None)
+    assert len(unmasked) == 1
+    assert run(pd.Series(False, index=frame.index)).empty
+    pd.testing.assert_frame_equal(run(pd.Series(True, index=frame.index)), unmasked)
+    assert run(off_on_setup_day).empty
+
+
+def test_eligible_mask_applies_to_a_real_panic_dip():
+    close = np.r_[np.full(40, 1000.0), 940.0]
+    bars = _ohlcv(close)
+    bars.loc[bars.index[-1] + pd.offsets.BDay(1)] = [930.0, 935.0, 840.0, 860.0, 1e8]
+    bars.loc[bars.index[-1] + pd.offsets.BDay(1)] = [880.0, 890.0, 870.0, 880.0, 1e8]
+    regime = pd.Series("bear", index=bars.index)
+    setup_day = bars.index[40]
+    args = (bars, regime, sw.STRATEGY_PANIC_DIP, 1, 4, 1.0, 14, 2, 0.0, 3.0, 0.15, 0.15, 0.1)
+
+    unmasked, _ = sw.backtest_trades(*args)
+    # The mask only needs dates up to the setup; later days missing from it count as off the list.
+    eligible_then, _ = sw.backtest_trades(*args, eligible=pd.Series(True, index=bars.index[:41]))
+    not_eligible, _ = sw.backtest_trades(*args, eligible=pd.Series(bars.index != setup_day, index=bars.index))
+
+    assert len(unmasked) == 1
+    # The exit two days later still happens: only the setup is masked.
+    pd.testing.assert_frame_equal(eligible_then, unmasked)
+    assert not_eligible.empty
+
+
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -458,6 +527,49 @@ def test_build_shortlist_needs_liquidity_and_movement():
     assert sw.build_shortlist(universe, volatility, pin_blue_chips=False)["stock"].tolist() == ["WILD.JK", "BBRI.JK"]
 
 
+def _swinging(n=200, drift=0.005, swing=0.02):
+    """A price rising about 2.6x over ``n`` days with 2% daily swings."""
+    moves = 1 + drift + swing * np.where(np.arange(n) % 2 == 0, 1, -1)
+    return 1000 * np.cumprod(np.r_[1.0, moves[1:]])
+
+
+def test_point_in_time_eligibility_follows_the_market_cap_that_day():
+    close = _swinging()
+    bars = _ohlcv(close)  # Rp 100bn+ a day traded, 2% daily volatility throughout
+    scaled_cap = 2e12 * close / close[-1]
+
+    eligible = sw.point_in_time_eligibility(bars, market_cap=2e12)
+
+    expected = (scaled_cap >= 1e12) & (np.arange(len(close)) >= 30)  # 30 returns before the first verdict
+    assert eligible.dtype == bool and eligible.index.equals(bars.index)
+    assert eligible.tolist() == expected.tolist()
+    assert not eligible.iloc[30] and eligible.iloc[-1]  # too small early on, big enough by the end
+    assert not eligible.iloc[:30].any()
+
+
+def test_point_in_time_eligibility_needs_liquidity_and_movement():
+    close = _swinging()
+    thin = _ohlcv(close, volume=np.full(len(close), 1e3))
+    flat = _ohlcv(np.full(200, 1000.0))
+
+    assert not sw.point_in_time_eligibility(thin, market_cap=50e12).any()
+    assert not sw.point_in_time_eligibility(flat, market_cap=50e12).any()  # no volatility
+
+
+@pytest.mark.parametrize("market_cap", [np.nan, 0.0, -1e12, None])
+def test_point_in_time_eligibility_without_a_market_cap(market_cap):
+    assert not sw.point_in_time_eligibility(_ohlcv(_swinging()), market_cap=market_cap).any()
+
+
+def test_point_in_time_eligibility_without_volume():
+    bars = _ohlcv(_swinging())
+
+    assert not sw.point_in_time_eligibility(bars.drop(columns="volume"), market_cap=50e12).any()
+    assert not sw.point_in_time_eligibility(bars.assign(volume=np.nan), market_cap=50e12).any()
+    empty = sw.point_in_time_eligibility(bars.iloc[0:0], market_cap=50e12)
+    assert empty.empty and empty.dtype == bool
+
+
 def test_dividend_adjust_ohlc_scales_every_price():
     frame = _bars([(100, 101, 99, 100), (100, 101, 99, 100), (95, 96, 94, 95)])
     dividends = pd.DataFrame({"date": [frame.index[2]], "dividend": [5.0]})
@@ -538,14 +650,23 @@ def test_panic_dip_needs_a_sharp_drop_in_a_liquid_stock():
 
 
 def test_volume_breakout_needs_a_new_high_on_heavy_volume():
-    close = np.r_[np.linspace(900, 1000, 70), 1010.0, 1020.0]
-    volume = np.r_[np.full(70, 1e7), 3e7, 1e7]
+    close = np.r_[np.linspace(900, 1000, 70), 1050.0, 1055.0]  # +5% breakout, then a quiet new high
+    volume = np.r_[np.full(70, 1e7), 3e7, 1e7]  # about Rp 10bn a day traded
     setup, _, _ = _components(_ohlcv(close, volume), sw.STRATEGY_VOLUME_BREAKOUT, (60, 2, 1.0, 14))
     no_volume, _, _ = _components(_ohlcv(close, volume).drop(columns="volume"), sw.STRATEGY_VOLUME_BREAKOUT,
                                   (60, 2, 1.0, 14))
 
     assert setup.tolist()[-2:] == [True, False]
     assert not no_volume.any()
+
+
+def test_volume_breakout_needs_a_strong_up_day():
+    close = np.r_[np.linspace(900, 1000, 70), 1010.0, 1020.0]  # the same new high on +1%
+    volume = np.r_[np.full(70, 1e7), 3e7, 1e7]
+    weak, _, _ = _components(_ohlcv(close, volume), sw.STRATEGY_VOLUME_BREAKOUT, (60, 2, 1.0, 14))
+
+    assert (close[-2] / close[-3] - 1) * 100 < sw.BREAKOUT_MIN_GAIN_PCT
+    assert not weak.any()
 
 
 def test_limit_execution_is_a_tick_rounded_atr_below_the_close():

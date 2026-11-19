@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 
-STRATEGY_ENGINE_VERSION = 12
+STRATEGY_ENGINE_VERSION = 13
 DEFAULT_PROFIT_TARGET = 5.0
 DEFAULT_STOP_LOSS = 2.0
 DEFAULT_MAX_HOLD = 5
@@ -32,6 +32,10 @@ DEFAULT_SLIPPAGE_TICKS = 0.5
 LIMIT_STOP_ATR = 3.0
 LIMIT_ENTRY_MIN_PRICE = 200
 LIMIT_ENTRY_MIN_VALUE_TRADED = 5_000_000_000
+# The Volume Breakout only counts a breakout day that closed up at least this
+# much (percent, close to close): breakouts on weaker days had no edge after
+# costs (searched offline, like the constants above).
+BREAKOUT_MIN_GAIN_PCT = 4.0
 
 # Absolute holdout gates a strategy must pass before it can be recommended.
 # Percentile scores only rank candidates; these stop a "best of the losers"
@@ -302,8 +306,13 @@ def build_market_breadth(
     grouped_prices: dict[str, pd.Series],
     window: int = 20,
     min_stocks: int = 10,
+    members: pd.DataFrame | None = None,
 ) -> pd.Series:
-    """Percent of the universe closing above its ``window``-day average."""
+    """Percent of the universe closing above its ``window``-day average.
+
+    ``members`` (bools, dates by symbols), when given, counts a stock only on
+    days it was in the universe.
+    """
     if not grouped_prices:
         return pd.Series(dtype=float)
     close_frame = pd.concat(grouped_prices, axis=1, sort=False).sort_index()
@@ -311,10 +320,21 @@ def build_market_breadth(
     close_frame = close_frame.ffill(limit=5)
     average = close_frame.rolling(window, min_periods=window).mean()
     valid = average.notna() & close_frame.notna()
+    if members is not None:
+        valid &= _bool_mask(members, close_frame.index, close_frame.columns)
     above = (close_frame > average) & valid
     counts = valid.sum(axis=1)
     breadth = above.sum(axis=1) / counts.where(counts > 0) * 100
     return breadth.where(counts >= min_stocks).dropna()
+
+
+def _bool_mask(mask: pd.Series | pd.DataFrame, index: pd.Index, columns: pd.Index | None = None):
+    """``mask`` as clean bools on ``index`` (and ``columns``); anything missing is False."""
+    # Via object dtype so NaN becomes False rather than True (bool(nan) is True).
+    clean = mask.astype(object).fillna(False).astype(bool)
+    if columns is None:
+        return clean.reindex(index, fill_value=False).astype(bool)
+    return clean.reindex(index=index, columns=columns, fill_value=False).astype(bool)
 
 
 def _align_to_prices(series: pd.Series | None, index: pd.Index) -> pd.Series:
@@ -498,13 +518,20 @@ def strategy_components(
         strategy_exit = pd.Series(False, index=close.index)
         indicator = drop
     elif strategy_type == STRATEGY_VOLUME_BREAKOUT:
-        # A new multi-week high on heavy volume: accumulation that keeps going for
-        # a few sessions; the limit buys the first pullback instead of the gap.
+        # A new multi-week high on heavy volume and a strong up day: accumulation
+        # that keeps going for a few sessions; the limit buys the first pullback
+        # instead of the gap.
         window = int(param_a)
         prior_high = close.rolling(window, min_periods=window).max().shift(1)
         volume = _volume(close, bars)
         volume_ratio = volume / volume.rolling(20, min_periods=20).mean().shift(1)
-        setup = (close > prior_high) & (volume_ratio >= float(param_b)) & tradable_for_limit_entry(close, bars)
+        day_gain = close.pct_change() * 100
+        setup = (
+            (close > prior_high)
+            & (volume_ratio >= float(param_b))
+            & (day_gain >= BREAKOUT_MIN_GAIN_PCT)
+            & tradable_for_limit_entry(close, bars)
+        )
         strategy_exit = pd.Series(False, index=close.index)
         indicator = (close / prior_high - 1) * 100
     else:
@@ -684,7 +711,7 @@ def simulate_trades(
 
 def _signal_inputs(
     prices, regime_series, strategy_type, param_a, param_b, param_c, param_d,
-    benchmark_close=None, momentum_percentile=None, breadth=None,
+    benchmark_close=None, momentum_percentile=None, breadth=None, eligible=None,
 ):
     """Clean bars, aligned regime, setup and strategy exit; None when history is too short."""
     frame, has_ohlc = ohlc_frame(prices)
@@ -698,6 +725,9 @@ def _signal_inputs(
         frame['close'], regime_aligned, benchmark_close, momentum_percentile,
         strategy_type, param_a, param_b, param_c, param_d, breadth=breadth, bars=frame,
     )
+    if eligible is not None:
+        # Only new setups are masked: a position opened while eligible still exits normally.
+        setup = setup & _bool_mask(eligible, frame.index)
     return frame, has_ohlc, regime_aligned, setup, strategy_exit
 
 
@@ -778,6 +808,7 @@ def backtest_trades(
     momentum_percentile: pd.Series | None = None,
     breadth: pd.Series | None = None,
     slippage_ticks: float = 0.0,
+    eligible: pd.Series | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
     """Trades of one strategy after fees, tax and tick slippage, plus the clean bars.
 
@@ -785,10 +816,11 @@ def backtest_trades(
     price (limit fills too, which stays conservative). ``return_pct`` is the profit after costs
     over the entry value. Target and stop are percentages, or ATR multiples for the
     limit-entry strategies. None when history is too short for the indicators.
+    ``eligible``, when given, keeps only setups on dates it is True (exits are untouched).
     """
     inputs = _signal_inputs(
         prices, regime_series, strategy_type, param_a, param_b, param_c, param_d,
-        benchmark_close, momentum_percentile, breadth,
+        benchmark_close, momentum_percentile, breadth, eligible,
     )
     if inputs is None:
         return None
@@ -934,7 +966,7 @@ SEARCH_PRESETS = {
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
         "strategy_exits": {
             STRATEGY_PANIC_DIP: {"hold_days": [1, 2], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
-            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [3, 5], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
+            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [5, 10], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
         },
     },
     "Deep": {
@@ -959,8 +991,8 @@ SEARCH_PRESETS = {
         "strategy_exits": {
             STRATEGY_PANIC_DIP: {"hold_days": [1, 2, 3], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
                                                                         (3.0, LIMIT_STOP_ATR)]},
-            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [3, 5], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
-                                                                          (4.0, LIMIT_STOP_ATR)]},
+            STRATEGY_VOLUME_BREAKOUT: {"hold_days": [5, 10], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
+                                                                           (4.0, LIMIT_STOP_ATR)]},
         },
     },
 }
@@ -1057,15 +1089,25 @@ def scanner_strategy_plan(
 def build_momentum_percentiles(
     grouped_prices: dict[str, pd.Series],
     lookbacks: set[int],
+    members: pd.DataFrame | None = None,
 ) -> dict[int, pd.DataFrame]:
-    """Rank each stock's trailing return against the available universe by date."""
+    """Rank each stock's trailing return against the available universe by date.
+
+    ``members`` (bools, dates by symbols), when given, ranks each stock against
+    that day's members only; non-members get no rank.
+    """
     if not grouped_prices or not lookbacks:
         return {}
     close_frame = pd.concat(grouped_prices, axis=1, sort=False).sort_index()
-    return {
-        lookback: close_frame.pct_change(lookback).rank(axis=1, pct=True) * 100
-        for lookback in lookbacks
-    }
+    member_mask = (None if members is None
+                   else _bool_mask(members, close_frame.index, close_frame.columns))
+    percentiles = {}
+    for lookback in lookbacks:
+        returns = close_frame.pct_change(lookback)
+        if member_mask is not None:
+            returns = returns.where(member_mask)
+        percentiles[lookback] = returns.rank(axis=1, pct=True) * 100
+    return percentiles
 
 
 def pooled_trade_stats(frame: pd.DataFrame, prefix: str) -> tuple[float, float]:
@@ -1315,13 +1357,15 @@ def evaluate_stock_strategies(
     breadth: pd.Series | None = None,
     slippage_ticks: float = 0.0,
     trades_out: list | None = None,
+    eligible: pd.Series | None = None,
 ) -> tuple[list[dict], str]:
     """Test every strategy for one stock; safe to execute in a worker thread.
 
     Each combination is simulated once over the whole history; trades entered
     before ``split_date`` are training, the rest the holdout. ``trades_out``,
     when given, collects every trade (``combo`` is its index in
-    ``param_combos``) for :func:`walk_forward`.
+    ``param_combos``) for :func:`walk_forward`. ``eligible``, when given, counts
+    a setup only on dates the stock was on the shortlist (see :func:`point_in_time_eligibility`).
     """
     if prices is None or len(prices) == 0:
         return [], 'missing_data'
@@ -1337,7 +1381,7 @@ def evaluate_stock_strategies(
             frame, regime_series, strategy_type, param_a, param_b, param_c, param_d,
             int(hold_d), float(profit_target), float(stop_loss), buy_fee, sell_fee, sell_tax,
             benchmark_close=benchmark_close, momentum_percentile=momentum_percentiles.get(int(param_a)),
-            breadth=breadth, slippage_ticks=slippage_ticks,
+            breadth=breadth, slippage_ticks=slippage_ticks, eligible=eligible,
         )
         if result is None:
             continue
@@ -1688,6 +1732,55 @@ def build_shortlist(
         pinned = ranked[ranked['stock'].isin(BLUE_CHIPS)]
         ranked = pd.concat([pinned, ranked[~ranked['stock'].isin(BLUE_CHIPS)]])
     return ranked.drop_duplicates('stock').head(int(max_stocks)).reset_index(drop=True)
+
+
+def point_in_time_eligibility(
+    bars: pd.DataFrame,
+    market_cap: float,
+    # Keep these defaults equal to build_shortlist's.
+    min_mcap_trill: float = 1.0,
+    min_value_traded_bn: float = 5.0,
+    min_volatility: float = 1.0,
+    volatility_lookback: int = VOLATILITY_LOOKBACK,
+) -> pd.Series:
+    """True on each date the stock passed :func:`build_shortlist`'s rules using data up to that date.
+
+    ``bars`` are unadjusted OHLCV by date. Market cap that day is today's
+    ``market_cap`` scaled by that day's close over the latest close, i.e. today's
+    share count at that day's price (share issues and buybacks are ignored).
+    The 200-stock cap and blue-chip pinning are not replayed; the list has been
+    under the cap.
+    """
+    if bars is None:
+        return pd.Series(dtype=bool)
+    if bars.empty or 'close' not in bars:
+        return pd.Series(False, index=bars.index, dtype=bool)
+    close = pd.to_numeric(bars['close'], errors='coerce')
+    index = close.index
+    none = pd.Series(False, index=index, dtype=bool)
+    try:
+        market_cap = float(market_cap)
+    except (TypeError, ValueError):
+        return none
+    last_close = close.dropna()
+    if not np.isfinite(market_cap) or market_cap <= 0 or last_close.empty or last_close.iloc[-1] <= 0:
+        return none
+    volume = _volume(close, bars)
+    if volume.isna().all():
+        return none
+
+    lookback = int(volatility_lookback)
+    min_periods = max(15, lookback // 2)
+    cap_ok = market_cap * close / last_close.iloc[-1] >= min_mcap_trill * 1e12
+    traded = (close * volume).rolling(lookback, min_periods=min_periods).mean()
+    traded_ok = traded >= min_value_traded_bn * 1e9
+    # Same outlier rule as price_volatility: huge one-day moves are corporate actions or bad data.
+    returns = close.pct_change()
+    returns = returns.where(returns.abs() <= MAX_PLAUSIBLE_DAILY_MOVE)
+    volatility = returns.rolling(lookback, min_periods=min_periods).std() * 100
+    volatility_ok = volatility >= float(min_volatility)
+    # Comparisons with NaN are False, so a missing input never qualifies.
+    return (cap_ok & traded_ok & volatility_ok).astype(bool)
 
 
 def dividend_adjust_ohlc(frame: pd.DataFrame, dividends: pd.DataFrame | None) -> pd.DataFrame:

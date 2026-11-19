@@ -240,8 +240,8 @@ def regime_stats(trades: pd.DataFrame, regime: pd.Series) -> dict:
     }
 
 
-def swing_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
-    """Shortlist, dividend-adjusted OHLCV per stock, JKSE regime, breadth and the index close."""
+def _swing_raw_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
+    """Dividend events, universe, unadjusted OHLCV cut at ``as_of``, today's shortlist and the JKSE index."""
     events = trading_data.load_dividend_events(client)
     universe = trading_data.load_universe()
     histories = trading_data.load_ohlcv_histories(
@@ -254,15 +254,58 @@ def swing_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
         ignore_index=True,
     ) if histories else pd.DataFrame(columns=["symbol", "date", "close"])
     shortlist = sw.build_shortlist(universe, sw.price_volatility(closes))
+    index = trading_data.load_jkse_index()
+    index = index[index.index <= as_of]
+    return events, universe, histories, shortlist, index
+
+
+def swing_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
+    """Shortlist, dividend-adjusted OHLCV per stock, JKSE regime, breadth and the index close."""
+    events, _, histories, shortlist, index = _swing_raw_inputs(client, as_of, history_start)
     adjusted = {
         symbol: sw.dividend_adjust_ohlc(histories[symbol], events.get(symbol))
         for symbol in shortlist["stock"] if symbol in histories
     }
-    index = trading_data.load_jkse_index()
-    index = index[index.index <= as_of]
     regime = sw.compute_regime_series(index)
     breadth = sw.build_market_breadth({symbol: frame["close"] for symbol, frame in adjusted.items()})
     return shortlist, adjusted, regime, breadth, index["close"]
+
+
+def swing_members(eligibility: dict, symbols) -> Optional[pd.DataFrame]:
+    """Point-in-time shortlist membership (dates by symbols), or None without eligibility."""
+    columns = {symbol: eligibility[symbol] for symbol in symbols if symbol in eligibility}
+    if not columns:
+        return None
+    return pd.concat(columns, axis=1, sort=False).sort_index().astype(object).fillna(False).astype(bool)
+
+
+def swing_backtest_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
+    """Inputs for a backtest on a point-in-time universe instead of today's shortlist.
+
+    Returns today's shortlist, dividend-adjusted OHLCV for every stock that met
+    the shortlist rules on some day since ``history_start``, each universe
+    stock's eligibility by date (``sw.point_in_time_eligibility`` on unadjusted
+    bars), the JKSE regime, breadth over that day's eligible stocks and the
+    index close.
+    """
+    events, universe, histories, shortlist, index = _swing_raw_inputs(client, as_of, history_start)
+    market_caps = (universe.drop_duplicates("stock", keep="last").set_index("stock")["mktCap"]
+                   if "mktCap" in universe.columns else pd.Series(dtype=float))
+    eligibility = {
+        symbol: sw.point_in_time_eligibility(frame, market_caps.get(symbol, np.nan))
+        for symbol, frame in histories.items()
+    }
+    adjusted = {
+        symbol: sw.dividend_adjust_ohlc(histories[symbol], events.get(symbol))
+        for symbol, eligible in eligibility.items()
+        if eligible[eligible.index >= history_start].any()
+    }
+    regime = sw.compute_regime_series(index)
+    breadth = sw.build_market_breadth(
+        {symbol: frame["close"] for symbol, frame in adjusted.items()},
+        members=swing_members(eligibility, adjusted),
+    )
+    return shortlist, adjusted, eligibility, regime, breadth, index["close"]
 
 
 def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
@@ -273,7 +316,13 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
     playbook, best first; see ``sw.walk_forward_playbook``), so the scan has
     several setups to draw daily plans from. Per-stock overrides must beat the
     best setup on their own holdout with a t-stat corrected for the number of
-    combinations tried.
+    combinations tried, and are searched only for stocks on today's shortlist.
+
+    The universe is point in time: a setup counts only on a day the stock met
+    the shortlist rules (``sw.point_in_time_eligibility``), so stocks that later
+    left the list are included and recent arrivals are not backtested over years
+    they would not have been on it. Companies delisted since are still missing,
+    as the universe is today's listed companies.
     """
     as_of = pd.Timestamp(as_of or datetime.date.today()).normalize()
     run_id = store.start_run(client, "swing", "optimize", as_of)
@@ -281,13 +330,16 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
     try:
         history_start = as_of - pd.DateOffset(years=SWING_HISTORY_YEARS)
         split = as_of - pd.DateOffset(years=SWING_HOLDOUT_YEARS)
-        shortlist, histories, regime, breadth, benchmark = swing_inputs(client, as_of, history_start)
+        shortlist, histories, eligibility, regime, breadth, benchmark = swing_backtest_inputs(
+            client, as_of, history_start,
+        )
         if not histories:
             raise RuntimeError("The swing shortlist has no price history")
         combos = sw.preset_combos(preset)
         momentum = sw.build_momentum_percentiles(
             {symbol: frame["close"] for symbol, frame in histories.items()},
             {int(c[1]) for c in combos if c[0] == sw.STRATEGY_CROSS_MOMENTUM},
+            members=swing_members(eligibility, histories),
         )
 
         results, trades, statuses = [], [], {}
@@ -297,6 +349,7 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
                 SWING_COSTS["buy_fee"], SWING_COSTS["sell_fee"], SWING_COSTS["sell_tax"],
                 benchmark, {lookback: ranks[symbol] for lookback, ranks in momentum.items() if symbol in ranks},
                 breadth=breadth, slippage_ticks=SWING_COSTS["slippage_ticks"], trades_out=trades,
+                eligible=eligibility.get(symbol),
             )
             results.extend(rows)
             statuses[status] = statuses.get(status, 0) + 1
@@ -318,8 +371,10 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
                             "by_regime": regime_stats(family["trades"], regime), "folds": family["folds"]},
             })
         if published:
+            # The scan only plans today's shortlist, so overrides for other stocks would never be used.
             stock_setups = sw.select_stock_strategies(
-                results, published[0]["params"], min_t_stat=sw.required_t_stat(len(combos)),
+                results[results["Symbol"].isin(shortlist["stock"])], published[0]["params"],
+                min_t_stat=sw.required_t_stat(len(combos)),
             )
             for symbol, chosen in stock_setups.items():
                 published.append({
@@ -347,7 +402,11 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
             "preset": preset,
             "history_start": history_start.date().isoformat(),
             "holdout_from": split.date().isoformat(),
+            "universe": "point_in_time",
             "shortlist": len(shortlist),
+            "stocks_eligible_today": sum(
+                1 for eligible in eligibility.values() if len(eligible) and bool(eligible.iloc[-1])
+            ),
             "stocks_with_prices": len(histories),
             "statuses": statuses,
             "combinations": len(combos),

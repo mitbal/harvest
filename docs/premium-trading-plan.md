@@ -913,3 +913,56 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     a JKSE −20%, max drawdown −29%); Volume Breakout doesn't yet (t 1.74). Plans on 90% of
     sessions over three years (2+ on 77%), 97% since September. In bear regimes alone the record
     is weaker (93 trades, +0.71%, not significant) than in bull (+2.22%).
+- 2026-11-16: Second playbook setup (engine version 13), at the user's request: more daily swing
+  plans without giving up the edge.
+  - Why there was often one plan: only Panic Dip Limit passed walk-forward (final setup: a 4%
+    one-day drop, limit 1 ATR below, hold 2). It fires in bursts: 0–115 cards a session, 0–2 on
+    quiet days; only 18% of sessions had a filled trade.
+  - Tested and rejected for more dip plans (same limit entry): a 3% drop (the 3–4% band adds about
+    +0.3% a trade, not significant), ATR-scaled drops, 2-, 3- and 5-day slides (no edge in
+    2019–2023), RSI(2), uptrend-only dips, shallower or deeper limits, and a wider universe (the
+    shortlist already holds 127 of the 134 stocks liquid enough today).
+  - Volume Breakout Pullback now needs a strong breakout day (`BREAKOUT_MIN_GAIN_PCT`, close up 4%
+    or more) and searches holds of 5 and 10 sessions (was 3 and 5). Weak-day breakouts had no
+    edge; the edge rises with the size of the breakout day and with the hold, in both 2019–2023
+    and 2023–2026.
+  - Offline run on production prices to 13 Nov (the optimizer's shortlist and gates): both
+    families pass. Volume Breakout 60-day high / 2x volume / limit 0.5 ATR / hold 10 / no stop:
+    370 walk-forward trades, +2.75% a trade after costs, PF 1.60, t 3.02 (bar 2.45). Panic Dip
+    unchanged: 304 trades, +1.08%, PF 1.50, t 2.61. Sessions with a plan 89% → 94%, with three or
+    more 64% → 77%; sessions with a filled trade 18% → 46%.
+  - Caveat: the optimizer backtests today's shortlist, which flatters both records (stocks that
+    fell out of the shortlist are missing). With the shortlist rules applied as of each trade date
+    (market cap scaled by price, 60-day traded value and volatility), the same walk-forward gives
+    Panic Dip 417 trades, +0.97% a trade, PF 1.48, t 2.89 (passes) and Volume Breakout 373
+    trades, +0.89%, PF 1.17, t 1.07, which doesn't pass the 2.45 bar: four of the six folds lost
+    money and one fold (123 trades at +4.96%) carries the result. Pooled with the fixed final
+    setup, the breakout with hold 10 is +2.3% a trade in 2023–2026 and +2.1% in 2019–2023. As
+    one account on that universe over three years: Panic Dip alone +8.9% (max drawdown −30.5%),
+    both setups +101.9% (−33.1%). So the breakout's pass depends on today's shortlist, and its
+    published record will overstate it. Open: make the optimizer's universe point in time, and
+    decide whether to publish the breakout before that is done.
+  - Not run: tests (the user tests), the weekly optimize in production (the new setup appears
+    after the next weekly run).
+- 2026-11-17: Swing optimizer on a point-in-time universe, at the user's request, before the
+  breakout setup is published.
+  - What changed: `sw.point_in_time_eligibility` applies the shortlist rules (cap, 60-day value
+    traded, 60-day volatility) as of each date. The optimizer backtests every stock that qualified
+    at some point in the window and counts a setup only on a day the stock qualified (`eligible`
+    in `evaluate_stock_strategies`; exits are not masked, so an open trade still closes). Breadth
+    and momentum ranks use that day's members. Per-stock overrides only for today's shortlist.
+    The nightly scan is unchanged (today's shortlist).
+  - Approximations: market cap that day is today's share count at that day's price; the 200-stock
+    cap and blue-chip pinning are not replayed; companies delisted since are still missing.
+  - Expected effect (yesterday's offline check, same rules): Panic Dip keeps passing (t 2.89);
+    Volume Breakout probably stops being published (t 1.07 against 2.45), which leaves one setup
+    until a second one passes.
+  - Offline dry run of the new code on production prices to 16 Nov (in-memory store, nothing
+    written): 425 stocks backtested against 157 on today's shortlist, 58 combinations, 109 s.
+    Panic Dip Limit passes and is the only setup published (4% one-day drop, limit 1 ATR below,
+    hold 2): 410 walk-forward trades, 56% won, +0.95% a trade after costs, PF 1.47, t 2.87 (bar
+    2.45); as one account +15.4% over three years (+4.9% a year, worst fall −29.9%, 273 of 410
+    trades taken) against a JKSE −23.7%. Volume Breakout Pullback does not pass: 412 trades,
+    +0.69%, PF 1.16, t 1.05, four of six folds negative. The other five families pick nothing or
+    lose. No per-stock setup clears its bar (t 3.13).
+  - Not run: tests (the user tests), the weekly optimize in production.
