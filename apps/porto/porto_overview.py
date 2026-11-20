@@ -163,6 +163,11 @@ def connect_redis(redis_url):
 # --- UI Styling ---
 st.html("""
 <style>
+    /* Less empty space above the header, so the holdings table fits the first screen */
+    [data-testid="stMainBlockContainer"] {
+        padding-top: 3.5rem;
+    }
+
     h1 {
         font-weight: 700 !important;
         color: color-mix(in srgb, var(--text-color) 78%, #16845b);
@@ -176,8 +181,8 @@ st.html("""
         border: 1px solid color-mix(in srgb, var(--text-color) 16%, transparent);
         border-top: 3px solid var(--kpi-accent);
         border-radius: 10px;
-        padding: 0.8rem 1rem;
-        min-height: 96px;
+        padding: 0.55rem 0.9rem;
+        min-height: 78px;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -205,7 +210,7 @@ st.html("""
         color: color-mix(in srgb, var(--text-color) 68%, transparent);
         text-transform: uppercase;
         letter-spacing: 0.07em;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.3rem;
     }
 
     .kpi-value {
@@ -214,7 +219,7 @@ st.html("""
         font-weight: 700;
         color: var(--text-color);
         line-height: 1.1;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0.15rem;
     }
 
     .kpi-delta {
@@ -229,8 +234,8 @@ st.html("""
     @media (max-width: 700px) {
         .kpi-card,
         .kpi-card-primary {
-            min-height: 88px;
-            padding: 0.7rem 0.8rem;
+            min-height: 74px;
+            padding: 0.55rem 0.8rem;
         }
     }
 </style>
@@ -278,28 +283,31 @@ data_input_expand_flag = st.session_state['porto_df'] is None
 
 
 # --- Header ---
-col_head1, col_head2 = st.columns([3, 1])
-with col_head1:
+# One row: title on the left, actions on the right, so the holdings table fits the first screen.
+with st.container(horizontal=True, vertical_alignment='center', gap='small'):
     if st.user.is_logged_in:
         porto_subtitle = f"Welcome back, {st.user.name.split()[0]}! Here's your harvest overview for today."
     else:
         porto_subtitle = 'Analyze your portfolio performance and dividend growth.'
-    ui.page_title('Portfolio Analytics', porto_subtitle)
+    ui.page_title('Portfolio Analytics', porto_subtitle, subtitle_inline=True)
 
-with col_head2:
-    if st.user.is_logged_in:
-        st.button('Log out', icon=':material/logout:', on_click=st.logout, width='stretch')
-        if st.session_state.get('porto_df') is not None:
-            if st.button('Sync portfolio to cloud', icon=':material/cloud_upload:', width='stretch'):
-                try:
-                    payload = hpf.portfolio_to_records(st.session_state['porto_df'])
-                    run_db(lambda conn: update_user_portfolio(conn, payload, st.user.email))
-                    st.toast('Portfolio synced to the cloud.', icon=':material/cloud_done:')
-                except Exception:
-                    logger.exception('Failed to sync cloud portfolio')
-                    st.error('Portfolio sync failed. Your local portfolio is unchanged.')
-    else:
-        st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), width='stretch')
+    with st.container(horizontal=True, horizontal_alignment='right', vertical_alignment='center',
+                      gap='xsmall', width='content'):
+        # Filled once market data has loaded, further down the script
+        goal_slot = st.container(width='content')
+        if st.user.is_logged_in:
+            if st.session_state.get('porto_df') is not None:
+                if st.button('Sync to cloud', icon=':material/cloud_upload:', width='content'):
+                    try:
+                        payload = hpf.portfolio_to_records(st.session_state['porto_df'])
+                        run_db(lambda conn: update_user_portfolio(conn, payload, st.user.email))
+                        st.toast('Portfolio synced to the cloud.', icon=':material/cloud_done:')
+                    except Exception:
+                        logger.exception('Failed to sync cloud portfolio')
+                        st.toast('Portfolio sync failed. Your local portfolio is unchanged.', icon=':material/warning:')
+            st.button('Log out', icon=':material/logout:', on_click=st.logout, width='content')
+        else:
+            st.button('Log in with Google', icon=':material/login:', on_click=lambda: st.login('google'), width='content')
 
 
 with st.expander('Portfolio data', icon=':material/edit_note:', expanded=data_input_expand_flag):
@@ -504,9 +512,8 @@ except Exception as e:
     logger.exception('Failed to load dividend data')
     divs = {}
 
-# --- Goals ---
-with st.container(horizontal=True, horizontal_alignment='distribute', vertical_alignment='center'):
-    st.caption(f':material/update: {hpf.market_data_caption(df)}')
+# --- Goals (in the header's action row) ---
+with goal_slot:
     with st.popover('Income goal', icon=':material/flag:'):
         target = st.number_input(
             'Target annual income (IDR million)',
@@ -579,7 +586,7 @@ with summary_cols[4]:
 
 
 # --- Holdings ---
-with st.container(border=True):
+with st.container(border=True, gap='xsmall'):
 
     # Lazy tabs: only compute the treemap layout while its tab is open
     tabs = st.tabs(
@@ -589,7 +596,9 @@ with st.container(border=True):
     )
 
     with tabs[0]:
-        st.caption(':material/touch_app: Select a row to see that holding\'s dividend history and 5-year outlook.')
+        with st.container(horizontal=True, horizontal_alignment='distribute', gap='small'):
+            st.caption(':material/touch_app: Select a row to see that holding\'s dividend history and 5-year outlook.', width='content')
+            st.caption(f':material/update: {hpf.market_data_caption(df)}', width='content')
 
         cfig = {
             'Symbol': st.column_config.TextColumn('Symbol', pinned=True),
