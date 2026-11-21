@@ -14,13 +14,16 @@ sell at an open, with stop and target in multiples of the stock's ATR.
 Nothing here depends on Streamlit.
 """
 import datetime
+import functools
+from collections.abc import Iterable
+from pathlib import Path
 from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
 
 
-STRATEGY_ENGINE_VERSION = 13
+STRATEGY_ENGINE_VERSION = 14
 DEFAULT_PROFIT_TARGET = 5.0
 DEFAULT_STOP_LOSS = 2.0
 DEFAULT_MAX_HOLD = 5
@@ -57,10 +60,11 @@ STRATEGY_SUPERTREND_PULLBACK = "Close-Based Supertrend Pullback"
 STRATEGY_BREADTH_RSI2 = "Breadth Capitulation RSI(2)"
 STRATEGY_PANIC_DIP = "Panic Dip Limit"
 STRATEGY_VOLUME_BREAKOUT = "Volume Breakout Pullback"
+STRATEGY_MARKET_SELLOFF = "Market Sell-off Dip"
 
 # Rest a limit buy ``param_c`` ATRs below the signal close for one session, sell at
 # an open; ``param_d`` is the ATR period and stop/target are ATR multiples.
-LIMIT_ENTRY_STRATEGIES = (STRATEGY_PANIC_DIP, STRATEGY_VOLUME_BREAKOUT)
+LIMIT_ENTRY_STRATEGIES = (STRATEGY_PANIC_DIP, STRATEGY_VOLUME_BREAKOUT, STRATEGY_MARKET_SELLOFF)
 
 STRATEGY_TYPES = [
     STRATEGY_REGIME_RSI,
@@ -75,6 +79,7 @@ STRATEGY_TYPES = [
     STRATEGY_BREADTH_RSI2,
     STRATEGY_PANIC_DIP,
     STRATEGY_VOLUME_BREAKOUT,
+    STRATEGY_MARKET_SELLOFF,
 ]
 
 STRATEGY_PARAMETER_LABELS = {
@@ -90,6 +95,7 @@ STRATEGY_PARAMETER_LABELS = {
     STRATEGY_BREADTH_RSI2: ("RSI Period", "RSI Buy <", "Breadth Max %", "Trend SMA"),
     STRATEGY_PANIC_DIP: ("Drop Lookback", "Min Drop %", "Limit ATR Below", "ATR Period"),
     STRATEGY_VOLUME_BREAKOUT: ("Breakout Window", "Min Volume x", "Limit ATR Below", "ATR Period"),
+    STRATEGY_MARKET_SELLOFF: ("Min JKSE Drop %", "Min Drop %", "Limit ATR Below", "ATR Period"),
 }
 
 STRATEGY_PARAMETER_INPUTS = {
@@ -105,6 +111,7 @@ STRATEGY_PARAMETER_INPUTS = {
     STRATEGY_BREADTH_RSI2: ((2.0, 14.0, 1.0), (1.0, 40.0, 1.0), (1.0, 60.0, 1.0), (0.0, 250.0, 10.0)),
     STRATEGY_PANIC_DIP: ((1.0, 20.0, 1.0), (1.0, 30.0, 0.5), (0.0, 5.0, 0.25), (2.0, 50.0, 1.0)),
     STRATEGY_VOLUME_BREAKOUT: ((5.0, 250.0, 5.0), (1.0, 10.0, 0.25), (0.0, 5.0, 0.25), (2.0, 50.0, 1.0)),
+    STRATEGY_MARKET_SELLOFF: ((0.25, 10.0, 0.25), (0.5, 30.0, 0.5), (0.0, 5.0, 0.25), (2.0, 50.0, 1.0)),
 }
 
 
@@ -534,6 +541,21 @@ def strategy_components(
         )
         strategy_exit = pd.Series(False, index=close.index)
         indicator = (close / prior_high - 1) * 100
+    elif strategy_type == STRATEGY_MARKET_SELLOFF:
+        # A day the whole market sold off (JKSE down ``param_a``%) and this stock
+        # fell with it: forced selling across the board bounces more reliably
+        # than a stock-specific drop. Needs the JKSE close of the same session.
+        index_close = _align_to_prices(benchmark_close, close.index)
+        # A session without an index close carries the last one forward: no change, no sell-off.
+        index_change = (index_close / index_close.shift(1) - 1) * 100
+        drop = (close / close.shift(1) - 1) * 100
+        setup = (
+            (index_change <= -float(param_a))
+            & (drop <= -float(param_b))
+            & tradable_for_limit_entry(close, bars)
+        )
+        strategy_exit = pd.Series(False, index=close.index)
+        indicator = drop
     else:
         raise ValueError(f"Unknown swing strategy: {strategy_type}")
 
@@ -939,12 +961,14 @@ SEARCH_PRESETS = {
             STRATEGY_BREADTH_RSI2: [(2, 10, 20, 200)],
             STRATEGY_PANIC_DIP: [(5, 5, 1.5, 14)],
             STRATEGY_VOLUME_BREAKOUT: [(60, 2, 1.0, 14)],
+            STRATEGY_MARKET_SELLOFF: [(1.5, 2.5, 1.0, 14)],
         },
         "hold_days": [5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
         "strategy_exits": {
             STRATEGY_PANIC_DIP: {"hold_days": [2], "exit_rules": [(0.0, LIMIT_STOP_ATR)]},
             STRATEGY_VOLUME_BREAKOUT: {"hold_days": [5], "exit_rules": [(0.0, LIMIT_STOP_ATR)]},
+            STRATEGY_MARKET_SELLOFF: {"hold_days": [2], "exit_rules": [(0.0, LIMIT_STOP_ATR)]},
         },
     },
     "Balanced": {
@@ -961,12 +985,15 @@ SEARCH_PRESETS = {
             STRATEGY_BREADTH_RSI2: [(2, 10, 20, 200), (2, 5, 15, 100)],
             STRATEGY_PANIC_DIP: [(1, 3, 1.0, 14), (1, 4, 1.0, 14), (1, 4, 1.5, 14), (5, 5, 1.5, 14), (5, 7, 1.5, 14)],
             STRATEGY_VOLUME_BREAKOUT: [(20, 2, 1.0, 14), (60, 2, 0.5, 14), (60, 2, 1.0, 14), (60, 3, 1.0, 14)],
+            STRATEGY_MARKET_SELLOFF: [(jkse, drop, below, 14) for jkse in (1.0, 1.5) for drop in (2.0, 2.5, 3.0)
+                                      for below in (0.5, 1.0)],
         },
         "hold_days": [3, 5],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
         "strategy_exits": {
             STRATEGY_PANIC_DIP: {"hold_days": [1, 2], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
             STRATEGY_VOLUME_BREAKOUT: {"hold_days": [5, 10], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
+            STRATEGY_MARKET_SELLOFF: {"hold_days": [1, 2], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR)]},
         },
     },
     "Deep": {
@@ -985,6 +1012,8 @@ SEARCH_PRESETS = {
                                  (5, 5, 1.0, 14), (5, 5, 1.5, 14), (5, 7, 1.0, 14), (5, 7, 1.5, 14)],
             STRATEGY_VOLUME_BREAKOUT: [(20, 2, 1.0, 14), (60, 2, 0.5, 14), (60, 2, 1.0, 14), (60, 3, 0.5, 14),
                                        (60, 3, 1.0, 14)],
+            STRATEGY_MARKET_SELLOFF: [(jkse, drop, below, 14) for jkse in (1.0, 1.5, 2.0)
+                                      for drop in (2.0, 2.5, 3.0, 4.0) for below in (0.5, 1.0)],
         },
         "hold_days": [3, 5, 7],
         "exit_rules": [(DEFAULT_PROFIT_TARGET, 1.5), (DEFAULT_PROFIT_TARGET, DEFAULT_STOP_LOSS)],
@@ -993,6 +1022,8 @@ SEARCH_PRESETS = {
                                                                         (3.0, LIMIT_STOP_ATR)]},
             STRATEGY_VOLUME_BREAKOUT: {"hold_days": [5, 10], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
                                                                            (4.0, LIMIT_STOP_ATR)]},
+            STRATEGY_MARKET_SELLOFF: {"hold_days": [1, 2, 3], "exit_rules": [(0.0, 0.0), (0.0, LIMIT_STOP_ATR),
+                                                                             (3.0, LIMIT_STOP_ATR)]},
         },
     },
 }
@@ -1667,6 +1698,9 @@ def is_near_setup(
     if strategy_type == STRATEGY_PANIC_DIP:
         # Indicator is the drop (negative); near when most of the required drop has happened.
         return -param_b < indicator <= -param_b + min(proximity, param_b / 2)
+    if strategy_type == STRATEGY_MARKET_SELLOFF:
+        # Indicator is the stock's drop; the JKSE's can't be judged before the close.
+        return -param_b < indicator <= -param_b + min(proximity, param_b / 2)
     if strategy_type == STRATEGY_VOLUME_BREAKOUT:
         # Indicator is the distance to the prior high; volume can't be judged before the close.
         return -min(proximity, 3.0) <= indicator <= 0
@@ -1710,14 +1744,20 @@ def build_shortlist(
     max_stocks: int = 200,
     volatility_lookback: int = VOLATILITY_LOOKBACK,
     pin_blue_chips: bool = True,
+    pumped: Iterable[str] | None = None,
+    exclude_gorengan: bool = True,
 ) -> pd.DataFrame:
     """Liquid stocks that move enough to swing trade, most volatile first.
 
     ``universe`` has ``stock``, ``mktCap``, ``price`` and ``volAvg``;
-    ``volatility`` comes from :func:`price_volatility`.
+    ``volatility`` comes from :func:`price_volatility`. With
+    ``exclude_gorengan`` the IDX HSC list (:func:`hsc_symbols`) and the
+    ``pumped`` stocks (:func:`pumped_stocks`) are left out, blue chips included.
     """
     frame = universe.merge(volatility, on='stock', how='inner')
     mask = pd.Series(True, index=frame.index)
+    if exclude_gorengan:
+        mask &= ~frame['stock'].isin(hsc_symbols() | set(pumped or ()))
     if 'mktCap' in frame.columns:
         mask &= frame['mktCap'] >= min_mcap_trill * 1_000_000_000_000
     if {'volAvg', 'price'}.issubset(frame.columns):
@@ -1742,6 +1782,8 @@ def point_in_time_eligibility(
     min_value_traded_bn: float = 5.0,
     min_volatility: float = 1.0,
     volatility_lookback: int = VOLATILITY_LOOKBACK,
+    symbol: str | None = None,
+    exclude_gorengan: bool = True,
 ) -> pd.Series:
     """True on each date the stock passed :func:`build_shortlist`'s rules using data up to that date.
 
@@ -1749,7 +1791,9 @@ def point_in_time_eligibility(
     ``market_cap`` scaled by that day's close over the latest close, i.e. today's
     share count at that day's price (share issues and buybacks are ignored).
     The 200-stock cap and blue-chip pinning are not replayed; the list has been
-    under the cap.
+    under the cap. With ``exclude_gorengan`` a ``symbol`` on today's HSC list is
+    never eligible (the list has no history), and a stock is out on the dates
+    :func:`pump_history` flags.
     """
     if bars is None:
         return pd.Series(dtype=bool)
@@ -1758,6 +1802,8 @@ def point_in_time_eligibility(
     close = pd.to_numeric(bars['close'], errors='coerce')
     index = close.index
     none = pd.Series(False, index=index, dtype=bool)
+    if exclude_gorengan and symbol in hsc_symbols():
+        return none
     try:
         market_cap = float(market_cap)
     except (TypeError, ValueError):
@@ -1780,7 +1826,81 @@ def point_in_time_eligibility(
     volatility = returns.rolling(lookback, min_periods=min_periods).std() * 100
     volatility_ok = volatility >= float(min_volatility)
     # Comparisons with NaN are False, so a missing input never qualifies.
-    return (cap_ok & traded_ok & volatility_ok).astype(bool)
+    eligible = cap_ok & traded_ok & volatility_ok
+    if exclude_gorengan:
+        eligible &= ~pump_history(close)
+    return eligible.astype(bool)
+
+
+# ── Gorengan filter (shortlist and point-in-time eligibility) ───────────── #
+# Stocks with concentrated ownership or a pumped ("digoreng") past are left out
+# of the swing universe: their dips kept falling. Without them the Panic Dip
+# record roughly doubled per trade and its worst account fall halved (Nov 2026).
+
+# IDX High Shareholding Concentration list (top 10 holders own 92.5% or more):
+# announcement Peng-HSC-00088/BEI.WAS/11-2026, positions as of 30 Oct 2026,
+# 383 codes. Refresh it when IDX publishes a new evaluation.
+HSC_PATH = Path(__file__).resolve().parents[1] / 'data' / 'jkse' / 'hsc.csv'
+# A pump is, within the last PUMP_LOOKBACK sessions (about two years), a rise of
+# PUMP_MIN_RUNUP_PCT or more inside PUMP_RUN_WINDOW sessions, or PUMP_NEAR_ARA_DAYS
+# closes up NEAR_ARA_SHARE of the auto-reject ceiling or more.
+PUMP_LOOKBACK = 500
+PUMP_RUN_WINDOW = 60
+PUMP_MIN_RUNUP_PCT = 200.0
+PUMP_NEAR_ARA_DAYS = 3
+NEAR_ARA_SHARE = 0.8
+
+
+@functools.lru_cache(maxsize=4)
+def hsc_symbols(path: Path = HSC_PATH) -> frozenset[str]:
+    """Today's HSC stocks as ``XXXX.JK`` symbols; a missing file raises rather than let them in."""
+    codes = pd.read_csv(path, sep=';', dtype=str)['Kode'].dropna().str.strip().str.upper()
+    return frozenset(f'{code}.JK' for code in codes if code)
+
+
+def ara_fraction(previous_close) -> np.ndarray:
+    """Auto-reject ceiling above the previous close, as a fraction, by IDX price band."""
+    values = np.asarray(previous_close, dtype=float)
+    return np.select([values <= 200, values <= 5000], [0.35, 0.25], default=0.20)
+
+
+def pump_history(
+    close: pd.Series,
+    lookback: int = PUMP_LOOKBACK,
+    run_window: int = PUMP_RUN_WINDOW,
+    min_runup_pct: float = PUMP_MIN_RUNUP_PCT,
+    near_ara_days: int = PUMP_NEAR_ARA_DAYS,
+) -> pd.Series:
+    """True on each date the stock had been pumped within the previous ``lookback`` sessions.
+
+    Uses only data up to each date. Moves beyond ``MAX_PLAUSIBLE_DAILY_MOVE``
+    are treated as corporate actions and ignored, so a reverse split is not a pump.
+    """
+    close = pd.to_numeric(close, errors='coerce')
+    previous = close.shift(1)
+    returns = close / previous - 1
+    returns = returns.where(returns.abs() <= MAX_PLAUSIBLE_DAILY_MOVE)
+    near_ara = (returns >= NEAR_ARA_SHARE * ara_fraction(previous.fillna(0).to_numpy())).astype(float)
+    ara_count = near_ara.rolling(int(lookback), min_periods=1).sum()
+    level = (1 + returns.fillna(0)).cumprod()
+    runup = (level / level.rolling(int(run_window), min_periods=10).min() - 1) * 100
+    max_runup = runup.rolling(int(lookback), min_periods=1).max()
+    return ((ara_count >= int(near_ara_days)) | (max_runup >= float(min_runup_pct))).astype(bool)
+
+
+def pumped_stocks(prices: pd.DataFrame) -> set[str]:
+    """Stocks :func:`pump_history` flags at their latest close, from a long ``symbol, date, close`` frame.
+
+    Needs ``PUMP_LOOKBACK + PUMP_RUN_WINDOW`` sessions to see the whole window.
+    """
+    if prices.empty:
+        return set()
+    flagged = set()
+    for symbol, group in prices.sort_values(['symbol', 'date']).groupby('symbol'):
+        flags = pump_history(group['close'].reset_index(drop=True))
+        if len(flags) and bool(flags.iloc[-1]):
+            flagged.add(symbol)
+    return flagged
 
 
 def dividend_adjust_ohlc(frame: pd.DataFrame, dividends: pd.DataFrame | None) -> pd.DataFrame:

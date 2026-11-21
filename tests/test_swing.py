@@ -527,6 +527,20 @@ def test_build_shortlist_needs_liquidity_and_movement():
     assert sw.build_shortlist(universe, volatility, pin_blue_chips=False)["stock"].tolist() == ["WILD.JK", "BBRI.JK"]
 
 
+def test_build_shortlist_leaves_out_gorengan():
+    universe = pd.DataFrame({
+        "stock": ["BREN.JK", "PUMP.JK", "GOOD.JK"], "mktCap": 50e12, "price": 1000.0, "volAvg": 1e8,
+    })
+    volatility = pd.DataFrame({"stock": universe["stock"], "Daily Volatility": [5.0, 4.0, 3.0],
+                               "Volatility Observations": 60})
+
+    shortlist = sw.build_shortlist(universe, volatility, pumped={"PUMP.JK"})
+    everything = sw.build_shortlist(universe, volatility, pumped={"PUMP.JK"}, exclude_gorengan=False)
+
+    assert shortlist["stock"].tolist() == ["GOOD.JK"]  # BREN.JK is on the HSC list
+    assert everything["stock"].tolist() == ["BREN.JK", "PUMP.JK", "GOOD.JK"]
+
+
 def _swinging(n=200, drift=0.005, swing=0.02):
     """A price rising about 2.6x over ``n`` days with 2% daily swings."""
     moves = 1 + drift + swing * np.where(np.arange(n) % 2 == 0, 1, -1)
@@ -568,6 +582,65 @@ def test_point_in_time_eligibility_without_volume():
     assert not sw.point_in_time_eligibility(bars.assign(volume=np.nan), market_cap=50e12).any()
     empty = sw.point_in_time_eligibility(bars.iloc[0:0], market_cap=50e12)
     assert empty.empty and empty.dtype == bool
+
+
+def test_hsc_symbols_reads_the_idx_list():
+    hsc = sw.hsc_symbols()
+
+    assert len(hsc) == 383
+    assert {"BREN.JK", "BRIS.JK", "BYAN.JK"} <= hsc
+    assert "BBRI.JK" not in hsc
+
+
+def test_point_in_time_eligibility_leaves_out_hsc_stocks():
+    bars = _ohlcv(_swinging())
+
+    assert not sw.point_in_time_eligibility(bars, market_cap=50e12, symbol="BREN.JK").any()
+    assert sw.point_in_time_eligibility(bars, market_cap=50e12, symbol="BREN.JK", exclude_gorengan=False).any()
+    assert sw.point_in_time_eligibility(bars, market_cap=50e12, symbol="BBRI.JK").any()
+
+
+def _pumped(rise_days=40, rise=3.1, after=600):
+    """Flat at Rp 1,000, a ``rise``x run over ``rise_days`` sessions, then flat at the top for ``after`` sessions."""
+    return np.r_[np.full(100, 1000.0), 1000.0 * rise ** (np.arange(1, rise_days + 1) / rise_days),
+                 np.full(after, 1000.0 * rise)]
+
+
+def test_pump_history_flags_a_run_up_for_two_years():
+    close = pd.Series(_pumped(), index=pd.bdate_range("2020-01-01", periods=740))
+    pumped = sw.pump_history(close)
+
+    assert pumped.dtype == bool and pumped.index.equals(close.index)
+    assert not pumped.iloc[:100].any()
+    assert pumped.iloc[140] and pumped.iloc[140 + sw.PUMP_LOOKBACK - 60]
+    assert not pumped.iloc[-1]  # more than PUMP_LOOKBACK sessions since the run
+    assert not sw.pump_history(pd.Series(_pumped(rise=2.5))).any()  # +150% is not a pump
+
+
+def test_pump_history_counts_closes_near_the_auto_reject_ceiling():
+    def spikes(count):
+        # +22% (the ceiling is 25% at Rp 1,000), then back to Rp 1,000 the next day.
+        return pd.Series(np.r_[np.full(50, 1000.0), *[[1220.0, 1000.0, 1000.0]] * count, np.full(20, 1000.0)])
+
+    assert sw.pump_history(spikes(sw.PUMP_NEAR_ARA_DAYS)).iloc[-1]
+    assert not sw.pump_history(spikes(sw.PUMP_NEAR_ARA_DAYS - 1)).any()
+
+
+def test_pump_history_ignores_a_reverse_split():
+    close = pd.Series(np.r_[np.full(100, 50.0), np.full(100, 500.0)])  # 10:1 overnight
+
+    assert not sw.pump_history(close).any()
+
+
+def test_pumped_stocks_reads_the_latest_close():
+    dates = pd.bdate_range("2020-01-01", periods=300)
+    prices = pd.concat([
+        pd.DataFrame({"symbol": "PUMP.JK", "date": dates, "close": _pumped(after=160)}),
+        pd.DataFrame({"symbol": "CALM.JK", "date": dates, "close": 1000.0}),
+    ])
+
+    assert sw.pumped_stocks(prices) == {"PUMP.JK"}
+    assert sw.pumped_stocks(prices.iloc[0:0]) == set()
 
 
 def test_dividend_adjust_ohlc_scales_every_price():
@@ -667,6 +740,44 @@ def test_volume_breakout_needs_a_strong_up_day():
 
     assert (close[-2] / close[-3] - 1) * 100 < sw.BREAKOUT_MIN_GAIN_PCT
     assert not weak.any()
+
+
+def _selloff(index_change_pct, stock=(1000.0, 970.0, 965.0), index_dates=None):
+    """A stock flat at Rp 1,000 that falls 3%, on a day the JKSE moves ``index_change_pct``."""
+    bars = _ohlcv(np.r_[np.full(40, 1000.0), stock[1:]])
+    index = pd.Series(np.r_[np.full(40, 7000.0), 7000.0 * (1 + index_change_pct / 100), 7000.0], index=bars.index)
+    if index_dates is not None:
+        index = index[index_dates(index.index)]
+    regime = pd.Series("bear", index=bars.index)
+    return sw.strategy_components(bars["close"], regime, index, None, sw.STRATEGY_MARKET_SELLOFF,
+                                  1.5, 2.5, 1.0, 14, bars=bars)
+
+
+def test_market_selloff_needs_the_market_and_the_stock_to_fall():
+    setup, _, drop = _selloff(-2.0)
+    calm_market, _, _ = _selloff(-0.5)
+    small_drop, _, _ = _selloff(-2.0, stock=(1000.0, 990.0, 985.0))
+
+    assert setup.tolist()[-2:] == [True, False] and drop.iloc[-2] == pytest.approx(-3.0)
+    assert not calm_market.any()
+    assert not small_drop.any()
+
+
+def test_market_selloff_needs_the_index_close_of_that_session():
+    missing, _, _ = _selloff(-2.0, index_dates=lambda dates: dates != dates[-2])
+    no_index = sw.strategy_components(_ohlcv(np.r_[np.full(40, 1000.0), 970.0]).close,
+                                      pd.Series("bear", index=pd.bdate_range("2024-01-01", periods=41)), None, None,
+                                      sw.STRATEGY_MARKET_SELLOFF, 1.5, 2.5, 1.0, 14)[0]
+
+    assert not missing.any()
+    assert not no_index.any()
+
+
+def test_market_selloff_is_a_limit_entry_strategy():
+    assert sw.STRATEGY_MARKET_SELLOFF in sw.LIMIT_ENTRY_STRATEGIES
+    assert sw.STRATEGY_MARKET_SELLOFF in sw.STRATEGY_TYPES
+    assert sw.is_near_setup(sw.STRATEGY_MARKET_SELLOFF, -2.0, (1.5, 2.5, 1.0, 14), 5.0)
+    assert not sw.is_near_setup(sw.STRATEGY_MARKET_SELLOFF, 1.0, (1.5, 2.5, 1.0, 14), 5.0)
 
 
 def test_limit_execution_is_a_tick_rounded_atr_below_the_close():

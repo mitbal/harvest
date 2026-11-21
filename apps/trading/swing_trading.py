@@ -206,15 +206,21 @@ def load_trading_universe() -> pd.DataFrame:
 def load_shortlist(
     min_mcap_trill: float = 1.0, min_value_traded_bn: float = 5.0, min_volatility: float = 1.0,
     max_stocks: int = 200, volatility_lookback: int = sw.VOLATILITY_LOOKBACK, pin_blue_chips: bool = True,
+    exclude_gorengan: bool = True,
 ) -> pd.DataFrame:
     """The swing shortlist: liquid stocks that move enough, most volatile first (no P/E filter)."""
     universe = load_trading_universe()
+    # The pump check looks two years back; otherwise the volatility window is enough.
+    sessions = int(volatility_lookback)
+    if exclude_gorengan:
+        sessions = max(sessions, sw.PUMP_LOOKBACK + sw.PUMP_RUN_WINDOW)
     # Two calendar days per session leaves room for weekends and IDX holidays.
-    start = (datetime.date.today() - datetime.timedelta(days=int(volatility_lookback) * 2 + 14)).isoformat()
+    start = (datetime.date.today() - datetime.timedelta(days=sessions * 2 + 14)).isoformat()
     closes = fetch_close_history(tuple(sorted(universe['stock'].dropna().unique())), start)
     return sw.build_shortlist(
         universe, sw.price_volatility(closes, volatility_lookback), min_mcap_trill, min_value_traded_bn,
         min_volatility, max_stocks, volatility_lookback, pin_blue_chips,
+        pumped=sw.pumped_stocks(closes) if exclude_gorengan else None, exclude_gorengan=exclude_gorengan,
     )
 
 
@@ -461,6 +467,9 @@ def render_signal_card(signal: pd.Series, settings: dict | None, can_track: bool
         else:
             notes.append(f"Mostly an isolated drop ({market['share_down_3pct']:.0f}% of the shortlist fell 3% or more): "
                          'check the news first, stock-specific falls have the weakest record.')
+    if limit and detail.get('params', {}).get('strategy_type') == sw.STRATEGY_MARKET_SELLOFF:
+        notes.append(f"The JKSE fell {detail['params']['param_a']:g}% or more today and this stock fell with it. "
+                     'Forced selling across the market has bounced more reliably than a stock-specific drop.')
     regime_record = holdout.get('regime') or {}
     if regime_record.get('trades') and market.get('regime'):
         notes.append(f"In {market['regime']} markets this setup made {regime_record['trades']} walk-forward trades "
@@ -649,12 +658,18 @@ else:
             key="dt_volatility_lookback",
         )
         include_blue_chips = st.checkbox("Pin Major Blue-chips", value=True, help="Always show major blue-chip stocks at the top of the list", key="dt_blue")
+        exclude_gorengan = st.checkbox(
+            "Exclude gorengan", value=True, key="dt_no_gorengan",
+            help="Leave out the IDX High Shareholding Concentration list and stocks pumped in the last two years "
+                 f"(a {sw.PUMP_MIN_RUNUP_PCT:.0f}% rise within {sw.PUMP_RUN_WINDOW} sessions, or "
+                 f"{sw.PUMP_NEAR_ARA_DAYS} or more closes near the auto-reject ceiling), as the published signals do.",
+        )
 
         final_df = pd.DataFrame()
         try:
             final_df = load_shortlist(
                 float(min_mcap_trill), float(min_value_traded_bn), float(min_volatility), int(max_stocks),
-                int(volatility_lookback), bool(include_blue_chips),
+                int(volatility_lookback), bool(include_blue_chips), bool(exclude_gorengan),
             )
             st.dataframe(
                 final_df[[c for c in ('stock', 'companyName', 'Daily Volatility', 'Avg Value Traded', 'Volatility Score')

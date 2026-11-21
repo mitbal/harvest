@@ -966,3 +966,64 @@ Done when: published swing signals come from OHLCV and walk-forward validation; 
     +0.69%, PF 1.16, t 1.05, four of six folds negative. The other five families pick nothing or
     lose. No per-stock setup clears its bar (t 3.13).
   - Not run: tests (the user tests), the weekly optimize in production.
+- 2026-11-21: Research, at the user's request: a swing universe without gorengan stocks, and what
+  works on it. Offline on production prices to 20 Nov, point-in-time shortlist rules; nothing in
+  the engine or the store changed yet.
+  - Gorengan, two ways: the IDX HSC list (383 codes as of 11 Nov 2026, saved to
+    `data/jkse/hsc.txt` from a press reprint; idx.co.id blocks scripted downloads), and a
+    point-in-time pump history over the last 500 sessions: 3 or more near-ARA days (close up 80%
+    of the auto-reject limit or more) or a 60-day run of +200%. HSC catches 27 of today's 150
+    shortlist names (BREN, BRIS, BYAN, PANI, DSSA, …); pump history catches the rest of the
+    fried names (CBRE, COIN, ASLI, BUVA, ARKO, NATO, WIFI, MINA, TEBE, KETR, …).
+  - Universes (eligible stocks per day, median over the last three years): today's rules 150,
+    no HSC 120, no HSC and no pump history ("clean") 94, clean and cap ≥ Rp 10tn 61.
+  - Panic Dip Limit on the clean universe: the fixed setup (4% one-day drop, limit 1 ATR, hold 2)
+    roughly doubles its edge, +1.51% / +2.08% a trade in 2019–23 / 2023–26 against +0.74% /
+    +1.02% on today's universe. Walk-forward: 244 trades, +1.03%, PF 1.56, t 2.50 (bar 2.45
+    with seven families, 2.50 with eight); as one account +5.0% over three years, worst fall
+    −13.6% (−29.5% on today's universe), JKSE −26.4%. Volume Breakout and the open-to-close
+    families still fail.
+  - New family that passes, Market Sell-off Dip (tested in scratch, not in `swing.py`): on a day
+    the JKSE closes down 1–1.5% or more, buy every clean stock that fell 2–3% or more with a limit
+    0.5–1 ATR below the close, sell at the open two sessions later. Fixed setup (JKSE ≤ −1%,
+    stock ≤ −2.5%, limit 1 ATR, hold 2) on the clean universe: +2.39% / +2.47% a trade, t 7.3 /
+    6.7, in both periods; neighbouring thresholds hold up. Walk-forward on the clean universe:
+    424 trades, 58% won, +1.05%, PF 1.86, t 4.40 (bar 2.50), five of six folds positive; final
+    setup JKSE ≤ −1.5%, stock ≤ −2%, limit 1 ATR, hold 2, no stop. As one account +18.9% over
+    three years, worst fall −8.5%. It fires only on sell-off days (55 sessions with a fill in
+    three years), so it adds stocks on panic days more than days with a plan.
+  - Rejected on the clean universe (both periods, same limit entry and costs): a limit buy every
+    day (−0.6% a trade), 2.5–4% dips on their own (+0.30% / +0.05%), the same with a weak close
+    or heavy volume, 5-day losers, turn of the month, momentum with RSI(2) < 10, RSI(2) < 5,
+    below the lower Bollinger band, idiosyncratic drops against the JKSE, and 5-day slides of 8%
+    or more that are not also 4% one-day drops.
+  - Trade-off: the clean universe gives fewer plans. Panic Dip and Market Sell-off together had
+    a filled trade on 151 of about 730 sessions (201 on today's universe).
+  - Decided the same day: both go into the engine (next entry).
+- 2026-11-21: Gorengan-free swing universe and Market Sell-off Dip (engine version 14), at the
+  user's request.
+  - Universe: `sw.build_shortlist` and `sw.point_in_time_eligibility` leave out gorengan by
+    default (`exclude_gorengan`): today's HSC list (`sw.hsc_symbols`, from `data/jkse/hsc.csv`,
+    on every date since it has no history) and stocks `sw.pump_history` flags (within 500
+    sessions, a 60-session rise of 200% or more, or 3 closes up 80% of the ARA ceiling or more;
+    one-day moves over 35% count as corporate actions, so reverse splits don't flag). Blue chips
+    on either list are no longer pinned (BRIS). The scan, the weekly optimizer and the Lab
+    shortlist all use it; the Lab has an "Exclude gorengan" toggle. Both Docker images ship
+    `hsc.csv`.
+  - New family `STRATEGY_MARKET_SELLOFF` (limit entry): JKSE down `param_a`% and the stock down
+    `param_b`% at the same close, limit `param_c` ATR below, sold at an open. Balanced searches
+    JKSE 1 / 1.5, stock 2 / 2.5 / 3, limit 0.5 / 1, hold 1 / 2, no stop or a 3 ATR stop. Cards
+    say the market sold off.
+  - Offline dry run of the weekly optimizer and the nightly scan on production prices to 20 Nov
+    (in-memory store, nothing written): 217 stocks backtested, 106 combinations, 175 s. Both
+    families publish (bar t 2.50 for eight families). Panic Dip Limit (`global`, 4% one-day drop,
+    limit 1 ATR, hold 2): 233 walk-forward trades, 57% won, +1.33% a trade, PF 1.72, t 3.08.
+    Market Sell-off Dip (`global:2`): 424 trades, 58% won, +1.05%, PF 1.86, t 4.40. As one
+    account +34.0% over three years (+10.2% a year), worst fall −7.1%, 245 of 657 trades taken,
+    JKSE −26.4%. No per-stock setup. Scan for 20 Nov: shortlist 84 (was 150), 3 plans, 25 on
+    the watch list.
+  - To do when IDX publishes a new HSC evaluation: replace `data/jkse/hsc.csv` (`Kode` column)
+    and redeploy. The current file comes from a press reprint and has not been checked against
+    the official annex.
+  - Not run: tests (the user tests), the weekly optimize in production. `hsc.csv` matches the
+    `*.csv` ignore rule, so it needs `git add -f`, like `bumn.csv`.

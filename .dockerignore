@@ -34,6 +34,7 @@ Thumbs.db
 data/jkse/*
 !data/jkse/syariah.csv
 !data/jkse/bumn.csv
+!data/jkse/hsc.csv
 data/sp500/
 data/logs/
 data/images/

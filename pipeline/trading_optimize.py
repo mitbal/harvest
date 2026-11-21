@@ -241,7 +241,11 @@ def regime_stats(trades: pd.DataFrame, regime: pd.Series) -> dict:
 
 
 def _swing_raw_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
-    """Dividend events, universe, unadjusted OHLCV cut at ``as_of``, today's shortlist and the JKSE index."""
+    """Dividend events, universe, unadjusted OHLCV cut at ``as_of``, today's shortlist and the JKSE index.
+
+    The shortlist leaves out gorengan: HSC stocks and those ``sw.pumped_stocks``
+    flags on these bars (the history covers its two-year window).
+    """
     events = trading_data.load_dividend_events(client)
     universe = trading_data.load_universe()
     histories = trading_data.load_ohlcv_histories(
@@ -253,7 +257,7 @@ def _swing_raw_inputs(client, as_of: pd.Timestamp, history_start: pd.Timestamp):
          for symbol, frame in histories.items()],
         ignore_index=True,
     ) if histories else pd.DataFrame(columns=["symbol", "date", "close"])
-    shortlist = sw.build_shortlist(universe, sw.price_volatility(closes))
+    shortlist = sw.build_shortlist(universe, sw.price_volatility(closes), pumped=sw.pumped_stocks(closes))
     index = trading_data.load_jkse_index()
     index = index[index.index <= as_of]
     return events, universe, histories, shortlist, index
@@ -292,7 +296,7 @@ def swing_backtest_inputs(client, as_of: pd.Timestamp, history_start: pd.Timesta
     market_caps = (universe.drop_duplicates("stock", keep="last").set_index("stock")["mktCap"]
                    if "mktCap" in universe.columns else pd.Series(dtype=float))
     eligibility = {
-        symbol: sw.point_in_time_eligibility(frame, market_caps.get(symbol, np.nan))
+        symbol: sw.point_in_time_eligibility(frame, market_caps.get(symbol, np.nan), symbol=symbol)
         for symbol, frame in histories.items()
     }
     adjusted = {
@@ -321,8 +325,9 @@ def swing(client, as_of=None, preset: str = SWING_PRESET) -> dict:
     The universe is point in time: a setup counts only on a day the stock met
     the shortlist rules (``sw.point_in_time_eligibility``), so stocks that later
     left the list are included and recent arrivals are not backtested over years
-    they would not have been on it. Companies delisted since are still missing,
-    as the universe is today's listed companies.
+    they would not have been on it. Gorengan are out: today's HSC list on every
+    date, and a pumped stock for two years after its pump. Companies delisted
+    since are still missing, as the universe is today's listed companies.
     """
     as_of = pd.Timestamp(as_of or datetime.date.today()).normalize()
     run_id = store.start_run(client, "swing", "optimize", as_of)
