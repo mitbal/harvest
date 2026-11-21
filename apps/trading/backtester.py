@@ -23,11 +23,11 @@ _finite, _format_idr = pos.finite, pos.format_idr
 logger = logging.getLogger(__name__)
 
 
-st.set_page_config(page_title='Long Term - Panen Dividen')
+st.set_page_config(page_title='Value Play - Panen Dividen')
 hp.enable_chart_theme()
 ui.inject_styles()
 ui.hero(
-    "Trading · Long term position", "Growth at a Discount",
+    "Trading · Value play", "Growth at a Discount",
     "Profitable IDX businesses whose earnings and revenue multiples are below "
     "their own history while revenue and earnings continue to grow.", "trending_up",
 )
@@ -516,9 +516,9 @@ def render_today(access: bool) -> None:
                             "price history, or could not be fetched.")
     if email:
         try:
-            metrics.metric("Your long term positions", len(load_open_positions(email)))
+            metrics.metric("Your value positions", len(load_open_positions(email)))
         except Exception:
-            metrics.metric("Your long term positions", "–")
+            metrics.metric("Your value positions", "–")
     line = backtest_line(record)
     if line:
         ui.render(ui.strip(ui.bold(line), icon_name="insights"))

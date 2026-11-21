@@ -151,7 +151,7 @@ def long_term_exit_reasons(position: pd.Series, row: dict) -> list[tuple[str, st
     if pe is not None and pe_mean is not None and pd.notna(pe) and pd.notna(pe_mean) and pe >= pe_mean:
         reasons.append((
             f"{position['id']}:pe_mean",
-            f"Long Term: {symbol}'s P/E is back at its historical mean ({pe:.1f} vs a mean of {pe_mean:.1f}). "
+            f"Value Play: {symbol}'s P/E is back at its historical mean ({pe:.1f} vs a mean of {pe_mean:.1f}). "
             "The discount you bought has closed.",
         ))
     statement = row.get('Statement Date')
@@ -166,7 +166,7 @@ def long_term_exit_reasons(position: pd.Series, row: dict) -> list[tuple[str, st
         if falling:
             reasons.append((
                 f"{position['id']}:growth:{pd.Timestamp(statement).date().isoformat()}",
-                f"Long Term: {symbol}'s latest quarter ({_day(statement)} {pd.Timestamp(statement).year}) turned "
+                f"Value Play: {symbol}'s latest quarter ({_day(statement)} {pd.Timestamp(statement).year}) turned "
                 f"trailing twelve-month growth negative ({', '.join(falling)}).",
             ))
     return reasons

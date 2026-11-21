@@ -19,7 +19,7 @@ from harvest.premium import get_connection, has_access
 
 
 # Options are the labels, because the bound URL value is the displayed one (?tool=Swing+Trading).
-TOOLS = {'Dividend Play': 'dividend_play', 'Swing Trading': 'swing', 'Long Term': 'long_term'}
+TOOLS = {'Dividend Play': 'dividend_play', 'Swing Trading': 'swing', 'Value Play': 'long_term'}
 METHOD = {
     'dividend_play': (
         'Each card is a limit order at its "entry at or below" price, rounded down to an IDX tick, for the '

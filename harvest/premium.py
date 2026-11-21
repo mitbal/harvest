@@ -23,7 +23,7 @@ COMMUNITY_URL = 'https://reddit.com/r/panendividen'
 BENEFITS = [
     'Full scanner with every stock that has a setup today',
     'Backtest any ticker with your own parameters',
-    'Swing trading and long-term position labs',
+    'Swing trading and Value Play labs',
 ]
 
 

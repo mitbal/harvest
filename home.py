@@ -1313,7 +1313,7 @@ st.html(
                         Screen IDX companies that stay profitable and keep growing while their P/E and P/S
                         multiples sit below historical ranges. Results are shown as scenarios, not price targets.
                     </p>
-                    <a class="pd-text-link" href="./backtester" target="_self">Open the long-term screen</a>
+                    <a class="pd-text-link" href="./backtester" target="_self">Open the value screen</a>
                 </article>
 
                 <article class="pd-latest-row">
@@ -1446,8 +1446,8 @@ st.html(
                 <div class="pd-tool-group">
                     <p class="pd-tool-group-title">Strategy research</p>
                     <a class="pd-tool-link" href="./backtester" target="_self">
-                        <strong>Position Trading</strong>
-                        <span>A Growth at a Discount screen for long-term oriented IDX candidates.</span>
+                        <strong>Value Play</strong>
+                        <span>A Growth at a Discount screen: quality IDX companies trading below their own historical valuation.</span>
                     </a>
                     <a class="pd-tool-link" href="./day_trading" target="_self">
                         <strong>Short-Term Swing Trading Lab</strong>

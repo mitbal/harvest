@@ -24,7 +24,7 @@ TOOLS = {
                       'note': 'Entry window open now'},
     'swing': {'label': 'Swing Trading', 'icon': 'bolt', 'page': 'apps/trading/swing_trading.py',
               'note': 'Plans for the next session'},
-    'long_term': {'label': 'Long Term', 'icon': 'trending_up', 'page': 'apps/trading/backtester.py',
+    'long_term': {'label': 'Value Play', 'icon': 'trending_up', 'page': 'apps/trading/backtester.py',
                   'note': 'Top candidates of the valuation screen'},
 }
 TOOL_LABELS = {tool: info['label'] for tool, info in TOOLS.items()}
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title='My Trades - Panen Dividen')
 ui.inject_styles()
 ui.hero('Trading · My trades', 'My trades',
-        'What to act on after the last close across Dividend Play, Swing Trading and Long Term, the dates '
+        'What to act on after the last close across Dividend Play, Swing Trading and Value Play, the dates '
         'coming up, and the trades you track with their sell-by countdowns and Telegram reminders.', 'menu_book')
 
 email = current_email()
@@ -477,7 +477,7 @@ events = coming_up(published, open_positions)
 metrics = st.container(horizontal=True)
 metrics.metric('Signals today', len(ranked['dividend_play']) + len(ranked['swing']),
                help='Dividend Play entry windows open now plus swing plans for the next session')
-metrics.metric('Long term candidates', len(ranked['long_term']))
+metrics.metric('Value candidates', len(ranked['long_term']))
 if open_positions is None:
     metrics.metric('Your positions', '–', help='Log in to track your trades' if email is None else None)
 else:

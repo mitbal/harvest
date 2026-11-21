@@ -141,14 +141,14 @@ def test_swing_tab_from_the_url(run_page):
 
 
 def test_long_term_picks(run_page):
-    app = run_page(tool="Long Term")
+    app = run_page(tool="Value Play")
 
     assert not app.exception
     assert _metric(app, "Companies picked") == "2"
     assert _metric(app, "Ahead of the JKSE") == "1 of 2"
     assert app.dataframe[0].value["Stock"].tolist() == ["MSIN", "CMRY"]
 
-    free = run_page("free", tool="Long Term")
+    free = run_page("free", tool="Value Play")
     assert free.dataframe[0].value["Stock"].tolist() == ["CMRY"]
     assert "1 open pick is for supporters." in _texts(free)
 
@@ -195,5 +195,5 @@ def test_portfolio_simulation_missing_or_failed(run_page):
     failed = run_page(client=_client(portfolio={"error": "OSError: R2 down"}))
     assert "The portfolio simulation failed in the last weekly search." in _texts(failed)
 
-    long_term = run_page(tool="Long Term")
+    long_term = run_page(tool="Value Play")
     assert "Backtest as one account" not in _texts(long_term)
