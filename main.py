@@ -41,7 +41,7 @@ _lock = (lambda icon: icon) if has_access() else (lambda icon: '🔒')
 page_track_record = st.Page('apps/trading/track_record.py', title='Track Record', icon='🧾')
 page_backtester = st.Page('apps/trading/backtester.py', title='Value Play', icon=_lock('📈'))
 # Keeps the old URL so existing links and bookmarks still work.
-page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Short Term Swing', icon=_lock('⚡'), url_path='day_trading')
+page_swing_trading = st.Page('apps/trading/swing_trading.py', title='Swing Play', icon=_lock('⚡'), url_path='day_trading')
 page_dividend_play = st.Page('apps/trading/dividend_play.py', title='Dividend Play', icon=_lock('🎣'))
 # The trading hub: open to everyone, the journal inside it is for supporters.
 page_my_trades = st.Page('apps/trading/my_trades.py', title='My Trades', icon='📒')
