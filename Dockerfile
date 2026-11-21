@@ -17,10 +17,16 @@ RUN uv venv /opt/venv && \
 # Stage 2: Final stage
 FROM python:3.12-slim
 
-# Install make so the ENTRYPOINT can run the Makefile target
+# Install make so the ENTRYPOINT can run the Makefile target, and jemalloc (see LD_PRELOAD below)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
+    libjemalloc2 \
     && rm -rf /var/lib/apt/lists/*
+
+# glibc malloc gives each thread its own arena and rarely hands freed pages back, so every Streamlit rerun
+# (a fresh thread) ratchets RSS up while Python's own numbers stay flat. jemalloc returns idle pages instead.
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV MALLOC_CONF=background_thread:true
 
 WORKDIR /app
 
