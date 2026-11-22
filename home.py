@@ -1,4 +1,8 @@
+import html
+
 import streamlit as st
+
+from harvest.premium import BENEFITS, BMC_URL, TIERS, TRAKTEER_URL, WHY, current_email, is_premium
 
 
 # Served by Streamlit static serving (static/home/), so the browser can cache
@@ -21,6 +25,71 @@ compounding_preview = f'{STATIC_HOME}/compounding_simulator.webp'
 market_preview = f'{STATIC_HOME}/heatmap_1d_price_return.webp'
 comparison_preview = f'{STATIC_HOME}/stock_comparison_scatterplot.webp'
 timing_preview = f'{STATIC_HOME}/best_timing_best_time_to_buy.webp'
+
+
+# Supporter copy and prices come from harvest.premium, so the homepage pitch says
+# the same thing as the paywall on the trading pages.
+def _support_tiers() -> str:
+    monthly = TIERS[0]['min_idr']
+    rows = []
+    for tier in TIERS:
+        months = max(1, round(tier['days'] / 30.5))
+        saving = 1 - tier['min_idr'] / months / monthly
+        note = f'save {saving:.0%}' if saving > 0.005 else 'no auto-renew'
+        best = ' pd-tier-best' if tier is TIERS[-1] and saving > 0.005 else ''
+        rows.append(
+            f'<div class="pd-tier{best}"><span class="pd-tier-name">{html.escape(tier["name"])}</span>'
+            f'<strong>{html.escape(tier["price"])}</strong>'
+            f'<span class="pd-tier-note">{html.escape(tier["duration"])} · {html.escape(note)}</span></div>'
+        )
+    return ''.join(rows)
+
+
+def _support_panel(supporter: bool) -> str:
+    if supporter:
+        return (
+            '<section class="pd-support pd-support-thanks" id="pd-support" aria-labelledby="pd-support-title">'
+            '<div class="pd-support-copy">'
+            '<span class="pd-support-eyebrow">Supporter access active</span>'
+            '<h2 id="pd-support-title">Thank you for keeping Panen Dividen running.</h2>'
+            '<p>Every signal, the evidence for any stock, the research Lab and your trade journal are open to you. '
+            'Tonight\'s picks are waiting in My Trades.</p>'
+            '<div class="pd-actions"><a class="pd-button pd-button-primary" href="./my_trades" target="_self">'
+            'Open My Trades <span aria-hidden="true">→</span></a></div>'
+            '</div></section>'
+        )
+    perks = ''.join(f'<li>{html.escape(b)}</li>' for b in BENEFITS)
+    return (
+        '<section class="pd-support" id="pd-support" aria-labelledby="pd-support-title">'
+        '<div class="pd-support-copy">'
+        '<span class="pd-support-eyebrow">Become a supporter</span>'
+        '<h2 id="pd-support-title">Unlock every signal for less than a coffee a week.</h2>'
+        f'<p>{html.escape(WHY)}</p>'
+        f'<ul class="pd-support-perks">{perks}</ul>'
+        '</div>'
+        '<div class="pd-support-offer">'
+        f'<div class="pd-tiers">{_support_tiers()}</div>'
+        '<ol class="pd-support-steps">'
+        '<li>Log in with Google on any trading page.</li>'
+        '<li>Donate on Trakteer or Buy Me a Coffee with that same email.</li>'
+        '<li>Access unlocks within minutes, on every device you log in from.</li>'
+        '</ol>'
+        '<div class="pd-actions">'
+        f'<a class="pd-button pd-button-primary" href="{TRAKTEER_URL}" target="_blank" rel="noreferrer">'
+        'Support on Trakteer <span aria-hidden="true">→</span></a>'
+        f'<a class="pd-button pd-button-secondary" href="{BMC_URL}" target="_blank" rel="noreferrer">'
+        'Buy Me a Coffee</a>'
+        '</div>'
+        '</div></section>'
+    )
+
+
+supporter = is_premium(current_email())
+support_panel = _support_panel(supporter)
+support_pill = (
+    '' if supporter else
+    '<a class="pd-support-pill" href="#pd-support">Become a supporter</a>'
+)
 
 
 st.html(
@@ -1123,6 +1192,315 @@ st.html(
             }}
         }}
 
+        /* --- Trading tools and supporter pitch --- */
+        .pd-masthead-actions {{
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }}
+
+        .pd-home .pd-support-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            min-height: 36px;
+            padding: 0.4rem 0.9rem;
+            border-radius: 999px;
+            background: var(--pd-forest);
+            color: var(--pd-white) !important;
+            font-size: 0.78rem;
+            font-weight: 800;
+            text-decoration: none !important;
+        }}
+
+        .pd-home .pd-support-pill::before {{
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--pd-lime);
+            content: '';
+        }}
+
+        .pd-trading {{
+            padding: clamp(4.5rem, 9vw, 8rem) 0 0;
+        }}
+
+        .pd-trade-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }}
+
+        .pd-trade-card {{
+            display: flex;
+            flex-direction: column;
+            padding: clamp(1.5rem, 3vw, 2.25rem);
+            border-radius: 14px;
+            background: var(--pd-surface);
+        }}
+
+        .pd-trade-card:first-child {{
+            background: var(--pd-mint);
+        }}
+
+        .pd-trade-top {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }}
+
+        .pd-trade-kicker {{
+            color: var(--pd-green);
+            font-size: 0.78rem;
+            font-weight: 800;
+        }}
+
+        .pd-trade-icon {{
+            font-size: 1.4rem;
+            line-height: 1;
+        }}
+
+        .pd-trade-card h3 {{
+            margin: 0;
+            color: var(--pd-ink);
+            font-size: clamp(1.35rem, 2vw, 1.7rem);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }}
+
+        .pd-trade-card > p {{
+            margin: 0.75rem 0 1.25rem;
+            color: var(--pd-ink-soft);
+            font-size: 0.92rem;
+            line-height: 1.7;
+        }}
+
+        .pd-trade-access {{
+            display: grid;
+            gap: 0.55rem;
+            margin: auto 0 0.75rem;
+            padding: 1rem 0 0;
+            border-top: 1px solid var(--pd-line);
+            list-style: none;
+            font-size: 0.82rem;
+            line-height: 1.55;
+        }}
+
+        .pd-trade-access li {{
+            display: grid;
+            grid-template-columns: 86px 1fr;
+            gap: 0.75rem;
+            margin: 0;
+            color: var(--pd-ink-soft);
+        }}
+
+        .pd-trade-access b {{
+            color: var(--pd-ink);
+            font-size: 0.72rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            padding-top: 0.1rem;
+        }}
+
+        .pd-trade-access li.pd-plus b {{
+            color: var(--pd-green);
+        }}
+
+        .pd-support {{
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
+            gap: clamp(2rem, 5vw, 4.5rem);
+            margin-top: 1rem;
+            padding: clamp(2rem, 5vw, 4rem);
+            border-radius: 16px;
+            background: var(--pd-forest);
+            color: var(--pd-white);
+            scroll-margin-top: 5rem;
+        }}
+
+        .pd-support-thanks {{
+            grid-template-columns: 1fr;
+        }}
+
+        .pd-support-eyebrow {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            color: #d3e9de;
+            font-size: 0.82rem;
+            font-weight: 700;
+        }}
+
+        .pd-support-eyebrow::before {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--pd-lime);
+            content: '';
+        }}
+
+        .pd-support h2 {{
+            max-width: 16ch;
+            margin: 1rem 0 0;
+            color: var(--pd-white) !important;
+            font-size: clamp(2rem, 3.6vw, 3.4rem);
+            font-weight: 700;
+            letter-spacing: -0.04em;
+            line-height: 1.04;
+            text-wrap: balance;
+        }}
+
+        .pd-support-copy > p {{
+            max-width: 52ch;
+            margin: 1.25rem 0 0;
+            color: #cde0d7;
+            line-height: 1.75;
+        }}
+
+        .pd-support-perks {{
+            display: grid;
+            gap: 0.7rem;
+            margin: 1.75rem 0 0;
+            padding: 0;
+            list-style: none;
+        }}
+
+        .pd-support-perks li {{
+            position: relative;
+            margin: 0;
+            padding-left: 1.75rem;
+            color: var(--pd-white);
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }}
+
+        .pd-support-perks li::before {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            color: var(--pd-lime);
+            content: '✓';
+            font-weight: 800;
+        }}
+
+        .pd-support-offer {{
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-width: 0;
+        }}
+
+        .pd-tiers {{
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.6rem;
+        }}
+
+        .pd-tier {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+            padding: 1rem;
+            border: 1px solid #3f7661;
+            border-radius: 12px;
+            background: var(--pd-forest-deep);
+        }}
+
+        .pd-tier-best {{
+            border-color: var(--pd-lime);
+            background: var(--pd-lime);
+            color: #17351f;
+        }}
+
+        .pd-tier-name {{
+            font-size: 0.76rem;
+            font-weight: 800;
+            opacity: 0.85;
+        }}
+
+        .pd-tier strong {{
+            font-size: 1.3rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }}
+
+        .pd-tier-note {{
+            font-size: 0.72rem;
+            line-height: 1.45;
+            opacity: 0.85;
+        }}
+
+        .pd-support-steps {{
+            display: grid;
+            gap: 0.45rem;
+            margin: 1.5rem 0 0;
+            padding-left: 1.2rem;
+            color: #cde0d7;
+            font-size: 0.84rem;
+            line-height: 1.55;
+        }}
+
+        .pd-support-steps li {{
+            margin: 0;
+        }}
+
+        .pd-support .pd-actions {{
+            margin-top: 1.5rem;
+        }}
+
+        @media (max-width: 900px) {{
+            .pd-support {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+
+        @container (max-width: 900px) {{
+            .pd-support {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+
+        @media (max-width: 640px) {{
+            .pd-trade-grid {{
+                grid-template-columns: 1fr;
+            }}
+
+            .pd-tiers {{
+                grid-template-columns: 1fr;
+            }}
+
+            .pd-support {{
+                padding: 2.25rem 1.25rem;
+            }}
+
+            .pd-trade-access li {{
+                grid-template-columns: 1fr;
+                gap: 0.15rem;
+            }}
+        }}
+
+        @container (max-width: 640px) {{
+            .pd-trade-grid {{
+                grid-template-columns: 1fr;
+            }}
+
+            .pd-tiers {{
+                grid-template-columns: 1fr;
+            }}
+
+            .pd-support {{
+                padding: 2.25rem 1.25rem;
+            }}
+
+            .pd-trade-access li {{
+                grid-template-columns: 1fr;
+                gap: 0.15rem;
+            }}
+        }}
+
         @media (prefers-reduced-motion: no-preference) {{
             .pd-hero-copy > * {{
                 animation: pd-enter 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -1162,7 +1540,10 @@ st.html(
                 <img src="{logo}" alt="Panen Dividen logo">
                 <span>Panen Dividen</span>
             </div>
-            <div class="pd-masthead-note">A data-driven investing workspace</div>
+            <div class="pd-masthead-actions">
+                <div class="pd-masthead-note">A data-driven investing workspace</div>
+                {support_pill}
+            </div>
         </header>
 
         <section class="pd-hero" aria-labelledby="pd-hero-title">
@@ -1171,7 +1552,7 @@ st.html(
                 <h1 id="pd-hero-title">Clear data. Calmer decisions.</h1>
                 <p>
                     Bring dividend stock research, portfolio analytics, historical timing,
-                    compounding simulation, and strategy testing together in one workspace.
+                    compounding simulation, and backtested trading signals together in one workspace.
                 </p>
                 <div class="pd-actions">
                     <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
@@ -1204,7 +1585,7 @@ st.html(
         <div class="pd-context" aria-label="Product coverage">
             <span>Focused on IDX and retail investors</span>
             <span>Research for JKSE and S&amp;P 500</span>
-            <span>9 analysis tools that work together</span>
+            <span>11 tools, from research to nightly trading signals</span>
         </div>
 
         <section class="pd-section" aria-labelledby="pd-workflow-title">
@@ -1308,24 +1689,106 @@ st.html(
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">03</span>
-                    <h3>Growth at a Discount</h3>
+                    <h3>Market Sell-off Dip</h3>
                     <p>
-                        Screen IDX companies that stay profitable and keep growing while their P/E and P/S
-                        multiples sit below historical ranges. Results are shown as scenarios, not price targets.
+                        A new Swing Play setup that buys stocks pulled down with the JKSE on a sell-off day,
+                        with a limit below the close. Like every published setup, it passed a walk-forward test.
                     </p>
-                    <a class="pd-text-link" href="./backtester" target="_self">Open the value screen</a>
+                    <a class="pd-text-link" href="./day_trading" target="_self">See tonight's swings</a>
                 </article>
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">04</span>
-                    <h3>Short-Term Swing Trading Lab</h3>
+                    <h3>My Trades hub</h3>
                     <p>
-                        Research mean-reversion, pullback, relative strength, and breakout strategies
-                        with holdout validation over roughly a 1–10 session horizon.
+                        One page for what to act on after the close across Dividend, Swing and Value Play,
+                        plus a journal that counts down to each trade's sell-by date.
                     </p>
-                    <a class="pd-text-link" href="./day_trading" target="_self">Enter the lab</a>
+                    <a class="pd-text-link" href="./my_trades" target="_self">Open My Trades</a>
                 </article>
             </div>
+        </section>
+
+        <section class="pd-section pd-trading" aria-labelledby="pd-trading-title">
+            <div class="pd-section-header">
+                <h2 id="pd-trading-title">Trading signals, published every evening.</h2>
+                <p>
+                    Each tool backtests its rules on IDX history, holds out the latest trades, and only
+                    publishes setups that pass. Everyone sees the top pick; supporters see all of them.
+                </p>
+            </div>
+
+            <div class="pd-trade-grid">
+                <article class="pd-trade-card">
+                    <div class="pd-trade-top">
+                        <span class="pd-trade-kicker">Around the ex-date</span>
+                        <span class="pd-trade-icon" aria-hidden="true">🎣</span>
+                    </div>
+                    <h3>Dividend Play</h3>
+                    <p>
+                        Buy a dividend payer while it is cheap ahead of its ex-date, then sell into the run-up.
+                        Every past ex-date is one trade, so you can see how each stock has behaved.
+                    </p>
+                    <ul class="pd-trade-access">
+                        <li><b>Free</b><span>The top open entry window and the full evidence for BBRI.</span></li>
+                        <li class="pd-plus"><b>Supporters</b><span>Every window, the buy-at price, best exit and past record for each dividend.</span></li>
+                    </ul>
+                    <a class="pd-text-link" href="./dividend_play" target="_self">Open Dividend Play</a>
+                </article>
+
+                <article class="pd-trade-card">
+                    <div class="pd-trade-top">
+                        <span class="pd-trade-kicker">1 to 10 sessions</span>
+                        <span class="pd-trade-icon" aria-hidden="true">⚡</span>
+                    </div>
+                    <h3>Swing Play</h3>
+                    <p>
+                        Short swings on liquid IDX stocks, confirmed at the close and bought in the next session.
+                        Gorengan and pumped stocks are kept out of the universe.
+                    </p>
+                    <ul class="pd-trade-access">
+                        <li><b>Free</b><span>The top plan for the next session and the evidence for BBRI.</span></li>
+                        <li class="pd-plus"><b>Supporters</b><span>Every plan, the evidence for any stock and the research Lab.</span></li>
+                    </ul>
+                    <a class="pd-text-link" href="./day_trading" target="_self">Open Swing Play</a>
+                </article>
+
+                <article class="pd-trade-card">
+                    <div class="pd-trade-top">
+                        <span class="pd-trade-kicker">Growth at a discount</span>
+                        <span class="pd-trade-icon" aria-hidden="true">📈</span>
+                    </div>
+                    <h3>Value Play</h3>
+                    <p>
+                        Profitable IDX businesses whose P/E and P/S sit below their own history while revenue
+                        and earnings keep growing. Shown as scenarios, not price targets.
+                    </p>
+                    <ul class="pd-trade-access">
+                        <li><b>Free</b><span>The top candidate of the valuation screen.</span></li>
+                        <li class="pd-plus"><b>Supporters</b><span>Every candidate, the evidence for any company and the screen Lab.</span></li>
+                    </ul>
+                    <a class="pd-text-link" href="./backtester" target="_self">Open Value Play</a>
+                </article>
+
+                <article class="pd-trade-card">
+                    <div class="pd-trade-top">
+                        <span class="pd-trade-kicker">Your trading hub</span>
+                        <span class="pd-trade-icon" aria-hidden="true">📒</span>
+                    </div>
+                    <h3>My Trades</h3>
+                    <p>
+                        Tonight's signals from every tool and the dates coming up, in one place. Track the trades
+                        you take and see your closed results.
+                    </p>
+                    <ul class="pd-trade-access">
+                        <li><b>Free</b><span>The top signal from each tool and the upcoming dates.</span></li>
+                        <li class="pd-plus"><b>Supporters</b><span>A trade journal with sell-by countdowns and Telegram reminders.</span></li>
+                    </ul>
+                    <a class="pd-text-link" href="./my_trades" target="_self">Open My Trades</a>
+                </article>
+            </div>
+
+            {support_panel}
         </section>
 
         <section class="pd-insights" aria-labelledby="pd-insights-title">
@@ -1444,14 +1907,22 @@ st.html(
                 </div>
 
                 <div class="pd-tool-group">
-                    <p class="pd-tool-group-title">Strategy research</p>
+                    <p class="pd-tool-group-title">Trading</p>
+                    <a class="pd-tool-link" href="./my_trades" target="_self">
+                        <strong>My Trades</strong>
+                        <span>Tonight's signals from every tool, upcoming dates, and your trade journal.</span>
+                    </a>
+                    <a class="pd-tool-link" href="./dividend_play" target="_self">
+                        <strong>Dividend Play</strong>
+                        <span>Buy ahead of the ex-date and sell into the run-up, backtested on every past dividend.</span>
+                    </a>
+                    <a class="pd-tool-link" href="./day_trading" target="_self">
+                        <strong>Swing Play</strong>
+                        <span>Walk-forward tested swing setups for the next 1–10 sessions, plus a research Lab.</span>
+                    </a>
                     <a class="pd-tool-link" href="./backtester" target="_self">
                         <strong>Value Play</strong>
                         <span>A Growth at a Discount screen: quality IDX companies trading below their own historical valuation.</span>
-                    </a>
-                    <a class="pd-tool-link" href="./day_trading" target="_self">
-                        <strong>Short-Term Swing Trading Lab</strong>
-                        <span>Optimization, validation, backtests, and a setup scanner based on daily closes.</span>
                     </a>
                 </div>
             </div>
