@@ -214,8 +214,9 @@ def render_trades(outcomes: pd.DataFrame, access: bool) -> None:
         trades_table(held)
     else:
         many = len(held) != 1
-        st.caption(f"{len(held)} {'trades' if many else 'trade'} from recent cards {'are' if many else 'is'} still "
-                   f"open. Supporters see which {'ones' if many else 'one'}; everyone sees the result once it closes.")
+        ui.locked_note(f"{len(held)} {'trades' if many else 'trade'} from recent cards {'are' if many else 'is'} "
+                       f"still open. Supporters see which {'ones' if many else 'one'}; everyone sees the result "
+                       "once it closes.", 'open_trades')
 
     missed = outcomes[outcomes['status'] == 'not_filled']
     if not missed.empty:
@@ -254,13 +255,14 @@ def render_long_term(outcomes: pd.DataFrame, access: bool) -> None:
             ui.empty_state('No picks yet', 'Companies appear here from the first day the screen lists them.',
                            'hourglass_empty')
         else:
-            st.caption('Every pick is still open. Supporters see which companies; everyone sees a pick '
-                       'once it reaches its target.')
+            ui.locked_note('Every pick is still open. Supporters see which companies; everyone sees a pick '
+                           'once it reaches its target.', 'open_picks')
         return
     trades_table(shown, long_term=True)
     if not access and len(outcomes) > len(closed):
         hidden = len(outcomes) - len(closed)
-        st.caption(f"{hidden} open {'picks are' if hidden != 1 else 'pick is'} for supporters.")
+        ui.locked_note(f"Supporters also see the {hidden} open {'picks' if hidden != 1 else 'pick'}; everyone sees "
+                       "a pick once it reaches its target.", 'open_picks')
 
 
 def growth_chart(curve: list[dict]) -> None:

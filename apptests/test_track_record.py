@@ -150,7 +150,7 @@ def test_long_term_picks(run_page):
 
     free = run_page("free", tool="Value Play")
     assert free.dataframe[0].value["Stock"].tolist() == ["CMRY"]
-    assert "1 open pick is for supporters." in _texts(free)
+    assert "Supporters also see the 1 open pick" in _texts(free)
 
 
 def test_before_the_first_update(run_page):

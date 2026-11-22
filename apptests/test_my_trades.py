@@ -93,7 +93,7 @@ def test_my_trades_is_gated_for_free_users(trades):
     app = trades(email="free@example.com", enforced=True)
 
     assert not app.exception
-    assert app.title[-1].value == "Unlock the trading lab"
+    assert "Keep a trade journal" in _texts(app) and "Supporter access" in _texts(app)
 
 
 def test_my_trades_lists_only_the_users_positions(trades):

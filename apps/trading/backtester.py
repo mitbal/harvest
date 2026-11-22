@@ -599,10 +599,9 @@ def render_evidence(access: bool) -> None:
     # No format_func: the bound URL parameter is the displayed value, and links use the full symbol.
     stock = st.selectbox("Company", options, key="stock", bind="query-params")
     if not access and stock != FREE_EVIDENCE_TICKER:
-        require_premium(teaser=lambda: st.info(
-            f"The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. Supporters can open any company.",
-            icon=":material/info:",
-        ))
+        require_premium(f"Open the evidence for {ui.short(stock)}",
+                        f"The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. "
+                        "Supporters can open any company.")
 
     published = load_published()
     signals = published["signals"] if published else pd.DataFrame()

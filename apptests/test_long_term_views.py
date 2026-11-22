@@ -170,7 +170,7 @@ def test_today_free_shows_the_top_candidate(run_page, tier):
     assert not app.exception
     assert len(_evidence_buttons(app)) == 1
     assert "Also today:" in _texts(app)
-    assert "Unlock the trading lab" in [b.label for b in app.button]
+    assert "Unlock full access" in [b.label for b in app.button]
     assert "Track this position" not in [b.label for b in app.button]
 
 
@@ -209,7 +209,7 @@ def test_evidence_free_only_for_the_sample(run_page, tier):
     assert "P/E vs median" in [m.label for m in sample.metric]
 
     other = run_page(tier, view="Evidence", stock="TLKM.JK")
-    assert "Unlock the trading lab" in _texts(other) and "P/E vs median" not in [m.label for m in other.metric]
+    assert "Supporter access" in _texts(other) and "P/E vs median" not in [m.label for m in other.metric]
 
 
 def test_lab_is_gated_and_offers_quality_checks(run_page):
@@ -219,4 +219,4 @@ def test_lab_is_gated_and_offers_quality_checks(run_page):
     assert "Results here do not change the published candidates" in text
     assert "Require quality checks" in [c.label for c in lab.checkbox]
 
-    assert "Unlock the trading lab" in _texts(run_page("free", view="Lab"))
+    assert "Supporter access" in _texts(run_page("free", view="Lab"))

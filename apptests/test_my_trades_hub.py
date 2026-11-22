@@ -110,7 +110,7 @@ def test_supporters_see_signals_from_every_tool(run_page):
     assert "Dividend Play 2 Entry window open now" in text and "Swing Trading 2 Plans for the next session" in text
     assert "Holdout 30 of 40 won, +5.0% average after costs" in text
     assert "Stop −2% about Rp 980" in text
-    assert not any(b.label == "Unlock the trading lab" for b in app.button)
+    assert not any(b.label == "Unlock full access" for b in app.button)
 
 
 def test_free_visitors_get_one_card_per_tool_and_an_unlock_prompt(run_page):
@@ -120,7 +120,7 @@ def test_free_visitors_get_one_card_per_tool_and_an_unlock_prompt(run_page):
     cards = _cards(app)
     assert cards[:2] == ["dividend_play_BBRI.JK", "swing_BMRI.JK"]
     assert len(cards) == 3
-    assert any(b.label == "Unlock the trading lab" for b in app.button)
+    assert any(b.label == "Unlock full access" for b in app.button)
     assert "TLKM" in _texts(app) and "ADRO" in _texts(app)
 
 

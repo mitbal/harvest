@@ -242,7 +242,7 @@ def test_evidence_runs_the_backtest(run_page):
 def test_evidence_free_only_for_the_sample(run_page, tier):
     assert "Performance outline" in _texts(run_page(tier, view="Evidence"))
     other = _texts(run_page(tier, view="Evidence", stock="TLKM.JK"))
-    assert "Unlock the trading lab" in other and "Performance outline" not in other
+    assert "Supporter access" in other and "Performance outline" not in other
 
 
 def test_lab_is_gated_and_has_no_pe_filter(run_page):
@@ -253,4 +253,4 @@ def test_lab_is_gated_and_has_no_pe_filter(run_page):
     labels = [n.label for n in lab.number_input]
     assert "Minimum PE" not in labels and "Maximum PE" not in labels
 
-    assert "Unlock the trading lab" in _texts(run_page("free", view="Lab"))
+    assert "Supporter access" in _texts(run_page("free", view="Lab"))

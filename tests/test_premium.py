@@ -29,6 +29,10 @@ def _st(logged_in=False, email=None):
     return st
 
 
+def _paywall_html(st) -> str:
+    return st.html.call_args.args[0]
+
+
 @pytest.fixture
 def enforced(monkeypatch):
     monkeypatch.setenv('PREMIUM_ENFORCED', 'true')
@@ -88,23 +92,23 @@ def test_require_premium_does_nothing_when_not_enforced(monkeypatch):
         premium.require_premium()
 
     st.stop.assert_not_called()
-    st.title.assert_not_called()
+    st.html.assert_not_called()
 
 
 def test_require_premium_blocks_logged_out_visitors_with_login(enforced):
     st = _st(logged_in=False)
-    teaser = MagicMock()
     with patch.object(premium, 'st', st), patch.object(premium, 'is_premium') as is_premium:
         with pytest.raises(Stopped):
-            premium.require_premium(teaser=teaser)
+            premium.require_premium('Open the evidence for BBCA', 'BBRI is free to explore.')
 
     is_premium.assert_not_called()
-    teaser.assert_called_once_with()
-    st.title.assert_called_once_with('Unlock the trading lab')
+    markup = _paywall_html(st)
+    assert 'Open the evidence for BBCA' in markup and 'BBRI is free to explore.' in markup
+    assert all(tier['price'] in markup for tier in premium.TIERS)
+    assert 'Log in with Google, then donate' in markup
     assert st.button.call_args.args[0] == 'Log in with Google'
     link_urls = [call.args[1] for call in st.link_button.call_args_list]
     assert link_urls == [premium.TRAKTEER_URL, premium.BMC_URL]
-    st.info.assert_not_called()
 
 
 def test_require_premium_blocks_free_users_and_shows_their_email(enforced):
@@ -113,9 +117,9 @@ def test_require_premium_blocks_free_users_and_shows_their_email(enforced):
         with pytest.raises(Stopped):
             premium.require_premium()
 
-    st.title.assert_called_once_with('Unlock the trading lab')
+    assert premium.LAB_TITLE in _paywall_html(st)
     st.button.assert_not_called()
-    assert 'free@example.com' in st.info.call_args.args[0]
+    assert 'free@example.com' in _paywall_html(st)
 
 
 def test_require_premium_lets_supporters_through(enforced):
@@ -123,10 +127,10 @@ def test_require_premium_lets_supporters_through(enforced):
     with patch.object(premium, 'st', st), patch.object(
         premium, '_premium_rows', return_value=[{'expires_at': '2099-01-01T00:00:00+00:00'}]
     ):
-        premium.require_premium(teaser=MagicMock(side_effect=AssertionError('teaser shown')))
+        premium.require_premium()
 
     st.stop.assert_not_called()
-    st.title.assert_not_called()
+    st.html.assert_not_called()
 
 
 def test_require_premium_blocks_expired_supporters(enforced):
@@ -137,7 +141,7 @@ def test_require_premium_blocks_expired_supporters(enforced):
         with pytest.raises(Stopped):
             premium.require_premium()
 
-    st.title.assert_called_once_with('Unlock the trading lab')
+    assert premium.LAB_TITLE in _paywall_html(st)
 
 
 def test_has_access_without_enforcement(monkeypatch):

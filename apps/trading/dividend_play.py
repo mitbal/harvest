@@ -805,7 +805,8 @@ def render_announced(access: bool) -> None:
         on_select='rerun' if access else 'ignore', selection_mode='single-row',
     )
     if not access:
-        st.caption('Supporters see whether buying now has paid off on each stock\'s past ex-dates.')
+        ui.locked_note('Supporters see the verdict, best exit and past record for each announced dividend.',
+                       'announced')
         return
 
     selected = list(getattr(getattr(event, 'selection', None), 'rows', []) or [])
@@ -830,6 +831,7 @@ def render_waiting(waiting: pd.DataFrame, access: bool) -> None:
             if pd.notna(vs_ma) and average:
                 notes[symbol] = f"{abs(vs_ma):.1f}% {'above' if vs_ma >= 0 else 'below'} {average}"
         ui.tickers(waiting['symbol'], notes)
+        ui.locked_note('Supporters see the buy-at price and past run-up for each stock.', 'waiting')
         return
     rows = pd.DataFrame({
         'Stock': waiting['symbol'].map(ui.short),
@@ -933,6 +935,7 @@ def render_today(access: bool) -> None:
             s: f"opens {ui.day(ui.first_session(d['window_start']), est)}"
             for s, d, est in zip(soon['symbol'], soon['detail'], soon['key_date_estimated'])
         })
+        ui.locked_note('Supporters see each setup\'s past run-up and can get an alert when a window opens.', 'soon')
     else:
         rows = pd.DataFrame({
             'Stock': soon['symbol'].map(ui.short),
@@ -971,10 +974,9 @@ def render_evidence(access: bool) -> None:
     # No format_func: the bound URL parameter is the displayed value, and links use the full symbol.
     stock = st.selectbox('Stock', options, key='stock', bind='query-params')
     if not access and stock != FREE_EVIDENCE_TICKER:
-        require_premium(teaser=lambda: st.info(
-            f'The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. '
-            'Supporters can open any stock.', icon=':material/info:',
-        ))
+        require_premium(f'Open the evidence for {ui.short(stock)}',
+                        f'The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. '
+                        'Supporters can open any stock.')
 
     published = load_published()
     setups = published['setups'] if published else {}

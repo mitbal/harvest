@@ -196,7 +196,7 @@ def test_today_premium_shows_every_card_and_the_opening_list(run_page):
     assert "holdout 30 of 40 won on all shortlist stocks, +5.0% average after costs" in text
     assert "Not financial advice." in text
     assert _dataframe(app, "Window opens")["Stock"].tolist() == ["ASII"]
-    assert "Unlock the trading lab" not in [b.label for b in app.button]
+    assert "Unlock full access" not in [b.label for b in app.button]
 
 
 @pytest.mark.parametrize("tier", ["free", "logged_out"])
@@ -210,7 +210,7 @@ def test_today_free_shows_one_card_and_names_only(run_page, tier):
     assert "Also open: TLKM" in text
     assert "ASII" in text
     assert _dataframe(app, "Window opens") is None
-    assert "Unlock the trading lab" in [b.label for b in app.button]
+    assert "Unlock full access" in [b.label for b in app.button]
     if tier == "logged_out":
         assert _metric(app, "Your positions") == "–"
 
@@ -280,7 +280,7 @@ def test_today_free_lists_announced_dividends_without_the_verdict(run_page, tier
     assert table["Stock"].tolist() == ["TLKM"]
     assert "Verdict" not in table.columns
     assert _dataframe(app, "hold_return") is None
-    assert "Supporters see whether buying now has paid off" in _texts(app)
+    assert "Supporters see the verdict, best exit and past record" in _texts(app)
 
 
 def test_today_marks_estimated_cum_dates(run_page):
@@ -316,9 +316,12 @@ def test_see_evidence_opens_that_stock(run_page):
 def test_unlock_prompt_opens_the_paywall(run_page):
     app = run_page("free")
 
-    app = next(b for b in app.button if b.label == "Unlock the trading lab").click().run()
+    app = next(b for b in app.button if b.label == "Unlock full access").click().run()
 
-    assert app.segmented_control(key="view").value == "Lab"
+    assert not app.exception
+    # The paywall opens in a dialog on the same view.
+    assert app.segmented_control(key="view").value == "Today"
+    assert "Supporters cover the data and servers" in _texts(app)
     assert "Dividend Stock Shortlist" not in _texts(app)
 
 
@@ -332,7 +335,7 @@ def test_evidence_premium_runs_the_backtest_for_any_stock(run_page):
     text = _texts(app)
     assert "Performance Outline" in text
     assert "Shortlist-wide setup. Holdout 30 of 40 trades won" in text
-    assert "Unlock the trading lab" not in text
+    assert "Supporter access" not in text
 
 
 def test_stock_link_opens_evidence(run_page):
@@ -352,7 +355,7 @@ def test_evidence_free_allows_only_the_sample_stock(run_page, tier):
     other = run_page(tier, view="Evidence", stock="TLKM.JK")
     assert not other.exception
     text = _texts(other)
-    assert "Unlock the trading lab" in text
+    assert "Supporter access" in text
     assert "Performance Outline" not in text
 
 
@@ -373,7 +376,7 @@ def test_lab_is_gated(run_page, tier):
 
     assert not app.exception
     text = _texts(app)
-    assert "Unlock the trading lab" in text
+    assert "Supporter access" in text
     assert "Dividend Stock Shortlist" not in text
     labels = [b.label for b in app.button]
     assert ("Log in with Google" in labels) == (tier == "logged_out")

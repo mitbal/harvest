@@ -586,10 +586,9 @@ def render_evidence(access: bool) -> None:
     # No format_func: the bound URL parameter is the displayed value, and links use the full symbol.
     stock = st.selectbox('Stock', options, key='stock', bind='query-params')
     if not access and stock != FREE_EVIDENCE_TICKER:
-        require_premium(teaser=lambda: st.info(
-            f'The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. Supporters can open any stock.',
-            icon=':material/info:',
-        ))
+        require_premium(f'Open the evidence for {ui.short(stock)}',
+                        f'The evidence for {ui.short(FREE_EVIDENCE_TICKER)} is free to explore. '
+                        'Supporters can open any stock.')
 
     published = load_published()
     setups = published['setups'] if published else {}

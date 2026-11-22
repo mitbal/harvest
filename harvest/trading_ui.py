@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+import harvest.premium as premium
 import harvest.swing as sw
 import harvest.trading_store as store
 
@@ -66,28 +67,36 @@ def status_line(run: dict, stale: bool = False) -> None:
     render(f'<span class="hv-status{" stale" if stale else ""}"><span class="dot"></span>{esc(text)}</span>')
 
 
-def unlock_prompt(hidden: list[str], noun: str = 'setup', lead: str = 'Also today', page: str | None = None) -> None:
-    """Dark call-to-action card naming what is locked, with the unlock button inside.
-
-    The button opens this page's Lab view (its paywall), or ``page``'s Lab view when given.
-    """
+def unlock_prompt(hidden: list[str], noun: str = 'setup', lead: str = 'Also today', key: str = 'today') -> None:
+    """Dark call-to-action card naming what is locked; its button opens the supporter dialog."""
     count = len(hidden)
-    with st.container(key='hv-unlock'):
+    with st.container(key=f'hv-unlock-{key}'):
         render(
             f'<div class="hv-unlock"><div class="lock">{icon("lock")}</div><div>'
             f'<h4>{count} more {noun if count == 1 else noun + "s"} today</h4>'
-            '<p>Supporters see every card, the evidence for any stock and the research lab.</p>'
+            f'<p>{esc(premium.TAGLINE)}</p>'
             f'<div class="blur"><span>{esc(lead)}:</span>'
             + ''.join(f'<span>{esc(short(s))}</span>' for s in hidden) + '</div></div></div>'
         )
-        if page is not None:
-            if st.button('Unlock the trading lab', type='primary', icon=':material/lock_open:', key='today_unlock'):
-                st.switch_page(page, query_params={'view': VIEW_LAB})
-            return
-        st.button(
-            'Unlock the trading lab', type='primary', icon=':material/lock_open:',
-            on_click=open_view, args=(VIEW_LAB,), key='today_unlock',
-        )
+        unlock_button(f'unlock_{key}', primary=True)
+
+
+def locked_note(text: str, key: str) -> None:
+    """One line under a table or list that shows less to free visitors, with an Unlock button.
+
+    ``text`` says what supporters see here, in the form 'Supporters see ...'.
+    """
+    with st.container(key=f'hv-locked-{key}', horizontal=True, vertical_alignment='center', gap='small'):
+        st.html(f'<div class="hv"><div class="hv-locked">{icon("lock")}<span>{esc(text)}</span></div></div>',
+                width='stretch')
+        unlock_button(f'locked_{key}')
+
+
+def unlock_button(key: str, primary: bool = False) -> None:
+    """The one Unlock button; it opens the supporter dialog wherever it sits."""
+    if st.button(premium.UNLOCK_LABEL, icon=premium.UNLOCK_ICON, key=key,
+                 type='primary' if primary else 'secondary', width='content'):
+        premium.paywall_dialog()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -257,6 +266,40 @@ STYLES = """
 .hv-tickers .t { font-weight: 750; font-size: .85rem; padding: .32rem .7rem; border-radius: 10px;
   background: var(--hv-card); border: 1px solid var(--hv-line); }
 .hv-tickers .t small { font-weight: 500; color: var(--hv-muted); margin-left: .3rem; }
+/* Supporter pieces: locked note, paywall card (harvest.premium) */
+[class*="st-key-hv-locked"] { margin-top: .35rem; padding: .45rem .5rem .45rem .8rem !important; border-radius: 11px;
+  background: var(--hv-soft); border: 1px dashed #c6d3cd; flex-wrap: wrap; }
+[class*="st-key-hv-locked"] > .stElementContainer:first-child { flex: 1 1 16rem; min-width: 0; }
+.hv-locked { display: flex; align-items: center; gap: .5rem; font-size: .88rem; color: var(--hv-muted); }
+.hv-locked .icon { color: var(--hv-teal); font-size: 1.1rem; }
+[class*="st-key-hv-paywall"] { border-radius: 18px; padding: 1.4rem 1.5rem !important; gap: 1rem;
+  background: var(--hv-card); border: 1px solid var(--hv-line); box-shadow: 0 1px 2px rgba(16,35,28,.04); }
+[role="dialog"] [class*="st-key-hv-paywall"] { border: 0; box-shadow: none; padding: 0 !important; }
+.hv-paywall .head { display: flex; gap: 1rem; align-items: center; padding: 1.1rem 1.2rem; border-radius: 14px; color: #ecfdf5;
+  background: radial-gradient(100% 160% at 0% 0%, rgba(52,211,153,.25), transparent 60%),
+              linear-gradient(120deg, #052e25, #064e3b 60%, #0f766e); }
+.hv-paywall .head .lock { flex: none; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center;
+  background: rgba(255,255,255,.12); font-size: 1.5rem; color: #6ee7b7; }
+.hv-paywall .eyebrow { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6ee7b7; }
+.hv-paywall h2 { margin: .1rem 0 0; padding: 0; color: #fff; font-size: 1.3rem; font-weight: 750; }
+.hv-paywall .head p { margin: .2rem 0 0; color: #a7f3d0; font-size: .9rem; }
+.hv-paywall .body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 1.25rem; margin-top: 1.1rem; }
+.hv-paywall .perks { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.hv-paywall .perks li { display: flex; gap: .5rem; align-items: flex-start; font-size: .92rem; margin: 0; }
+.hv-paywall .perks .icon { color: var(--hv-up); font-size: 1.15rem; margin-top: .05rem; }
+.hv-paywall .why { margin: .9rem 0 0; font-size: .84rem; color: var(--hv-muted); }
+.hv-paywall .tiers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+.hv-paywall .tier { position: relative; padding: .8rem .85rem; border-radius: 13px; background: var(--hv-soft);
+  border: 1px solid var(--hv-line); }
+.hv-paywall .tier.best { background: var(--hv-mint); border-color: #8fd3b6; }
+.hv-paywall .tier .flag { position: absolute; top: -.6rem; right: .6rem; font-size: .66rem; font-weight: 800;
+  letter-spacing: .04em; text-transform: uppercase; padding: .12rem .45rem; border-radius: 6px; background: var(--hv-brand); color: #fff; }
+.hv-paywall .tier .name { font-size: .78rem; font-weight: 700; color: var(--hv-muted); }
+.hv-paywall .tier .price { font-size: 1.3rem; font-weight: 800; color: var(--hv-brand); margin-top: .1rem; }
+.hv-paywall .tier .dur { font-size: .8rem; color: var(--hv-ink); }
+.hv-paywall .tier .note { font-size: .72rem; color: var(--hv-muted); margin-top: .2rem; }
+.hv-paywall .steps { margin: .95rem 0 0; padding-left: 1.2rem; display: grid; gap: .3rem; font-size: .88rem; color: var(--hv-ink); }
+.hv-paywall .steps li { margin: 0; }
 [class*="st-key-hv-unlock"] { border-radius: 16px; padding: 1.2rem 1.3rem !important; color: #ecfdf5;
   background: radial-gradient(100% 160% at 0% 0%, rgba(52,211,153,.25), transparent 60%),
               linear-gradient(120deg, #052e25, #064e3b 60%, #0f766e); }
@@ -313,6 +356,9 @@ STYLES = """
   .hv-hero { padding: 1.2rem 1.1rem; border-radius: 14px; } .hv-hero h1 { font-size: 1.6rem; }
   .hv-unlock { align-items: flex-start; }
   [class*="st-key-hv-unlock"] .stButton { padding-left: 0; }
+  .hv-paywall .body { grid-template-columns: minmax(0, 1fr); }
+  .hv-paywall .tiers { grid-template-columns: minmax(0, 1fr); }
+  [class*="st-key-hv-paywall"] { padding: 1rem !important; }
   .hv-ladder .lbl { font-size: .66rem; }
 }
 </style>

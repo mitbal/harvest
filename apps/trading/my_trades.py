@@ -514,7 +514,7 @@ for tool, data in published.items():
     ):
         st.switch_page(TOOLS[tool]['page'])
 if hidden:
-    ui.unlock_prompt(list(dict.fromkeys(hidden)), noun='signal', page=TOOLS['dividend_play']['page'])
+    ui.unlock_prompt(list(dict.fromkeys(hidden)), noun='signal')
 
 # ── Coming up ───────────────────────────────────────────────────────────── #
 ui.section('Coming up', len(events), f'Next {COMING_UP_DAYS} days')
@@ -531,7 +531,8 @@ if email is None:
                 'Track a trade from any tool and it shows up here with its sell-by countdown.', 'login'):
         st.button('Log in with Google', icon=':material/login:', type='primary', on_click=st.login, args=('google',))
 else:
-    require_premium()
+    require_premium('Keep a trade journal',
+                    'Track a trade from any tool and it shows up here with its sell-by countdown and Telegram alerts.')
     if positions is None:
         ui.section('Your trades')
         st.warning('Your trades are unavailable right now. Please try again in a few minutes.')
