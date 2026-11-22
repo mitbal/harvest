@@ -654,7 +654,7 @@ def plot_candlestick(
     return chart
 
 
-def plot_pe_distribution(df, pe, axis_label=None):
+def plot_pe_distribution(df, pe, axis_label=None, height=300):
     valid = df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna() if 'pe' in df.columns else pd.Series()
     if valid.empty:
         return alt.Chart(pd.DataFrame({'x': [0], 'y': [0]})).mark_text(text="No valid historical multiple values available").properties(height=200)
@@ -680,7 +680,7 @@ def plot_pe_distribution(df, pe, axis_label=None):
     )
 
     if pd.isna(pe) or (isinstance(pe, float) and np.isnan(pe)):
-        return pes_dist
+        return pes_dist.properties(height=height)
 
     x_zero = kde.mark_rule().encode(
         x=alt.datum(pe),
@@ -689,10 +689,10 @@ def plot_pe_distribution(df, pe, axis_label=None):
         tooltip=alt.Tooltip(format='.2f', title='Current val')
     )
    
-    return pes_dist+x_zero
+    return (pes_dist + x_zero).properties(height=height)
 
 
-def plot_pe_timeseries(pe_df, axis_label=None):
+def plot_pe_timeseries(pe_df, axis_label=None, height=300):
 
     # Compute median & band reference lines
     valid = pe_df['pe'].replace([float('inf'), -float('inf')], float('nan')).dropna() if 'pe' in pe_df.columns else pd.Series()
@@ -724,7 +724,7 @@ def plot_pe_timeseries(pe_df, axis_label=None):
             alt.Tooltip('pe:Q', format='.2f', title=axis_label)
         )
     )
-    return (line + med_rule + p10_rule + p90_rule).properties(height=300)
+    return (line + med_rule + p10_rule + p90_rule).properties(height=height)
 
 
 def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
@@ -797,7 +797,7 @@ def plot_price_vs_fair_value(pe_df, ratio_label='P/E'):
     return (band + fair_line + price_line).resolve_scale(y='shared').properties(height=260)
 
 
-def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=0, inc_val=0, eps_df=None):
+def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=0, inc_val=0, eps_df=None, height=450):
 
     # aggregate to yearly basis for stock that paid interim during the year
     dividend_year_df = div_df.copy()
@@ -834,7 +834,7 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
         ),
         tooltip=['year', alt.Tooltip('adjDividend', format='.2f'), alt.Tooltip('status:N', title='Status')]
     ).properties(
-        height=450,
+        height=height,
         width=600
     )
 
@@ -857,7 +857,7 @@ def plot_dividend_history(div_df, extrapolote=False, n_future_years=0, last_val=
             opacity=alt.value(0.4), 
             color=ext_color
         ).properties(
-            height=450,
+            height=height,
             width=600
         )
 

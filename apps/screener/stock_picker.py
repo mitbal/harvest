@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import re
 import html
 import time
 import hashlib
@@ -110,6 +111,16 @@ _RESEARCH_SECTIONS = {
     'compounding': 'Compounding simulation',
 }
 _RESEARCH_SECTION_KEYS = {label: key for key, label in _RESEARCH_SECTIONS.items()}
+# One line under each section heading saying what question the section answers.
+_RESEARCH_SECTION_INTROS = {
+    'dividends': 'How much the company pays, how reliably, and how fast the payout has grown.',
+    'financials': 'Revenue, earnings and margins, and how they are trending.',
+    'multiples': "Today's P/E or P/S against the stock's own history, and the price that history implies.",
+    'intrinsic-value': 'What the dividend stream is worth under the Gordon growth model, using your assumptions.',
+    'price-technicals': 'Price levels, recent returns, moving averages and RSI.',
+    'buy-timing': 'Seasonal and ex-dividend price patterns from past years.',
+    'compounding': 'What a regular investment with dividends reinvested would have grown to.',
+}
 ### Start of Function definition
 
 
@@ -461,6 +472,62 @@ def add_anchor(name):
     st.markdown(f"<div id='{name}' style='scroll-margin-top:4rem'></div>", unsafe_allow_html=True)
 
 
+_T = ui.TOKENS
+# Scoped to the research section, so the rest of the screener page keeps its look. Cards keep the
+# page's canvas colour rather than white, because the charts and tables inside them draw on that
+# colour too; a rounded border and the type styles from harvest/page_ui.py define them instead.
+_RESEARCH_CARD_BORDER = '#cdd8d3'
+_RESEARCH_STYLES = f"""
+<style>
+.st-key-research-body [class*="st-key-research-card-"] {{
+  background: transparent; border: 1px solid {_RESEARCH_CARD_BORDER}; border-radius: 16px;
+  padding: 14px 18px;
+}}
+.st-key-research-body [class*="st-key-research-card-"] [data-testid="stMarkdownContainer"] strong {{
+  color: {_T['ink']}; font-weight: 800; letter-spacing: -.01em;
+}}
+.st-key-research-body [data-testid="stMetric"] {{
+  background: transparent; border: 1px solid {_RESEARCH_CARD_BORDER}; border-radius: 14px;
+  padding: 12px 16px; min-height: 106px;
+}}
+.st-key-research-body [data-testid="stMetricLabel"] p {{
+  font-size: 12.5px; font-weight: 700; color: {_T['muted']};
+}}
+.st-key-research-body [data-testid="stMetricValue"] {{
+  font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; color: {_T['ink']};
+}}
+.st-key-research-body [data-testid="stMetricDelta"] {{ font-size: 12.5px; font-weight: 700; }}
+@media (max-width: 640px) {{
+  .st-key-research-body [class*="st-key-research-card-"] {{ padding: 12px 14px; }}
+  .st-key-research-body [data-testid="stMetric"] {{ min-height: 0; }}
+}}
+</style>
+"""
+
+
+def _card(icon, title, caption=None):
+    """Rounded card with an icon and bold title, used to group a chart or a set of inputs.
+
+    The caption shares the title's line in small grey text, so a card costs one line of
+    height above its chart. Sections are kept short enough to screenshot in one screen.
+    The styling comes from _RESEARCH_STYLES through the card's key.
+    """
+    slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+    card = st.container(key=f'research-card-{slug}', gap='xsmall')
+    card.markdown(
+        f':primary[{icon}] **{title}**' + (f' &nbsp; :small[:gray[{caption}]]' if caption else '')
+    )
+    return card
+
+
+def _metric_grid(items, per_row=4):
+    """Metric tiles in rows of equal-width columns. Each item is a dict of st.metric kwargs."""
+    for start in range(0, len(items), per_row):
+        cols = st.columns(per_row)
+        for col, item in zip(cols, items[start:start + per_row]):
+            col.metric(**item)
+
+
 def _normalize_research_section(value):
     normalized = str(value or '').strip().lower().replace('_', '-').replace(' ', '-')
     aliases = {
@@ -782,56 +849,49 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
         cagr_5y = stats.get('cagr_5y')
         cagr_10y = stats.get('cagr_10y')
 
-        # ── Hero KPI row ────────────────────────────────────────────────────── #
-        # st.markdown('#### 💸 Dividend Performance Summary')
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
-        
+        # ── KPI cards ───────────────────────────────────────────────────────── #
         # US dividends are fractions of a dollar (e.g. 0.2625), so they need more decimals than IDR.
         div_decimals = 1 if currency == 'IDR' else 4
+        next_decimals = min(div_decimals, 2)
 
-        k1.metric('Est. Next Div', f"{next_div:,.{min(div_decimals, 2)}f}", 
-                  delta=f"{next_change:+.{min(div_decimals, 2)}f} YoY" if next_change != 0 else None,
-                  delta_color='normal')
-                  
-        k2.metric('Dividend Yield', f"{next_yield:.2f}%")
-        
-        pr_str = f"{payout_ratio:.1f}%" if payout_ratio is not None else "N/A"
         if payout_ratio is not None and avg_pr is not None:
-            # Lower payout ratio is generally safer/better, so inverse color
-            delta_pr = payout_ratio - avg_pr
-            k3.metric('Payout Ratio', pr_str, 
-                      delta=f"{delta_pr:+.1f}% vs Avg",
-                      delta_color='inverse')
+            # A lower payout ratio leaves more room to keep paying, so a rise shows red.
+            payout_delta = dict(delta=f'{payout_ratio - avg_pr:+.1f} pts vs average', delta_color='inverse')
+        elif avg_pr is not None:
+            payout_delta = dict(delta=f'Average {avg_pr:.1f}%', delta_color='off', delta_arrow='off')
         else:
-            avg_pr_str = f"Avg: {avg_pr:.1f}%" if avg_pr is not None else "N/A"
-            k3.metric('Payout Ratio', pr_str, delta=avg_pr_str, delta_color='off')
-            
-        k4.metric('Years Paid', f"{div_years:,}", 
-                  delta=f"{pos_years:,} Years Raised",
-                  delta_color='normal')
-                  
-        k5.metric('Consistency Rate', f"{consistency:.1f}%")
-        
-        cagr_str = f"{cagr_5y:.1f}%" if cagr_5y is not None else "N/A"
-        cagr_10y_str = f"10Y: {cagr_10y:.1f}%" if cagr_10y is not None else ""
-        k6.metric('5Y CAGR', cagr_str, 
-                  delta=cagr_10y_str,
-                  delta_color='off')
+            payout_delta = {}
 
-        # st.markdown('---')
+        _metric_grid([
+            dict(label='Next dividend (est.)', value=f'{next_div:,.{next_decimals}f}',
+                 delta=f'{next_change:+.{next_decimals}f} vs last' if next_change != 0 else None,
+                 help='Latest annual dividend plus its average yearly increase.'),
+            dict(label='Forward yield', value=f'{next_yield:.2f}%',
+                 help='Estimated next dividend divided by the current price.'),
+            dict(label='Payout ratio', value=f'{payout_ratio:.1f}%' if payout_ratio is not None else 'N/A',
+                 help='Share of earnings paid out as dividends, against its yearly average.',
+                 **payout_delta),
+            dict(label='Years paid', value=f'{div_years:,}',
+                 delta=f'{pos_years:,} raised or held', delta_color='off', delta_arrow='off'),
+            dict(label='Consistency', value=f'{consistency:.0f}%',
+                 help='Share of dividend years in which the payout was raised or held.'),
+            dict(label='Dividend CAGR (5y)', value=f'{cagr_5y:.1f}%' if cagr_5y is not None else 'N/A',
+                 delta=f'10y: {cagr_10y:.1f}%' if cagr_10y is not None else None,
+                 delta_color='off', delta_arrow='off'),
+        ], per_row=6)
 
-        # ── Chart & Table Layout ────────────────────────────────────────────── #
+        # ── Chart and payment log ───────────────────────────────────────────── #
         col_chart, col_table = st.columns([3, 1])
-        
-        with col_chart:
-            st.caption(
-                'Green = raised or held &nbsp;·&nbsp; Red = cut &nbsp;·&nbsp; '
-                f'Grey = {datetime.now().year} so far &nbsp;·&nbsp; Faded = 5-year projection'
-            )
-            yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_div, inc_val=inc_val)
+
+        with col_chart, _card(':material/bar_chart:',
+            'Dividend per share by year',
+            'Green = raised or held · Red = cut · '
+            f'Grey = {datetime.now().year} so far · Faded = 5-year projection',
+        ):
+            yearly_dividend_chart = hp.plot_dividend_history(sdf, extrapolote=True, n_future_years=5, last_val=last_div, inc_val=inc_val, height=370)
             st.altair_chart(yearly_dividend_chart, width='stretch', theme=None)
-            
-        with col_table:
+
+        with col_table, _card(':material/receipt_long:', 'Payment log', f'{len(sdf):,} ex-dates'):
             st.dataframe(
                 sdf[['date', 'adjDividend']],
                 column_config={
@@ -839,7 +899,7 @@ def render_dividend_history(sdf, stock_name, filtered_df, fin=None, n_share=None
                     'adjDividend': st.column_config.NumberColumn('Dividend', format=f'%,.{div_decimals}f'),
                 },
                 hide_index=True,
-                height=400,
+                height=395,
                 width='stretch',
             )
     else:
@@ -901,55 +961,48 @@ def render_financial_info(fin, currency, stock_name, filtered_df):
     avg_inc  = stock_data.get('netIncomeGrowth', 0)
     avg_mar  = stock_data.get('medianProfitMargin', 0)
 
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric('💰 Revenue (TTM)',    _fmt_currency(rev_ttm))
-    k2.metric('💵 Net Income (TTM)', _fmt_currency(inc_ttm),
-              delta=f'{inc_g:+.1f}% YoY',
-              delta_color='normal' if inc_g >= 0 else 'inverse')
-    k3.metric('📊 Net Margin (TTM)', f'{mar_ttm:.1f}%',
-              delta=f'{mar_ttm - avg_mar:+.1f}pp vs hist. median',
-              delta_color='normal' if mar_ttm >= avg_mar else 'inverse')
-    k4.metric('📈 Revenue Growth (TTM)', f'{rev_g:+.1f}%',
-              delta=f'{rev_g - avg_rev:+.1f}pp vs 5Y avg',
-              delta_color='normal' if rev_g >= avg_rev else 'inverse')
-    k5.metric('📉 Income Growth (TTM)', f'{inc_g:+.1f}%',
-              delta=f'{inc_g - avg_inc:+.1f}pp vs 5Y avg',
-              delta_color='normal' if inc_g >= avg_inc else 'inverse')
+    # Deltas use the default colouring: a rise is green and a fall is red.
+    _metric_grid([
+        dict(label='Revenue (TTM)', value=_fmt_currency(rev_ttm)),
+        dict(label='Net income (TTM)', value=_fmt_currency(inc_ttm),
+             delta=f'{inc_g:+.1f}% YoY'),
+        dict(label='Net margin (TTM)', value=f'{mar_ttm:.1f}%',
+             delta=f'{mar_ttm - avg_mar:+.1f} pts vs median',
+             help='Compared with the median historical net margin.'),
+        dict(label='Revenue growth (TTM)', value=f'{rev_g:+.1f}%',
+             delta=f'{rev_g - avg_rev:+.1f} pts vs 5y avg'),
+        dict(label='Income growth (TTM)', value=f'{inc_g:+.1f}%',
+             delta=f'{inc_g - avg_inc:+.1f} pts vs 5y avg'),
+    ], per_row=5)
 
-    # st.markdown('---')
-
-    # ── Period selector ─────────────────────────────────────────────────── #
-    ctrl_cols = st.columns([1, 2])
-    period = ctrl_cols[0].radio('Period', ['Annual', 'Quarterly'], horizontal=True,
-                                index=0, key=f"period_{stock_name}")
+    # ── Period and metric selectors ─────────────────────────────────────── #
+    controls = st.container(horizontal=True, gap='medium', vertical_alignment='bottom')
+    period = controls.segmented_control(
+        'Period', ['Annual', 'Quarterly'], required=True, default='Annual',
+        key=f'period_{stock_name}', label_visibility='collapsed',
+    )
 
     if period == 'Annual':
-        # ── Annual view ─────────────────────────────────────────────────── #
-        st.markdown('#### 📊 Annual Revenue & Net Income')
-        st.caption(
-            '**Blue** = Revenue (growth yr) &nbsp;·&nbsp; **Teal** = Net Income &nbsp;·&nbsp; '
-            '**Orange line** = Net Profit Margin %  '
-            '*(red bars = YoY decline)*'
-        )
-        fin_chart = hp.plot_fin_chart_enhanced(fin, currency=currency, height=350)
-        st.altair_chart(fin_chart, width='stretch', theme=None)
-
-
+        with _card(
+            ':material/monitoring:', 'Annual revenue and net income',
+            'Blue = revenue · Teal = net income · Orange line = net margin · Red bars = decline from the prior year',
+        ):
+            fin_chart = hp.plot_fin_chart_enhanced(fin, currency=currency, height=350)
+            st.altair_chart(fin_chart, width='stretch', theme=None)
     else:
-        # ── Quarterly view ──────────────────────────────────────────────── #
-        metric_choice = ctrl_cols[1].radio(
-            'Metric', ['Revenue', 'Net Income'], horizontal=True,
-            key=f"qmetric_{stock_name}"
+        metric_choice = controls.segmented_control(
+            'Metric', ['Revenue', 'Net Income'], required=True, default='Revenue',
+            format_func=lambda m: m.capitalize(),
+            key=f'qmetric_{stock_name}', label_visibility='collapsed',
         )
         metric_col = 'revenue' if metric_choice == 'Revenue' else 'netIncome'
 
-        st.markdown(f'#### 📊 Quarterly {metric_choice}')
-        st.caption('**Bars** coloured by quarter.')
-        q_chart = hp.plot_quarterly_breakdown(fin, metric=metric_col, currency=currency, height=300)
-        st.altair_chart(q_chart, width='stretch', theme=None)
+        with _card(':material/calendar_view_month:', f'Quarterly {metric_choice.lower()}', 'Bars are coloured by quarter.'):
+            q_chart = hp.plot_quarterly_breakdown(fin, metric=metric_col, currency=currency, height=350)
+            st.altair_chart(q_chart, width='stretch', theme=None)
 
 
-def render_price_movement(price_df, stock_name='', stock_row=None):
+def render_price_movement(price_df, stock_name='', stock_row=None, currency=None):
     """
     Enhanced Price Movement section with:
       - Hero KPI row (price, 52W H/L, drawdown, returns)
@@ -980,49 +1033,47 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
     ret_1m  = float(stock_row['return_1m'])  if stock_row is not None and 'return_1m'  in stock_row.index else None
     ret_1y  = float(stock_row['return_1y'])  if stock_row is not None and 'return_1y'  in stock_row.index else None
 
-    # ── Hero KPI row ───────────────────────────────────────────────────── #
-    kpi_cols = st.columns(7)
-    kpi_cols[0].metric('💹 Current Price',    f'{current_price:,.2f}')
-    kpi_cols[1].metric('🔺 52W High',         f'{high_52w:,.2f}',
-                       delta=f'{(current_price/high_52w-1)*100:+.1f}%',
-                       delta_color='normal')
-    kpi_cols[2].metric('🔻 52W Low',          f'{low_52w:,.2f}',
-                       delta=f'{(current_price/low_52w-1)*100:+.1f}%',
-                       delta_color='normal')
-    kpi_cols[3].metric('📉 Drawdown from ATH', f'{drawdown_ath:.1f}%',
-                       delta=f'ATH {ath:,.2f}',
-                       delta_color='off')
-    if ret_7d is not None:
-        kpi_cols[4].metric('7D Return',  f'{ret_7d:+.2f}%',
-                           delta_color='normal' if ret_7d >= 0 else 'inverse')
-    if ret_1m is not None:
-        kpi_cols[5].metric('1M Return',  f'{ret_1m:+.2f}%',
-                           delta_color='normal' if ret_1m >= 0 else 'inverse')
-    if ret_1y is not None:
-        kpi_cols[6].metric('1Y Return',  f'{ret_1y:+.2f}%',
-                           delta_color='normal' if ret_1y >= 0 else 'inverse')
+    def _px(value):
+        return _format_price(value, currency) if currency else f'{value:,.2f}'
 
-    st.markdown('---')
+    # ── KPI cards: price levels, then drawdown and returns ─────────────── #
+    # The header card already shows the price, so the row starts at the 52-week range.
+    kpis = [
+        dict(label='52-week high', value=_px(high_52w),
+             delta=f'{(current_price / high_52w - 1) * 100:+.1f}% vs high'),
+        dict(label='52-week low', value=_px(low_52w),
+             delta=f'{(current_price / low_52w - 1) * 100:+.1f}% vs low'),
+        dict(label='Drawdown from ATH', value=f'{drawdown_ath:.1f}%',
+             delta=f'ATH {_px(ath)}', delta_color='off', delta_arrow='off',
+             help='How far the last close is below the all-time high.'),
+    ]
+    for label, ret in [('7-day return', ret_7d), ('1-month return', ret_1m), ('1-year return', ret_1y)]:
+        if ret is not None and np.isfinite(ret):
+            kpis.append(dict(label=label, value=f'{ret:+.2f}%'))
+    _metric_grid(kpis, per_row=6)
 
-    # ── Controls row ───────────────────────────────────────────────────── #
-    ctrl_cols = st.columns([2, 3, 1])
+    # ── Chart controls ─────────────────────────────────────────────────── #
+    controls = st.container(horizontal=True, gap='medium', vertical_alignment='bottom')
 
-    time_range = ctrl_cols[0].segmented_control(
-        'Time Range',
+    time_range = controls.segmented_control(
+        'Time range',
         required=True,
         options=['3M', '6M', '1Y', '3Y', 'All'],
         default='1Y',
         key=f'pm_range_{stock_name}',
+        label_visibility='collapsed',
     )
 
-    ma_options = ctrl_cols[1].multiselect(
-        'Moving Averages',
+    ma_options = controls.pills(
+        'Moving averages',
         options=['MA20', 'MA50', 'MA200'],
+        selection_mode='multi',
         default=['MA50', 'MA200'],
         key=f'pm_ma_{stock_name}',
+        label_visibility='collapsed',
     )
 
-    show_rsi = ctrl_cols[2].toggle('Show RSI', value=True, key=f'pm_rsi_{stock_name}')
+    show_rsi = controls.toggle('Show RSI', value=True, key=f'pm_rsi_{stock_name}')
 
     # ── Set the initial volume-navigator selection ─────────────────────── #
     range_map = {'3M': 90, '6M': 180, '1Y': 365, '3Y': 365 * 3}
@@ -1032,7 +1083,7 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
 
     chart_kwargs = {
         'width': 900,
-        'height': 320,
+        'height': 220,
         'ma_windows': ma_windows if ma_windows else None,
         'show_rsi': show_rsi,
     }
@@ -1040,15 +1091,14 @@ def render_price_movement(price_df, stock_name='', stock_row=None):
     if 'initial_range_days' in inspect.signature(hp.plot_candlestick).parameters:
         chart_kwargs['initial_range_days'] = initial_range_days
     candlestick_chart = hp.plot_candlestick(df, **chart_kwargs)
-    st.altair_chart(candlestick_chart, width='stretch', theme=None)
 
-    # ── MA legend caption ──────────────────────────────────────────────── #
-    if ma_windows:
-        legend_parts = []
-        colours = {20: '🟡 MA20', 50: '🔵 MA50', 200: '🟣 MA200'}
-        for w in sorted(ma_windows):
-            legend_parts.append(colours.get(w, f'MA{w}'))
-        st.caption('  ·  '.join(legend_parts) + '  |  RSI overbought > 70 (🔴) · oversold < 30 (🟢)')
+    # The coloured dots in the legend match the line colours in the chart.
+    colours = {20: '🟡 MA20', 50: '🔵 MA50', 200: '🟣 MA200'}
+    legend_parts = [colours.get(w, f'MA{w}') for w in sorted(ma_windows)]
+    if show_rsi:
+        legend_parts.append('RSI overbought > 70 (🔴) · oversold < 30 (🟢)')
+    with _card(':material/candlestick_chart:', 'Daily price', ' · '.join(legend_parts) or None):
+        st.altair_chart(candlestick_chart, width='stretch', theme=None)
 
 
 @st.cache_data(max_entries=64, ttl=6 * 60 * 60, show_spinner=False)
@@ -1075,9 +1125,13 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
         )
         return
 
-    cols = st.columns(2, gap='large')
-    year = cols[0].slider('Select Number of Year', min_value=1, max_value=15, key=f"val_year_{stock_name}")
-    val_metric = cols[1].radio('Valuation Metric', ['Price-to-Earnings (P/E) Ratio', 'Price-to-Sales (P/S) Ratio'], index=0, horizontal=True, key=f"val_metric_{stock_name}")
+    cols = st.columns([1, 2], gap='large', vertical_alignment='bottom')
+    val_metric = cols[0].segmented_control(
+        'Multiple', ['P/E', 'P/S'], required=True, default='P/E',
+        format_func={'P/E': 'Price to earnings', 'P/S': 'Price to sales'}.get,
+        key=f'val_ratio_{stock_name}',
+    )
+    year = cols[1].slider('Lookback (years)', min_value=1, max_value=15, key=f"val_year_{stock_name}")
 
     start_date = datetime.now() - timedelta(days=365*year)
     last_year_df = price_df[price_df['date']>= str(start_date)]
@@ -1086,7 +1140,7 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
 
     valuation_version = _dataframe_version(last_year_df, fin)
 
-    if val_metric == 'Price-to-Earnings (P/E) Ratio':
+    if val_metric == 'P/E':
         ratio = 'P/E'
         pe_df = cached_calc_ratio_history(
             stock_name, year, valuation_version, last_year_df, fin,
@@ -1139,55 +1193,51 @@ def render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_d
     upside_pct     = (fair_price / current_price - 1) * 100
     fair_threshold = valid_pe.quantile([.45, .55]).values
     if pe_ttm >= fair_threshold[0] and pe_ttm <= fair_threshold[1]:
-        assessment = 'Fairly valued relative to its history'
+        assessment, badge_color, badge_icon = 'Fairly valued against its history', 'blue', ':material/balance:'
     elif pe_ttm < fair_threshold[0]:
-        assessment = 'Below its historical valuation range'
+        assessment, badge_color, badge_icon = 'Below its historical range', 'green', ':material/trending_down:'
     else:
-        assessment = 'Above its historical valuation range'
+        assessment, badge_color, badge_icon = 'Above its historical range', 'orange', ':material/trending_up:'
 
-    # ── Hero KPI row ─────────────────────────────────────────────────────── #
-    st.markdown(f"### Valuation assessment: {assessment}")
-    st.caption(
-        f'Based on {len(valid_pe):,} positive {ratio} observations over the selected {year}-year period. '
-        'This historical comparison is not an investment recommendation.'
+    # ── Assessment and KPI cards ─────────────────────────────────────────── #
+    st.markdown(
+        f':{badge_color}-badge[{badge_icon} {assessment}] &nbsp; '
+        f':small[:gray[Based on {len(valid_pe):,} positive {ratio} observations over the last {year} year(s). '
+        'A historical comparison, not an investment recommendation.]]'
     )
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric(f'Current {ratio}', f'{pe_ttm:,.2f}',
-              delta=f'{pe_ttm - median_pe:+.2f} vs median',
-              delta_color='inverse')
-    k2.metric(f'Hist. Median {ratio} ({year}y)', f'{median_pe:,.2f}')
-    k3.metric('Percentile Rank', f'{percentile:.0f}th',
-              help=(
-                  f'The current {ratio} is at the {percentile:.0f}th percentile — '
-                  f'cheaper than {100 - percentile:.0f}% of all historical trading days '
-                  f'in the last {year} year(s). Lower = historically cheap.'
-              ))
-    k4.metric('Fair Value (median)', _format_price(fair_price, target_currency),
-              delta=f'{upside_pct:+.1f}% vs current',
-              delta_color='normal')
-    # Two prices do not fit a fifth-width metric, so the upper bound goes on the sub-line.
-    k5.metric('Fair Value Range (p10–p90)', _format_price(fair_price_p10, target_currency),
-              delta=f'to {_format_price(fair_price_p90, target_currency)}',
-              delta_color='off', delta_arrow='off',
-              help=f'Implied price range based on historical 10th–90th percentile {ratio}.')
-    # st.markdown('---')
+    _metric_grid([
+        # A multiple above its median is more expensive, so a rise shows red.
+        dict(label=f'Current {ratio}', value=f'{pe_ttm:,.2f}',
+             delta=f'{pe_ttm - median_pe:+.2f} vs median', delta_color='inverse'),
+        dict(label=f'Median {ratio} ({year}y)', value=f'{median_pe:,.2f}'),
+        dict(label='Percentile', value=f'{percentile:.0f}th',
+             help=(
+                 f'The current {ratio} is higher than on {percentile:.0f}% of trading days '
+                 f'in the last {year} year(s). Lower means historically cheaper.'
+             )),
+        dict(label='Fair value (median)', value=_format_price(fair_price, target_currency),
+             delta=f'{upside_pct:+.1f}% vs price'),
+        # Two prices do not fit a fifth-width metric, so the upper bound goes on the sub-line.
+        dict(label='Fair value range', value=_format_price(fair_price_p10, target_currency),
+             delta=f'to {_format_price(fair_price_p90, target_currency)}',
+             delta_color='off', delta_arrow='off',
+             help=f'Implied price range from the 10th to 90th percentile {ratio}.'),
+    ], per_row=5)
 
-    # ── Row 1: Price vs Fair Value chart (wide) + Distribution ──────────── #
-    chart_cols = st.columns([3, 2], gap='large')
-    with chart_cols[0]:
-        st.markdown(f"#### 📉 {ratio} Over Time")
-        st.caption(
-            f"**Orange** = median &nbsp;·&nbsp; **Green dashed** = p10 (cheap) &nbsp;·&nbsp; "
-            f"**Red dashed** = p90 (expensive). "
-            f"When the line is near or below the green dashed line, the stock is attractively priced."
-        )
-        pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio)
+    # ── Multiple over time and its distribution ─────────────────────────── #
+    chart_cols = st.columns([3, 2])
+    with chart_cols[0], _card(':material/show_chart:',
+        f'{ratio} over time',
+        'Orange = median · Green dashed = 10th percentile (cheap) · Red dashed = 90th percentile (expensive)',
+    ):
+        pe_ts_chart = hp.plot_pe_timeseries(pe_df, axis_label=ratio, height=240)
         st.altair_chart(pe_ts_chart, width='stretch', theme=None)
 
-    with chart_cols[1]:
-        st.markdown(f"#### 📊 {ratio} Distribution")
-        st.caption(f"**Red line** = current {ratio}. Left tail = historically cheap zone.")
-        pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio)
+    with chart_cols[1], _card(':material/area_chart:',
+        f'{ratio} distribution',
+        f'Red line = current {ratio}. The left tail is the historically cheap zone.',
+    ):
+        pe_dist_chart = hp.plot_pe_distribution(pe_df, pe_ttm, axis_label=ratio, height=240)
         st.altair_chart(pe_dist_chart, width='stretch', theme=None)
 
 
@@ -1255,87 +1305,91 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
     market = 'JKSE' if stock_name.endswith('.JK') else 'S&P500'
     defaults = default_ddm_inputs(market, raw_beta, cagr_5y)
 
-    # Cost of Equity calculation using CAPM
-    st.write("#### Cost of Equity (CAPM)")
-    capm_cols = st.columns(3)
-    rf_pct = capm_cols[0].number_input('Risk-Free Rate (%)', value=defaults['rf'], step=0.1, key=f"ddm_rf_{stock_name}", help="Yield of 10-year government bond")
-    erp_pct = capm_cols[1].number_input(
-        'Equity Risk Premium (%)', value=defaults['erp'], step=0.1, key=f"ddm_erp_{stock_name}",
-        help='Extra return expected from stocks over the risk-free rate'
-             + (', including a country risk premium for Indonesia.' if market == 'JKSE' else '.'),
-    )
-    raw_beta_text = f'{raw_beta:.2f}' if np.isfinite(raw_beta) else 'unavailable, so 1.0 is used'
-    beta_val = capm_cols[2].number_input(
-        'Beta (adjusted)', value=round(defaults['beta'], 2), step=0.01, key=f"ddm_beta_{stock_name}",
-        help=f'Stock volatility relative to the market. Defaults to the Blume-adjusted beta '
-             f'(0.67 × raw beta + 0.33); raw beta is {raw_beta_text}.',
-    )
-
-    capm_ke = rf_pct + (beta_val * erp_pct)
-    st.info(f"**Calculated Cost of Equity ($K_e$)**: {rf_pct}% + ({beta_val:.2f} × {erp_pct}%) = **{capm_ke:.2f}%**")
+    # ── Assumptions: CAPM cost of equity, then the model inputs ─────────── #
+    input_cols = st.columns([3, 2])
+    with input_cols[0], _card(':material/percent:', 'Cost of equity (CAPM)'):
+        capm_cols = st.columns(3)
+        rf_pct = capm_cols[0].number_input('Risk-free rate (%)', value=defaults['rf'], step=0.1, key=f"ddm_rf_{stock_name}", help="Yield of the 10-year government bond.")
+        erp_pct = capm_cols[1].number_input(
+            'Equity risk premium (%)', value=defaults['erp'], step=0.1, key=f"ddm_erp_{stock_name}",
+            help='Extra return expected from stocks over the risk-free rate'
+                 + (', including a country risk premium for Indonesia.' if market == 'JKSE' else '.'),
+        )
+        raw_beta_text = f'{raw_beta:.2f}' if np.isfinite(raw_beta) else 'unavailable, so 1.0 is used'
+        beta_val = capm_cols[2].number_input(
+            'Beta (adjusted)', value=round(defaults['beta'], 2), step=0.01, key=f"ddm_beta_{stock_name}",
+            help=f'Stock volatility relative to the market. Defaults to the Blume-adjusted beta '
+                 f'(0.67 × raw beta + 0.33); raw beta is {raw_beta_text}.',
+        )
+        capm_ke = rf_pct + (beta_val * erp_pct)
+        st.caption(f'$K_e$ = {rf_pct:g}% + {beta_val:.2f} × {erp_pct:g}% = **{capm_ke:.2f}%**')
 
     cagr_text = f'{cagr_5y:.1f}%' if cagr_5y is not None and np.isfinite(cagr_5y) else 'unavailable'
-    cols = st.columns(2)
-    # Keyed on Ke so edits to the CAPM inputs above flow into the required return.
-    r_pct = cols[0].number_input(label='Required Rate of Return (Cost of Equity) %', value=round(float(capm_ke), 2), min_value=1.0, max_value=50.0, step=0.5, key=f"ddm_r_{stock_name}_{capm_ke:.2f}")
-    g_pct = cols[1].number_input(
-        label='Terminal Dividend Growth Rate %', value=round(defaults['growth'], 2),
-        min_value=0.0, max_value=20.0, step=0.5, key=f"ddm_g_{stock_name}",
-        help=f'Perpetual growth rate. Defaults to the 5-year dividend CAGR ({cagr_text}), capped at '
-             f"{defaults['growth_cap']:.1f}% and kept at least {DDM_MIN_SPREAD:.0f} points below "
-             'the cost of equity.',
-    )
-    
+    with input_cols[1], _card(':material/tune:', 'Model inputs'):
+        cols = st.columns(2)
+        # Keyed on Ke so edits to the CAPM inputs flow into the required return.
+        r_pct = cols[0].number_input(
+            label='Required return (%)', value=round(float(capm_ke), 2), min_value=1.0, max_value=50.0, step=0.5,
+            key=f"ddm_r_{stock_name}_{capm_ke:.2f}",
+            help='Discount rate for future dividends. Defaults to the CAPM cost of equity.',
+        )
+        g_pct = cols[1].number_input(
+            label='Terminal growth (%)', value=round(defaults['growth'], 2),
+            min_value=0.0, max_value=20.0, step=0.5, key=f"ddm_g_{stock_name}",
+            help=f'Perpetual growth rate. Defaults to the 5-year dividend CAGR ({cagr_text}), capped at '
+                 f"{defaults['growth_cap']:.1f}% and kept at least {DDM_MIN_SPREAD:.0f} points below "
+                 'the cost of equity.',
+        )
+
     if g_pct >= r_pct:
-        st.error('Gordon Growth Model requires the Growth Rate to be strictly less than the Required Rate of Return.')
+        st.error('The Gordon growth model needs terminal growth to be below the required return.',
+                 icon=':material/error:')
         return
-        
+
     next_div = last_div * (1 + g_pct / 100)
     intrinsic_value = gordon_value(last_div, r_pct, g_pct)
-    
+
     if current_price > 0:
         margin_of_safety = (intrinsic_value - current_price) / current_price
     else:
         margin_of_safety = 0
-        
+
     diff = intrinsic_value / current_price if current_price > 0 else 1
-    
+
     if intrinsic_value > current_price * 1.05:
-        assessment = f'**:green[Undervalued]**. Margin of Safety: **:green[{margin_of_safety*100:.2f}%]**'
-        highlight_color = 'green'
+        assessment, badge_color, badge_icon = 'Undervalued', 'green', ':material/trending_down:'
     elif intrinsic_value < current_price * 0.95:
-        assessment = f'**:red[Overvalued]**. Premium: **:red[{abs(margin_of_safety)*100:.2f}%]**'
-        highlight_color = 'red'
+        assessment, badge_color, badge_icon = 'Overvalued', 'red', ':material/trending_up:'
     else:
-        assessment = '**Fair Valued**'
-        highlight_color = 'green'
-        
+        assessment, badge_color, badge_icon = 'Fairly valued', 'blue', ':material/balance:'
+
     price_currency = 'IDR' if stock_name.endswith('.JK') else 'USD'
     value_format = ',.0f' if price_currency == 'IDR' else ',.2f'
     range_low, range_high = ddm_value_range(last_div, r_pct, g_pct)
     range_high_text = _format_price(range_high, price_currency) if range_high is not None else 'no upper bound'
 
-    markdown_table = f"""
-    | Metric | Value |
-    | ------ | ----- |
-    | Current Price | **:{highlight_color}[{_format_price(current_price, price_currency)}]** |
-    | Next Expected Dividend (D1) | {next_div:,.2f} |
-    | Intrinsic Value (DDM) | {_format_price(intrinsic_value, price_currency)} |
-    | Range (r and g ±{DDM_RANGE_STEP:.0f} pt) | {_format_price(range_low, price_currency)} – {range_high_text} |
-    """
-    
-    res_cols = st.columns([2, 3, 3])
-    with res_cols[0]:
-        st.markdown(markdown_table)
-        st.caption(
-            f'Low: cost of equity {r_pct + DDM_RANGE_STEP:.2f}%, growth {max(0.0, g_pct - DDM_RANGE_STEP):.2f}%. '
-            f'High: cost of equity {max(1.0, r_pct - DDM_RANGE_STEP):.2f}%, growth {g_pct + DDM_RANGE_STEP:.2f}%.'
-            + ('' if range_high is not None else ' The high case has growth at or above the cost of equity, where the model has no finite value.')
-        )
-        st.write(f'Assessment: {assessment}')
+    # ── Result ─────────────────────────────────────────────────────────── #
+    st.markdown(f':{badge_color}-badge[{badge_icon} {assessment}]')
+    _metric_grid([
+        dict(label='Intrinsic value', value=_format_price(intrinsic_value, price_currency),
+             delta=f'{margin_of_safety * 100:+.1f}% vs price',
+             help='Positive means the model value is above the current price (a margin of safety).'),
+        dict(label='Current price', value=_format_price(current_price, price_currency)),
+        dict(label='Value range', value=_format_price(range_low, price_currency),
+             delta=f'to {range_high_text}', delta_color='off', delta_arrow='off',
+             help=(
+                 f'Low case: required return {r_pct + DDM_RANGE_STEP:.2f}%, growth {max(0.0, g_pct - DDM_RANGE_STEP):.2f}%. '
+                 f'High case: required return {max(1.0, r_pct - DDM_RANGE_STEP):.2f}%, growth {g_pct + DDM_RANGE_STEP:.2f}%.'
+                 + ('' if range_high is not None else
+                    ' The high case has growth at or above the required return, where the model has no finite value.')
+             )),
+        dict(label='Next dividend (D1)', value=f'{next_div:,.2f}',
+             help='Latest annual dividend grown by one year of terminal growth.'),
+    ], per_row=4)
 
-    with res_cols[1]:
-        st_echarts(hp.plot_ddm_gauge(diff), height="210px", key=f"ddm_gauge_{stock_name}")
+    res_cols = st.columns([2, 3])
+    with res_cols[0], _card(':material/speed:', 'Value against price'):
+        st_echarts(hp.plot_ddm_gauge(diff), height="190px", key=f"ddm_gauge_{stock_name}")
 
     # Sensitivity heatmap generation
     data = []
@@ -1380,12 +1434,12 @@ def render_ddm_valuation(sdf, stock_name, filtered_df, fin=None, cp_df=None, pri
             color=alt.Color('label_color:N', scale=None),
         )
 
-        chart = (heatmap + text).properties(
-            title='Sensitivity: Intrinsic Value',
-            height=250
-        )
+        chart = (heatmap + text).properties(height=190)
 
-        with res_cols[2]:
+        with res_cols[1], _card(':material/grid_on:',
+            'Sensitivity of intrinsic value',
+            'Green cells are above the current price, red cells below it.',
+        ):
             st.altair_chart(chart, width='stretch', theme=None)
 
 
@@ -1421,9 +1475,10 @@ def render_best_buy_timing(price_df, sdf, stock_name):
     # ------------------------------------------------------------------ #
     # Chart 1 — Monthly Seasonality                                        #
     # ------------------------------------------------------------------ #
-    with chart_cols[0]:
-        st.markdown('#### 📅 Monthly Price Seasonality')
-        st.caption('Relative price vs. annual average (< 100 = cheaper than average)')
+    with chart_cols[0], _card(':material/calendar_month:',
+        'Monthly price seasonality',
+        'Price relative to the annual average. Below 100 means cheaper than average.',
+    ):
 
         if seasonality_df is not None:
             month_order = list(_cal.month_abbr[1:])
@@ -1436,7 +1491,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             # IQR band
             band = base.mark_area(opacity=0.18, color=cs.CHART_PRIMARY).encode(
                 x=alt.X('month_name:O', sort=month_order, title='Month'),
-                y=alt.Y('q25:Q', title='Relative Price (%)'),
+                y=alt.Y('q25:Q', title='Relative price (%)'),
                 y2=alt.Y2('q75:Q'),
             )
 
@@ -1468,23 +1523,25 @@ def render_best_buy_timing(price_df, sdf, stock_name):
                 y2=alt.Y2('q75:Q'),
             )
 
-            chart = (band + best_bar + line + ref).properties(height=280)
+            chart = (band + best_bar + line + ref).properties(height=230)
             st.altair_chart(chart, width='stretch', theme=None)
 
             years_observed = pd.to_datetime(price_df['date'], errors='coerce').dt.year.nunique()
             st.info(
-                f'**Historically lowest-priced month:** {best_month} — average {best_val:.1f}% '
-                f'of the annual price across {years_observed} years. Seasonality may not persist.'
+                f'**Historically cheapest month: {best_month}**, at {best_val:.1f}% '
+                f'of the annual average across {years_observed} years. Seasonality may not persist.',
+                icon=':material/calendar_month:',
             )
         else:
-            st.info('Insufficient price history for monthly seasonality (need ≥ 2 years).')
+            st.caption('Not enough price history for monthly seasonality (needs at least 2 years).')
 
     # ------------------------------------------------------------------ #
     # Chart 2 — Pre-Ex-Date Trajectory                                     #
     # ------------------------------------------------------------------ #
-    with chart_cols[1]:
-        st.markdown('#### 📉 Price Trajectory Around Ex-Dividend Date')
-        st.caption('Normalised to ex-date = 100. Values < 100 before day 0 indicate a pre-ex dip.')
+    with chart_cols[1], _card(':material/event:',
+        'Price around the ex-dividend date',
+        'Normalised to the ex-date price = 100. Below 100 before day 0 means a dip ahead of the ex-date.',
+    ):
 
         if pre_ex_df is not None and not pre_ex_df.empty:
             # Clip to only days with meaningful coverage (avoid sparse edges)
@@ -1495,8 +1552,8 @@ def render_best_buy_timing(price_df, sdf, stock_name):
             base = alt.Chart(pre_ex_plot)
 
             band = base.mark_area(opacity=0.18, color=cs.CHART_BLUE).encode(
-                x=alt.X('days_to_ex:Q', title='Days to Ex-Date'),
-                y=alt.Y('q25:Q', title='Relative Price (ex-date = 100)'),
+                x=alt.X('days_to_ex:Q', title='Days to ex-date'),
+                y=alt.Y('q25:Q', title='Relative price (ex-date = 100)'),
                 y2=alt.Y2('q75:Q'),
             )
 
@@ -1504,7 +1561,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
                 x=alt.X('days_to_ex:Q'),
                 y=alt.Y('mean:Q', scale=alt.Scale(zero=False)),
                 tooltip=[
-                    alt.Tooltip('days_to_ex:Q', title='Days to Ex-Date'),
+                    alt.Tooltip('days_to_ex:Q', title='Days to ex-date'),
                     alt.Tooltip('mean:Q', title='Avg Relative Price', format='.2f'),
                     alt.Tooltip('median:Q', title='Median', format='.2f'),
                 ]
@@ -1523,7 +1580,7 @@ def render_best_buy_timing(price_df, sdf, stock_name):
                 color=cs.CHART_NEUTRAL, strokeDash=[6, 4], strokeWidth=1
             ).encode(y='y:Q')
 
-            chart = (band + line + ref + ex_rule + ex_label).properties(height=280)
+            chart = (band + line + ref + ex_rule + ex_label).properties(height=230)
             st.altair_chart(chart, width='stretch', theme=None)
 
             # Find the best dip point
@@ -1533,17 +1590,18 @@ def render_best_buy_timing(price_df, sdf, stock_name):
                 dip_day = int(best_dip['days_to_ex'])
                 dip_val = best_dip['mean']
                 msg = (
-                    f'**Lowest observed pre-ex point:** about **{abs(dip_day)} days before** ex-date '
-                    f'(average {100 - dip_val:.1f}% below the ex-date price)'
+                    f'**Lowest point before the ex-date: about {abs(dip_day)} days before**, '
+                    f'on average {100 - dip_val:.1f}% below the ex-date price'
                 )
                 if ex_drop_stats:
                     msg += (
                         f". Median ex-date move: **{ex_drop_stats['median']:.1f}%** "
                         f"across {ex_drop_stats['count']} events."
                     )
-                st.info(msg + ' Historical patterns are descriptive, not a recommendation.')
+                st.info(msg + ' Historical patterns are descriptive, not a recommendation.',
+                        icon=':material/event:')
         else:
-            st.info('No dividend history available to compute ex-date trajectory.')
+            st.caption('No dividend history to compute the price path around ex-dates.')
 
 
 def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currency='IDR'):
@@ -1601,21 +1659,21 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
 
     cols = st.columns(4)
     start_year = cols[0].number_input(
-        label='Start Year', 
+        label='Start year', 
         value=max(2011, min_start_year), 
         min_value=min_start_year, 
         max_value=max_start_year, 
         key=f"sim_start_{stock_name}"
     )
     end_year = cols[1].number_input(
-        label='End Year', 
+        label='End year', 
         value=min(this_year-1, price_max_year), 
         min_value=start_year+1, 
         max_value=price_max_year, 
         key=f"sim_end_{stock_name}"
     )
-    initial_value = cols[2].number_input(label=f'Initial investment ({unit_label})', value=init_default, min_value=1, max_value=init_max, key=f"sim_init_{stock_name}")
-    monthly_topup = cols[3].number_input(label=f'Monthly Top-up ({unit_label})', value=topup_default, min_value=0, max_value=topup_max, key=f"sim_monthly_{stock_name}")
+    initial_value = cols[2].number_input(label=f'Initial investment ({curr_symbol} {unit_label})', value=init_default, min_value=1, max_value=init_max, key=f"sim_init_{stock_name}")
+    monthly_topup = cols[3].number_input(label=f'Monthly top-up ({curr_symbol} {unit_label})', value=topup_default, min_value=0, max_value=topup_max, key=f"sim_monthly_{stock_name}")
 
     porto, activities = hd.simulate_dividend_compounding(
         stock_name, price_df, sdf,
@@ -1683,33 +1741,30 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
     def _fmt(val):
         return f'{curr_symbol} {val/unit_divisor:,.1f}{unit_suffix}'
 
-    # st.markdown('---')
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric('💰 Total Invested',          _fmt(total_invested), help='Total out-of-pocket cash invested (Initial + Monthly Top-ups)')
-    delta_color = 'normal' if final_mkt_value >= total_invested else 'inverse'
-    k2.metric('📈 Portfolio Value',          _fmt(final_mkt_value),
-              delta=f'{total_return_pct:+.1f}%', delta_color=delta_color)
-    k3.metric('🎁 Total Dividends Received', _fmt(total_dividends))
-    k4.metric('📊 Yield on Cost',            f'{yoc:.1f}%')
-    k5.metric('🎯 Bonus Lots from Dividends', f'~{div_lots_approx:,} lots',
-              help='Approximate lots purchased using reinvested dividends')
-    # st.markdown('---')
+    pct_from_div = div_lots_approx / final_lots * 100 if final_lots > 0 else 0
 
-    if div_lots_approx > 0:
-        pct_from_div = div_lots_approx / final_lots * 100 if final_lots > 0 else 0
-        st.success(
-            f"🚀 **The Power of Compounding:** Over {n_years} years, reinvesting dividends bought you "
-            f"approximately **{div_lots_approx:,} bonus lots** (~{pct_from_div:.0f}% of your total "
-            f"{final_lots:,} lots), contributing **{_fmt(total_dividends)}** to your portfolio "
-            f"— *without any extra money from your pocket!*"
-        )
+    _metric_grid([
+        dict(label='Total invested', value=_fmt(total_invested),
+             help='Out-of-pocket cash: the initial investment plus monthly top-ups.'),
+        dict(label='Portfolio value', value=_fmt(final_mkt_value),
+             delta=f'{total_return_pct:+.1f}% total return'),
+        dict(label='Dividends received', value=_fmt(total_dividends)),
+        dict(label='Yield on cost', value=f'{yoc:.1f}%',
+             help='Dividends received in the final year divided by the total invested.'),
+        dict(label='Lots bought with dividends', value=f'~{div_lots_approx:,}',
+             delta=f'{pct_from_div:.0f}% of {final_lots:,} lots' if div_lots_approx > 0 else None,
+             delta_color='off', delta_arrow='off',
+             help=f'Approximate lots bought over {n_years} years by reinvesting dividends, '
+                  'with no extra cash from your pocket.'),
+    ], per_row=5)
 
     chart_col1, chart_col2 = st.columns([3, 2])
 
     # ── Chart 1: Stacked area — cost basis vs gains ─────────────────────── #
-    with chart_col1:
-        st.markdown('#### 📈 Portfolio Growth Over Time')
-        st.caption('Grey dashed = out-of-pocket investment. Blue dashed = total cost (incl. reinvested dividends). Green = portfolio market value.')
+    with chart_col1, _card(':material/trending_up:',
+        'Portfolio growth',
+        'Green = market value · Blue dashed = total cost including reinvested dividends · Grey dashed = out-of-pocket cash',
+    ):
 
         topup_area = alt.Chart(porto_df).mark_area(
             opacity=0.16, color=cs.CHART_NEUTRAL, interpolate='monotone'
@@ -1754,12 +1809,13 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
             x=alt.X('date:T'),
             y=alt.Y('cum_topup:Q'),
         )
-        st.altair_chart((topup_area + cost_area + mkt_area + mkt_line + cost_line + topup_line).properties(height=300), width='stretch', theme=None)
+        st.altair_chart((topup_area + cost_area + mkt_area + mkt_line + cost_line + topup_line).properties(height=240), width='stretch', theme=None)
 
     # ── Chart 2: Annual dividend income snowball ─────────────────────────── #
-    with chart_col2:
-        st.markdown('#### 🎁 Annual Dividend Income')
-        st.caption('Growing each year as you accumulate more shares — the snowball effect!')
+    with chart_col2, _card(':material/savings:',
+        'Annual dividend income',
+        'Grows as reinvested dividends add to the number of shares held.',
+    ):
 
         if not div_income_df.empty:
             div_income_df['year'] = div_income_df['date'].dt.year
@@ -1770,7 +1826,7 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
                 cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=cs.CHART_AMBER
             ).encode(
                 x=alt.X('year_str:O', title='Year', sort=None),
-                y=alt.Y('dividend_income:Q', title=f'Dividend Income ({curr_symbol})'),
+                y=alt.Y('dividend_income:Q', title=f'Dividend income ({curr_symbol})'),
                 tooltip=[
                     alt.Tooltip('year_str:O', title='Year'),
                     alt.Tooltip('dividend_income:Q', title='Annual Dividend', format=',.0f'),
@@ -1782,11 +1838,11 @@ def render_compounding_simulation(stock_name, price_df, sdf, cp_df=None, currenc
                 x=alt.X('year_str:O', sort=None),
                 y=alt.Y('dividend_income:Q'),
             )
-            st.altair_chart((bar + trend).properties(height=280), width='stretch', theme=None)
+            st.altair_chart((bar + trend).properties(height=240), width='stretch', theme=None)
         else:
-            st.info('No dividend events recorded in this period.')
+            st.caption('No dividends were paid in this period.')
 
-    with st.expander('📋 Raw Transaction Log', expanded=False):
+    with st.expander('Transaction log', icon=':material/receipt_long:'):
         st.dataframe(pd.DataFrame({'Activity': activities}), hide_index=True)
 
 def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_share, sl, allow_section_scroll=True):
@@ -1827,30 +1883,39 @@ def render_classic_view(stock_name, filtered_df, fin, cp_df, price_df, sdf, n_sh
 
     section_key = _RESEARCH_SECTION_KEYS.get(section, 'dividends')
     anchor_name = f'research-{section_key}'
-    add_anchor(anchor_name)
+    body = st.container(key='research-body')
+    body.html(_RESEARCH_STYLES)
+    with body:
+        add_anchor(anchor_name)
 
-    if section == 'Dividends':
-        st.subheader(f'Dividend history: {stock_name}')
-        render_dividend_history(sdf, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
-    elif section == 'Financials':
-        st.subheader(f'Financial information: {stock_name}')
-        render_financial_info(fin, currency, stock_name, filtered_df)
-    elif section == 'Multiples':
-        st.subheader(f'Valuation multiples: {stock_name}')
-        render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
-    elif section == 'Intrinsic value':
-        st.subheader(f'Dividend discount model: {stock_name}')
-        render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
-    elif section == 'Price and technicals':
-        st.subheader(f'Price movement: {stock_name}')
-        _stock_row = filtered_df.loc[stock_name] if stock_name in filtered_df.index else None
-        render_price_movement(price_df, stock_name=stock_name, stock_row=_stock_row)
-    elif section == 'Buy timing':
-        st.subheader(f'Historical buy timing: {stock_name}')
-        render_best_buy_timing(price_df, sdf, stock_name)
-    else:
-        st.subheader(f'Compounding simulation: {stock_name}')
-        render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df, currency=currency)
+        # tests/live/smoke.spec.js finds these headings by their exact text.
+        headings = {
+            'dividends': f'Dividend history: {stock_name}',
+            'financials': f'Financial information: {stock_name}',
+            'multiples': f'Valuation multiples: {stock_name}',
+            'intrinsic-value': f'Dividend discount model: {stock_name}',
+            'price-technicals': f'Price movement: {stock_name}',
+            'buy-timing': f'Historical buy timing: {stock_name}',
+            'compounding': f'Compounding simulation: {stock_name}',
+        }
+        st.subheader(headings[section_key])
+        st.caption(_RESEARCH_SECTION_INTROS[section_key])
+
+        if section == 'Dividends':
+            render_dividend_history(sdf, stock_name, filtered_df, fin=fin, n_share=n_share, currency=currency, cp_df=cp_df, price_df=price_df)
+        elif section == 'Financials':
+            render_financial_info(fin, currency, stock_name, filtered_df)
+        elif section == 'Multiples':
+            render_valuation_analysis(price_df, fin, n_share, sl, stock_name, filtered_df, cp_df=cp_df, sdf=sdf)
+        elif section == 'Intrinsic value':
+            render_ddm_valuation(sdf, stock_name, filtered_df, fin=fin, cp_df=cp_df, price_df=price_df, n_share=n_share)
+        elif section == 'Price and technicals':
+            _stock_row = filtered_df.loc[stock_name] if stock_name in filtered_df.index else None
+            render_price_movement(price_df, stock_name=stock_name, stock_row=_stock_row, currency=currency)
+        elif section == 'Buy timing':
+            render_best_buy_timing(price_df, sdf, stock_name)
+        else:
+            render_compounding_simulation(stock_name, price_df, sdf, cp_df=cp_df, currency=currency)
 
     scroll_target = (stock_name, section_key)
     if section_param is not None and st.session_state.get('_last_research_scroll_target') != scroll_target:
