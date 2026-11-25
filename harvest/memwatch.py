@@ -109,7 +109,10 @@ def _sessions():
     from streamlit.runtime import Runtime
     if not Runtime.exists():
         return {}
-    mgr = Runtime.instance()._session_mgr
+    # Runtime registers itself before building its session manager, so the first beat can land in between.
+    mgr = getattr(Runtime.instance(), '_session_mgr', None)
+    if mgr is None:
+        return {}
     return {'sessions': mgr.num_sessions(), 'active_sessions': mgr.num_active_sessions()}
 
 
