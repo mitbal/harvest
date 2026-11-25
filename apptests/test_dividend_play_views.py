@@ -180,13 +180,13 @@ def _evidence_buttons(app):
 
 # ── Today ───────────────────────────────────────────────────────────────── #
 
-def test_today_premium_shows_every_card_and_the_opening_list(run_page):
+def test_today_premium_shows_every_card_and_the_coming_up_list(run_page):
     app = run_page("premium")
 
     assert not app.exception
     assert "<h1>Dividend Play</h1>" in _hero(app)
     assert _metric(app, "Entry windows open") == "2"
-    assert _metric(app, "Opening in 14 days") == "1"
+    assert [m.label for m in app.metric] == ["Entry windows open", "Your positions"]
     assert len(_evidence_buttons(app)) == 2
     text = _texts(app)
     assert "BBRI PT BBRI Tbk" in text and "TLKM PT TLKM Tbk" in text
@@ -195,12 +195,15 @@ def test_today_premium_shows_every_card_and_the_opening_list(run_page):
     assert "Dip rule active, 2.5% below its 20-day average" in text
     assert "holdout 30 of 40 won on all shortlist stocks, +5.0% average after costs" in text
     assert "Not financial advice." in text
-    assert _dataframe(app, "Window opens")["Stock"].tolist() == ["ASII"]
+    table = _dataframe(app, "Status")
+    assert table["Stock"].tolist() == ["ASII"]
+    assert table["Status"].tolist() == ["Opening soon"]
+    assert table["Window"].iloc[0].startswith("opens ~")  # estimated ex-date
     assert "Unlock full access" not in [b.label for b in app.button]
 
 
 @pytest.mark.parametrize("tier", ["free", "logged_out"])
-def test_today_free_shows_one_card_and_names_only(run_page, tier):
+def test_today_free_shows_one_card_and_counts_only(run_page, tier):
     app = run_page(tier)
 
     assert not app.exception
@@ -208,50 +211,50 @@ def test_today_free_shows_one_card_and_names_only(run_page, tier):
     assert len(buttons) == 1 and buttons[0].key == "evidence_BBRI.JK"  # best holdout first
     text = _texts(app)
     assert "Also open: ••••" in text and "Also open: TLKM" not in text  # hidden names stay off the page
-    assert "ASII" in text
-    assert _dataframe(app, "Window opens") is None
+    # Coming up counts the stocks without naming them.
+    assert "1 opening in the next 45 days" in text and "ASII" not in text
+    assert _dataframe(app, "Status") is None
     assert "Unlock full access" in [b.label for b in app.button]
     if tier == "logged_out":
         assert _metric(app, "Your positions") == "–"
 
 
-def test_today_hides_the_waiting_section_without_waiting_signals(run_page):
+def test_today_hides_coming_up_when_nothing_is_coming(run_page, client):
+    store.write_signals(client, "dividend_play", AS_OF, _signals()[:2])
     app = run_page("premium")
 
     assert not app.exception
-    assert _metric(app, "Waiting for a dip") == "0"
-    assert "In window, waiting for a dip" not in _texts(app)
-    assert _dataframe(app, "Window closes") is None
+    assert "Coming up" not in _texts(app)
+    assert _dataframe(app, "Status") is None
 
 
-def test_today_premium_lists_stocks_waiting_for_a_dip(run_page, client):
-    # UNVR is closer to its trigger than ASII; an older row without the trigger price still renders.
-    store.write_signals(client, "dividend_play", AS_OF, [
-        *_signals()[:2], _waiting("UNVR.JK", 1.2, 3950.0), _waiting("TBIG.JK", 4.0),
-    ])
+def test_today_premium_lists_stocks_waiting_for_a_dip_before_opening_windows(run_page, client):
+    # UNVR is closer to its trigger than TBIG; an older row without the trigger price still renders.
+    store.write_signals(client, "dividend_play", AS_OF, _signals(
+        _waiting("TBIG.JK", 4.0), _waiting("UNVR.JK", 1.2, 3950.0),
+    ))
     app = run_page("premium")
 
     assert not app.exception
-    assert _metric(app, "Waiting for a dip") == "2"
-    assert "In window, waiting for a dip" in _texts(app)
-    table = _dataframe(app, "Window closes")
-    assert table["Stock"].tolist() == ["UNVR", "TBIG"]
-    assert table["Average"].tolist() == ["MA20", "MA20"]
-    assert table["Price vs average"].tolist() == [1.2, 4.0]
-    assert table["Buy at or below"].iloc[0] == 3950.0 and pd.isna(table["Buy at or below"].iloc[1])
-    assert table["Window closes"].iloc[0].startswith("~")  # estimated ex-date
+    table = _dataframe(app, "Status")
+    assert table["Stock"].tolist() == ["UNVR", "TBIG", "ASII"]
+    assert table["Status"].tolist() == [
+        "In window · 1.2% above MA20", "In window · 4.0% above MA20", "Opening soon",
+    ]
+    assert table["Buy at or below"].iloc[0] == 3950.0 and table["Buy at or below"].iloc[1:].isna().all()
+    assert table["Window"].iloc[0].startswith("closes ~")  # estimated ex-date
     assert _metric(app, "Entry windows open") == "2"
 
 
-def test_today_free_names_stocks_waiting_for_a_dip(run_page, client):
+def test_today_free_counts_stocks_waiting_for_a_dip(run_page, client):
     store.write_signals(client, "dividend_play", AS_OF, _signals(_waiting("UNVR.JK", 1.2, 3950.0)))
     app = run_page("free")
 
     assert not app.exception
     text = _texts(app)
-    assert "In window, waiting for a dip" in text
-    assert "1.2% above MA20" in text
-    assert _dataframe(app, "Window closes") is None
+    assert "1 in window, 1 opening in the next 45 days" in text
+    assert "UNVR" not in text and "1.2% above MA20" not in text
+    assert _dataframe(app, "Status") is None
 
 
 def test_today_premium_judges_announced_dividends(run_page):
@@ -261,15 +264,15 @@ def test_today_premium_judges_announced_dividends(run_page):
     assert "Announced dividends" in _texts(app)
     table = _dataframe(app, "Verdict")
     assert table["Stock"].tolist() == ["TLKM"]
+    assert list(table.columns) == ["Stock", "Buy by", "Yield", "Verdict", "Best exit", "Won", "Avg return"]
     row = table.iloc[0]
-    assert row["Dividend"] == 80.0
-    assert row["Yield"] == pytest.approx(80.0 / row["Price"] * 100)
+    assert row["Yield"] > 0
     assert row["Verdict"] in {"Enter", "Mixed", "Skip"}
     assert row["Best exit"] in {"Sell on cum date", "Hold through ex-date"}
     assert row["Won"].endswith(f"of {AS_OF.year - 2015}")
-    # The detail below the table replays every past ex-date.
-    trades = _dataframe(app, "hold_return")
-    assert len(trades) == AS_OF.year - 2015
+    # The past trades open in a dialog only once a row is picked.
+    assert _dataframe(app, "hold_return") is None
+    assert "Select a row to see its past trades." in _texts(app)
 
 
 @pytest.mark.parametrize("tier", ["free", "logged_out"])

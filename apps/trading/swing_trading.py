@@ -568,7 +568,11 @@ def render_today(access: bool) -> None:
             ui.unlock_prompt(list(actionable['symbol'].iloc[1:]))
     if not watch.empty:
         ui.section('Close to a setup', len(watch), 'Could trigger after the next close')
-        ui.tickers(watch['symbol'])
+        if access:
+            ui.tickers(watch['symbol'])
+        else:
+            # Free visitors get the count in the header, never which stocks: the names are the signal.
+            ui.locked_note('Supporters see which stocks are close to a setup.', 'watch')
     st.caption('Historical backtest with the same entries (next open or the limit), stops, exits and IDX costs. '
                'Not financial advice.')
 

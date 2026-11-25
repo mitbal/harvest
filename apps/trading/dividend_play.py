@@ -825,19 +825,20 @@ def render_coming_up(waiting: pd.DataFrame, soon: pd.DataFrame, access: bool) ->
     """Stocks in their window still waiting for a dip, then windows opening in the next 45 days."""
     if waiting.empty and soon.empty:
         return
+    if not access:
+        # Free visitors get counts, never which stocks: the names are the signal.
+        counts = [f'{len(waiting)} in window'] if len(waiting) else []
+        counts += [f'{len(soon)} opening in the next 45 days'] if len(soon) else []
+        ui.section('Coming up', len(waiting) + len(soon), ', '.join(counts))
+        ui.locked_note('Supporters see which stocks, their buy-at price and past run-up, '
+                       'and can get an alert when a window opens.', 'coming_up')
+        return
     ui.section('Coming up', len(waiting) + len(soon), 'In window first, then the next 45 days')
     waiting_dips = waiting['detail'].map(lambda d: d.get('dip') or {})
     opens = [
         ui.day(ui.first_session(d['window_start']), est)
         for d, est in zip(soon['detail'], soon['key_date_estimated'])
     ]
-    if not access:
-        notes = {symbol: note for symbol, note in zip(waiting['symbol'], waiting_dips.map(_dip_note)) if note}
-        notes.update({symbol: f'opens {day}' for symbol, day in zip(soon['symbol'], opens)})
-        ui.tickers(list(waiting['symbol']) + list(soon['symbol']), notes)
-        ui.locked_note('Supporters see the buy-at price and past run-up for each stock, '
-                       'and can get an alert when a window opens.', 'coming_up')
-        return
 
     def history(frame: pd.DataFrame, key: str) -> pd.Series:
         return frame['detail'].map(lambda d: (d.get('history') or {}).get(key))

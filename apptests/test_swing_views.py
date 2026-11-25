@@ -226,6 +226,9 @@ def test_today_free_shows_one_card(run_page, tier):
     assert [b.key for b in _cards(app)] == ["evidence_BBRI.JK"]
     text = _texts(app)
     assert "Also today: ••••" in text and "Also today: TLKM" not in text  # hidden names stay off the page
+    # Close to a setup counts the stocks without naming them.
+    assert "Close to a setup 1" in text and "GOTO" not in text
+    assert "Supporters see which stocks are close to a setup." in text
     assert "Track this trade" not in [b.label for b in app.button]
 
 
