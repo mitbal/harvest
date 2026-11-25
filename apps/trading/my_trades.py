@@ -124,6 +124,16 @@ ESTIMATED_SUFFIX = ' (ex-date estimated)'
 OWN_SUFFIX = ', your position'
 
 
+def mask_events(events: pd.DataFrame) -> pd.DataFrame:
+    """Free visitors' Coming up: how many stocks each day and event, never which ones."""
+    if events.empty:
+        return events
+    counts = (events.assign(event=events['event'].str.removesuffix(ESTIMATED_SUFFIX))
+              .groupby(['date', 'tool', 'event'], sort=True).size().reset_index(name='n'))
+    counts['symbol'] = counts['n'].map(lambda n: f'{n} stock' + ('' if n == 1 else 's'))
+    return counts[['date', 'symbol', 'tool', 'event']]
+
+
 def timeline_event(event: pd.Series) -> dict:
     """A ``coming_up`` row as a timeline entry: estimated ex-dates become a chip note, own dates are marked."""
     what, note = event['event'], ''
@@ -522,7 +532,12 @@ if events.empty:
     ui.empty_state('Nothing scheduled', 'Entry windows, near-setups and your sell-by dates show up here.',
                    'event_upcoming')
 else:
-    ui.timeline([timeline_event(event) for _, event in events.iterrows()])
+    # Free visitors have no journal, so every event here is a signal: show counts, not tickers.
+    shown_events = events if access else mask_events(events)
+    ui.timeline([timeline_event(event) for _, event in shown_events.iterrows()])
+    if not access:
+        ui.locked_note('Supporters see which stocks open an entry window or near a swing setup each day.',
+                       'coming_up')
 
 # ── Your trades ─────────────────────────────────────────────────────────── #
 if email is None:

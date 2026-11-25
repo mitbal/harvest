@@ -121,7 +121,10 @@ def test_free_visitors_get_one_card_per_tool_and_an_unlock_prompt(run_page):
     assert cards[:2] == ["dividend_play_BBRI.JK", "swing_BMRI.JK"]
     assert len(cards) == 3
     assert any(b.label == "Unlock full access" for b in app.button)
-    assert "TLKM" in _texts(app) and "ADRO" in _texts(app)
+    text = _texts(app)
+    assert "TLKM" not in text and "ADRO" not in text  # hidden signals are counted, not named
+    events = _timeline(app)
+    assert "1 stock" in events and "ASII" not in events and "GOTO" not in events
 
 
 def test_positions_and_coming_up(run_page):
@@ -145,7 +148,7 @@ def test_logged_out_visitors_are_asked_to_log_in_for_positions(run_page):
     assert "Log in to track your trades" in _texts(app)
     assert any(b.label == "Log in with Google" for b in app.button)
     events = _timeline(app)
-    assert {"ASII", "GOTO"} <= set(events.split()) and "UNVR" not in events
+    assert "1 stock" in events and not {"ASII", "GOTO", "UNVR"} & set(events.split())
 
 
 def test_nothing_published_yet(run_page):
