@@ -43,7 +43,6 @@ FETCH_WORKERS = 8
 VIEW_TODAY, VIEW_EVIDENCE, VIEW_LAB = 'Today', 'Evidence', 'Lab'
 # The one stock whose evidence is open to everyone.
 FREE_EVIDENCE_TICKER = 'BBRI.JK'
-SOON_METRIC_DAYS = 14
 # An announced dividend whose stock's latest close is older than this gets no verdict.
 MAX_ANNOUNCED_PRICE_AGE_DAYS = 7
 logger = logging.getLogger(__name__)
@@ -694,7 +693,8 @@ VERDICT_TONES = {
 }
 
 
-def render_announced_detail(row: pd.Series, trades: pd.DataFrame | None) -> None:
+@st.dialog('Past trades for this dividend', width='large')
+def announced_dialog(row: pd.Series, trades: pd.DataFrame | None) -> None:
     """Both exits' record for one announced dividend, and every past trade behind it."""
     st.markdown(f"**{ui.short(row['symbol'])}** · if bought {row['sessions_left']} sessions before the ex-date "
                 f"in past years, with costs and {DEFAULT_DIVIDEND_TAX:g}% dividend tax")
@@ -753,6 +753,10 @@ def render_announced_detail(row: pd.Series, trades: pd.DataFrame | None) -> None
     )
 
 
+def _open_announced() -> None:
+    st.session_state['dp_announced_open'] = True
+
+
 def render_announced(access: bool) -> None:
     """Dividends already declared: their yield at today's price and whether the short trade pays."""
     as_of = pd.Timestamp(datetime.date.today())
@@ -762,33 +766,25 @@ def render_announced(access: bool) -> None:
     except Exception:
         logger.exception('Could not build the announced dividends')
         table, trades_by_row = pd.DataFrame(), {}
-    ui.section('Announced dividends', len(table), 'Buy before the cum date, judged on past ex-dates')
+    # Nothing announced is not news on its own, so the section only shows when there is something in it.
     if table.empty:
-        ui.empty_state('No ex-date has been announced yet',
-                       'Companies announce their ex-dates a few weeks ahead.', 'event_note')
         return
+    ui.section('Announced dividends', len(table), 'Buy before the cum date, judged on past ex-dates')
 
     display = pd.DataFrame({
         'Stock': table['symbol'].map(ui.short),
         'Buy by': table['cum_date'].map(ui.day),
-        'Ex-date': table['ex_date'].map(ui.day),
-        'Sessions': table['sessions_left'],
-        'Dividend': table['dividend'],
-        'Price': table['close'],
         'Yield': table['yield'],
         'Verdict': table['verdict'],
         'Best exit': table['best_exit'].map(lambda key: dp.SHORT_EXIT_LABELS.get(key, '')),
         'Won': [f'{int(w)} of {int(n)}' if n == n and n else '' for w, n in zip(table['wins'], table['trades'])],
         'Avg return': table['avg_return'],
-        'Value traded': table['value_traded'],
     })
     if not access:
         display = display.drop(columns=['Verdict', 'Best exit', 'Won', 'Avg return'])
     config = {
-        'Buy by': st.column_config.TextColumn(help='Cum date: the last session that still qualifies for the dividend'),
-        'Sessions': st.column_config.NumberColumn(help='Trading sessions left through the cum date'),
-        'Dividend': st.column_config.NumberColumn(format='%.2f', help='Announced dividend per share'),
-        'Price': st.column_config.NumberColumn(format='%.0f', help='Latest close'),
+        'Buy by': st.column_config.TextColumn(
+            help='Cum date: the last session that still qualifies for the dividend. The ex-date is the session after.'),
         'Yield': st.column_config.NumberColumn(format='%.2f%%', help='Announced dividend over the latest close'),
         'Verdict': st.column_config.TextColumn(
             help=f'Enter: the best exit made money on average and won at least '
@@ -797,68 +793,89 @@ def render_announced(access: bool) -> None:
         'Best exit': st.column_config.TextColumn(help='The exit with the higher average return in past years'),
         'Won': st.column_config.TextColumn(help='Past ex-dates where the best exit made money'),
         'Avg return': st.column_config.NumberColumn(format='%+.1f%%', help='Best exit, per trade, after costs and tax'),
-        'Value traded': st.column_config.NumberColumn(format='compact', help='Average daily value traded (Rp)'),
     }
     styled = display.style.map(lambda value: VERDICT_TONES.get(value, ''), subset=['Verdict']) if access else display
     event = st.dataframe(
         styled, hide_index=True, width='stretch', column_config=config, key='announced_table',
-        on_select='rerun' if access else 'ignore', selection_mode='single-row',
+        # The callback fires only when the selection changes, so the dialog opens once per pick
+        # rather than on every rerun while the row stays selected.
+        on_select=_open_announced if access else 'ignore', selection_mode='single-row',
     )
     if not access:
         ui.locked_note('Supporters see the verdict, best exit and past record for each announced dividend.',
                        'announced')
         return
 
+    st.caption('Select a row to see its past trades.')
     selected = list(getattr(getattr(event, 'selection', None), 'rows', []) or [])
-    if selected:
+    if st.session_state.pop('dp_announced_open', False) and selected and selected[0] < len(table):
         position = selected[0]
-    else:
-        candidates = [i for i, index in enumerate(table.index) if index in trades_by_row]
-        position = candidates[0] if candidates else 0
-    if not selected:
-        st.caption('Select a row to see its past trades.')
-    render_announced_detail(table.iloc[position], trades_by_row.get(table.index[position]))
+        announced_dialog(table.iloc[position], trades_by_row.get(table.index[position]))
 
 
-def render_waiting(waiting: pd.DataFrame, access: bool) -> None:
-    """Stocks inside their entry window whose dip rule has not fired yet."""
-    ui.section('In window, waiting for a dip', len(waiting), 'Closest to its buy level first')
-    dips = waiting['detail'].map(lambda d: d.get('dip') or {})
-    averages = dips.map(lambda dip: f"MA{dip['ma_days']}" if dip.get('ma_days') else None)
-    if not access:
-        notes = {}
-        for symbol, vs_ma, average in zip(waiting['symbol'], waiting['vs_ma'], averages):
-            if pd.notna(vs_ma) and average:
-                notes[symbol] = f"{abs(vs_ma):.1f}% {'above' if vs_ma >= 0 else 'below'} {average}"
-        ui.tickers(waiting['symbol'], notes)
-        ui.locked_note('Supporters see the buy-at price and past run-up for each stock.', 'waiting')
+def _dip_note(dip: dict) -> str | None:
+    """'2.1% above MA20': how far the price sits from the average its dip rule watches."""
+    vs_ma = dip.get('vs_ma_pct')
+    if vs_ma is None or pd.isna(vs_ma) or not dip.get('ma_days'):
+        return None
+    return f"{abs(vs_ma):.1f}% {'above' if vs_ma >= 0 else 'below'} MA{dip['ma_days']}"
+
+
+def render_coming_up(waiting: pd.DataFrame, soon: pd.DataFrame, access: bool) -> None:
+    """Stocks in their window still waiting for a dip, then windows opening in the next 45 days."""
+    if waiting.empty and soon.empty:
         return
-    rows = pd.DataFrame({
+    ui.section('Coming up', len(waiting) + len(soon), 'In window first, then the next 45 days')
+    waiting_dips = waiting['detail'].map(lambda d: d.get('dip') or {})
+    opens = [
+        ui.day(ui.first_session(d['window_start']), est)
+        for d, est in zip(soon['detail'], soon['key_date_estimated'])
+    ]
+    if not access:
+        notes = {symbol: note for symbol, note in zip(waiting['symbol'], waiting_dips.map(_dip_note)) if note}
+        notes.update({symbol: f'opens {day}' for symbol, day in zip(soon['symbol'], opens)})
+        ui.tickers(list(waiting['symbol']) + list(soon['symbol']), notes)
+        ui.locked_note('Supporters see the buy-at price and past run-up for each stock, '
+                       'and can get an alert when a window opens.', 'coming_up')
+        return
+
+    def history(frame: pd.DataFrame, key: str) -> pd.Series:
+        return frame['detail'].map(lambda d: (d.get('history') or {}).get(key))
+
+    in_window = pd.DataFrame({
         'Stock': waiting['symbol'].map(ui.short),
-        'Window closes': [
-            ui.day(d['window_end'], est) for d, est in zip(waiting['detail'], waiting['key_date_estimated'])
+        'Status': waiting_dips.map(lambda dip: 'In window' + (f' · {note}' if (note := _dip_note(dip)) else '')),
+        'Window': [
+            'closes ' + ui.day(d['window_end'], est) for d, est in zip(waiting['detail'], waiting['key_date_estimated'])
         ],
-        'Average': averages,
-        'Price vs average': waiting['vs_ma'],
         # Rows stored before the trigger price was published lack it.
-        'Buy at or below': pd.to_numeric(dips.map(lambda dip: dip.get('trigger_price')), errors='coerce'),
-        'Historical run-up': waiting['detail'].map(lambda d: (d.get('history') or {}).get('avg_return')),
-        'Won': waiting['detail'].map(lambda d: (d.get('history') or {}).get('win_rate')),
+        'Buy at or below': pd.to_numeric(waiting_dips.map(lambda dip: dip.get('trigger_price')), errors='coerce'),
+        'Historical run-up': history(waiting, 'avg_return'),
+        'Won': history(waiting, 'win_rate'),
+    })
+    opening = pd.DataFrame({
+        'Stock': soon['symbol'].map(ui.short),
+        'Status': 'Opening soon',
+        'Window': ['opens ' + day for day in opens],
+        'Buy at or below': np.nan,
+        'Historical run-up': history(soon, 'avg_return'),
+        'Won': history(soon, 'win_rate'),
     })
     st.dataframe(
-        rows, hide_index=True, width='stretch',
+        pd.concat([in_window, opening], ignore_index=True), hide_index=True, width='stretch',
         column_config={
-            'Window closes': st.column_config.TextColumn(help='~ means the ex-date is estimated from last year'),
-            'Average': st.column_config.TextColumn(help='The moving average this stock\'s setup uses'),
-            'Price vs average': st.column_config.NumberColumn(
-                format='%+.1f%%',
-                help='The setup buys when the price closes at or below the average minus its dip percentage'),
+            'Status': st.column_config.TextColumn(
+                help='In window: the setup buys once the price closes at or below its moving average '
+                     'minus the dip percentage'),
+            'Window': st.column_config.TextColumn(help='~ means the ex-date is estimated from last year'),
             'Buy at or below': st.column_config.NumberColumn(format='%.0f', help='Close that triggers the dip rule'),
             'Historical run-up': st.column_config.NumberColumn(
                 format='%+.1f%%', help='Average return of this setup on the stock since 2015, after costs'),
             'Won': st.column_config.NumberColumn(format='%.0f%%', help='Share of those trades that made money'),
         },
     )
+    if not soon.empty:
+        render_alert_picker(soon['symbol'].tolist())
 
 
 def render_today(access: bool) -> None:
@@ -890,8 +907,6 @@ def render_today(access: bool) -> None:
 
     metrics = st.container(horizontal=True)
     metrics.metric('Entry windows open', len(actionable))
-    metrics.metric('Waiting for a dip', len(waiting))
-    metrics.metric(f'Opening in {SOON_METRIC_DAYS} days', int((soon['days_to_window'] <= SOON_METRIC_DAYS).sum()))
     email = current_email()
     if email:
         try:
@@ -921,41 +936,9 @@ def render_today(access: bool) -> None:
         if not access and len(actionable) > 1:
             ui.unlock_prompt(list(actionable['symbol'].iloc[1:]), noun='entry window', lead='Also open')
 
-    if not waiting.empty:
-        render_waiting(waiting, access)
-
+    render_coming_up(waiting, soon, access)
+    # A different trade from the signals above, so it comes after them.
     render_announced(access)
-
-    ui.section('Opening soon', len(soon), 'Next 45 days')
-    if soon.empty:
-        ui.empty_state('Nothing opens in the next 45 days', 'Check back after the next ex-date announcements.',
-                       'event_upcoming')
-    elif not access:
-        ui.tickers(soon['symbol'], {
-            s: f"opens {ui.day(ui.first_session(d['window_start']), est)}"
-            for s, d, est in zip(soon['symbol'], soon['detail'], soon['key_date_estimated'])
-        })
-        ui.locked_note('Supporters see each setup\'s past run-up and can get an alert when a window opens.', 'soon')
-    else:
-        rows = pd.DataFrame({
-            'Stock': soon['symbol'].map(ui.short),
-            'Window opens': [
-                ui.day(ui.first_session(d['window_start']), est)
-                for d, est in zip(soon['detail'], soon['key_date_estimated'])
-            ],
-            'Historical run-up': soon['detail'].map(lambda d: (d.get('history') or {}).get('avg_return')),
-            'Won': soon['detail'].map(lambda d: (d.get('history') or {}).get('win_rate')),
-        })
-        st.dataframe(
-            rows, hide_index=True, width='stretch',
-            column_config={
-                'Window opens': st.column_config.TextColumn(help='~ means the ex-date is estimated from last year'),
-                'Historical run-up': st.column_config.NumberColumn(
-                    format='%+.1f%%', help='Average return of this setup on the stock since 2015, after costs'),
-                'Won': st.column_config.NumberColumn(format='%.0f%%', help='Share of those trades that made money'),
-            },
-        )
-        render_alert_picker(soon['symbol'].tolist())
     st.caption(
         'Historical backtest of past dividend events. Check the announced cum date with IDX before trading. '
         'Not financial advice.'
