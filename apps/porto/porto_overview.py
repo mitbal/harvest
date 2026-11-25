@@ -135,13 +135,15 @@ def run_db(operation):
         return operation(get_db_connection())
 
 
-def get_user_portfolio(conn: SupabaseConnection, user_email: str) -> dict:
-    user_in_db = conn.table("users").select("portfolio").eq("email", user_email).execute()
+def get_user_record(conn: SupabaseConnection, user_email: str) -> dict | None:
+    """The user's saved row (portfolio and income goal), or None if they have never saved anything."""
+    # select("*") so the page still loads before the goal columns exist (pipeline/porto_goals.sql).
+    user_in_db = conn.table("users").select("*").eq("email", user_email).execute()
     if len(user_in_db.data) > 0:
-        logger.info('portfolio found in db')
-        return user_in_db.data[0]['portfolio']
+        logger.info('user record found in db')
+        return user_in_db.data[0]
     else:
-        logger.info('user has no portfolio saved in db')
+        logger.info('user has nothing saved in db')
         return None
 
 
@@ -152,6 +154,56 @@ def update_user_portfolio(conn: SupabaseConnection, portfolio: dict, user_email:
         on_conflict="email",
     ).execute()
     logger.info('portfolio updated in db')
+
+
+def update_user_goals(conn: SupabaseConnection, target_income: int, benchmark_yield: float, user_email: str) -> None:
+    # Upsert only touches the columns sent, so a saved portfolio is left as it is.
+    conn.table("users").upsert(
+        {
+            "email": user_email,
+            "target_income": target_income,
+            "benchmark_yield": benchmark_yield,
+            'modified_at': datetime.now().isoformat(),
+        },
+        on_conflict="email",
+    ).execute()
+    logger.info('income goal updated in db')
+
+
+DEFAULT_TARGET = 240        # IDR million a year
+DEFAULT_BENCHMARK = 6.35    # % yield
+TARGET_BOUNDS = (1, 10_000)
+BENCHMARK_BOUNDS = (0.01, 99.99)
+
+
+def goals_from_record(record: dict | None) -> dict:
+    """Saved goal values from a user row, falling back to the defaults and kept inside the inputs' bounds."""
+    record = record or {}
+    goals = {'porto_saved_target': DEFAULT_TARGET, 'porto_saved_benchmark': DEFAULT_BENCHMARK}
+    try:
+        if record.get('target_income') is not None:
+            goals['porto_saved_target'] = min(max(int(round(float(record['target_income']))), TARGET_BOUNDS[0]), TARGET_BOUNDS[1])
+        if record.get('benchmark_yield') is not None:
+            goals['porto_saved_benchmark'] = min(max(round(float(record['benchmark_yield']), 2), BENCHMARK_BOUNDS[0]), BENCHMARK_BOUNDS[1])
+    except (TypeError, ValueError):
+        logger.warning('Ignoring malformed saved income goal: %r', record, exc_info=True)
+    return goals
+
+
+def save_goals() -> None:
+    """on_change for the goal inputs: remember them for this session and, when logged in, in the cloud."""
+    target = st.session_state['porto_target']
+    benchmark = st.session_state['porto_benchmark']
+    st.session_state['porto_saved_target'] = target
+    st.session_state['porto_saved_benchmark'] = benchmark
+    if not st.user.is_logged_in:
+        return
+    try:
+        run_db(lambda conn: update_user_goals(conn, target, benchmark, st.user.email))
+        st.toast('Income goal saved.', icon=':material/cloud_done:')
+    except Exception:
+        logger.exception('Failed to save income goal')
+        st.toast('Your income goal could not be saved to the cloud.', icon=':material/warning:')
 
 
 @st.cache_resource
@@ -269,14 +321,20 @@ def render_kpi(label, value, delta=None, delta_value=None, emphasis=False, tone=
 if 'porto_df' not in st.session_state:
     if st.user.is_logged_in:
         try:
-            data = run_db(lambda conn: get_user_portfolio(conn, st.user.email))
+            record = run_db(lambda conn: get_user_record(conn, st.user.email))
+            data = record.get('portfolio') if record else None
             st.session_state['porto_df'] = hpf.normalize_portfolio(data) if data else None
+            st.session_state.update(goals_from_record(record))
         except Exception:
             logger.exception('Failed to load cloud portfolio')
             st.warning('Your cloud portfolio could not be loaded. You can still enter a portfolio locally.')
             st.session_state['porto_df'] = None
     else:
         st.session_state['porto_df'] = None
+
+# Saved goals live under non-widget keys, so they survive reruns where the goal inputs aren't drawn.
+st.session_state.setdefault('porto_saved_target', DEFAULT_TARGET)
+st.session_state.setdefault('porto_saved_benchmark', DEFAULT_BENCHMARK)
 
 # Keep the input panel open until a portfolio exists, regardless of reruns
 data_input_expand_flag = st.session_state['porto_df'] is None
@@ -515,19 +573,27 @@ except Exception as e:
 # --- Goals (in the header's action row) ---
 with goal_slot:
     with st.popover('Income goal', icon=':material/flag:'):
+        st.session_state.setdefault('porto_target', st.session_state['porto_saved_target'])
+        st.session_state.setdefault('porto_benchmark', st.session_state['porto_saved_benchmark'])
         target = st.number_input(
             'Target annual income (IDR million)',
-            value=240, step=1, min_value=1, max_value=10_000,
+            step=1, min_value=TARGET_BOUNDS[0], max_value=TARGET_BOUNDS[1],
             format='%d',
             key='porto_target',
+            on_change=save_goals,
             help='The yearly dividend income you are working towards',
         )
         baseline = st.number_input(
             'Benchmark yield (%)',
-            value=6.35, step=0.01, min_value=0.01, max_value=99.99,
+            step=0.01, min_value=BENCHMARK_BOUNDS[0], max_value=BENCHMARK_BOUNDS[1],
             key='porto_benchmark',
+            on_change=save_goals,
             help='Yield to compare against, e.g. a government bond or deposit rate',
         )
+        if st.user.is_logged_in:
+            st.caption(':material/cloud_done: Saved to your account when you change it.')
+        else:
+            st.caption(':material/info: Log in to keep your goal between visits.')
 
 df = hpf.enrich_holdings(df)
 summary = hpf.summarize_portfolio(df, target)
