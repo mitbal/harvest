@@ -1,5 +1,5 @@
 run:
-	streamlit run server.py
+	PREMIUM_ENFORCED=true streamlit run server.py
 
 build:
 	docker build -t harvest:v1 .
