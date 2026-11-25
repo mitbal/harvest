@@ -207,7 +207,7 @@ def test_today_free_shows_one_card_and_names_only(run_page, tier):
     buttons = _evidence_buttons(app)
     assert len(buttons) == 1 and buttons[0].key == "evidence_BBRI.JK"  # best holdout first
     text = _texts(app)
-    assert "Also open: TLKM" in text
+    assert "Also open: ••••" in text and "Also open: TLKM" not in text  # hidden names stay off the page
     assert "ASII" in text
     assert _dataframe(app, "Window opens") is None
     assert "Unlock full access" in [b.label for b in app.button]

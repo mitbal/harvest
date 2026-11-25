@@ -14,6 +14,8 @@ import harvest.trading_store as store
 
 
 WIB = ZoneInfo('Asia/Jakarta')
+# Placeholder chips in the unlock card before it collapses the rest into '+N more'.
+MASKED_CHIPS = 6
 VIEW_TODAY, VIEW_EVIDENCE, VIEW_LAB = 'Today', 'Evidence', 'Lab'
 
 
@@ -68,15 +70,21 @@ def status_line(run: dict, stale: bool = False) -> None:
 
 
 def unlock_prompt(hidden: list[str], noun: str = 'setup', lead: str = 'Also today', key: str = 'today') -> None:
-    """Dark call-to-action card naming what is locked; its button opens the supporter dialog."""
+    """Dark call-to-action card counting what is locked; its button opens the supporter dialog.
+
+    Only the count reaches the browser: the chips are fixed placeholders, never the hidden
+    symbols, so they can't be read from the page source either.
+    """
     count = len(hidden)
+    chips = ''.join('<span class="masked">••••</span>' for _ in range(min(count, MASKED_CHIPS)))
+    if count > MASKED_CHIPS:
+        chips += f'<span>+{count - MASKED_CHIPS} more</span>'
     with st.container(key=f'hv-unlock-{key}'):
         render(
             f'<div class="hv-unlock"><div class="lock">{icon("lock")}</div><div>'
             f'<h4>{count} more {noun if count == 1 else noun + "s"} today</h4>'
             f'<p>{esc(premium.TAGLINE)}</p>'
-            f'<div class="blur"><span>{esc(lead)}:</span>'
-            + ''.join(f'<span>{esc(short(s))}</span>' for s in hidden) + '</div></div></div>'
+            f'<div class="blur"><span>{esc(lead)}:</span>{chips}</div></div></div>'
         )
         unlock_button(f'unlock_{key}', primary=True)
 
@@ -314,6 +322,7 @@ STYLES = """
 .hv-unlock .blur { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .55rem; }
 .hv-unlock .blur span { font-size: .78rem; font-weight: 700; padding: .15rem .55rem; border-radius: 8px;
   background: rgba(255,255,255,.1); color: #d1fae5; }
+.hv-unlock .blur span.masked { letter-spacing: .12em; color: rgba(209,250,229,.55); user-select: none; }
 .hv-empty { display: flex; gap: .9rem; align-items: flex-start; padding: 1rem 1.1rem; border-radius: 14px;
   background: var(--hv-card); border: 1px dashed #c6d3cd; }
 .hv-empty .icon { font-size: 1.6rem; color: var(--hv-teal); }

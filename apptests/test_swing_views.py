@@ -224,7 +224,8 @@ def test_today_free_shows_one_card(run_page, tier):
 
     assert not app.exception
     assert [b.key for b in _cards(app)] == ["evidence_BBRI.JK"]
-    assert "Also today: TLKM" in _texts(app)
+    text = _texts(app)
+    assert "Also today: ••••" in text and "Also today: TLKM" not in text  # hidden names stay off the page
     assert "Track this trade" not in [b.label for b in app.button]
 
 

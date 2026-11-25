@@ -169,7 +169,7 @@ def test_today_free_shows_the_top_candidate(run_page, tier):
 
     assert not app.exception
     assert len(_evidence_buttons(app)) == 1
-    assert "Also today:" in _texts(app)
+    assert "Also today: ••••" in _texts(app)
     assert "Unlock full access" in [b.label for b in app.button]
     assert "Track this position" not in [b.label for b in app.button]
 
