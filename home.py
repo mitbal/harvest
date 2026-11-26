@@ -25,6 +25,11 @@ compounding_preview = f'{STATIC_HOME}/compounding_simulator.webp'
 market_preview = f'{STATIC_HOME}/heatmap_1d_price_return.webp'
 comparison_preview = f'{STATIC_HOME}/stock_comparison_scatterplot.webp'
 timing_preview = f'{STATIC_HOME}/best_timing_best_time_to_buy.webp'
+# Dividend Play walkthrough (Today cards -> See evidence), a muted loop played only while on screen.
+# The WebP is the poster and the still shown when the visitor asks for reduced motion.
+trade_demo_poster = f'{STATIC_HOME}/dividend_play_demo.webp'
+trade_demo_webm = f'{STATIC_HOME}/dividend_play_demo.webm'
+trade_demo_mp4 = f'{STATIC_HOME}/dividend_play_demo.mp4'
 
 
 # Supporter copy and prices come from harvest.premium, so the homepage pitch says
@@ -1231,6 +1236,139 @@ st.html(
             padding: clamp(4.5rem, 9vw, 8rem) 0 0;
         }}
 
+        .pd-trade-demo {{
+            display: grid;
+            grid-template-columns: minmax(260px, 0.62fr) minmax(0, 1.38fr);
+            margin-bottom: 1rem;
+            overflow: hidden;
+            border-radius: 14px;
+            background: var(--pd-forest);
+            color: var(--pd-white);
+        }}
+
+        .pd-trade-demo-copy {{
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: clamp(1.75rem, 3.5vw, 3rem);
+        }}
+
+        .pd-trade-demo-copy .pd-trade-kicker {{
+            color: var(--pd-lime);
+        }}
+
+        .pd-trade-demo-copy h3 {{
+            margin: 0.6rem 0 0;
+            color: inherit;
+            font-size: clamp(1.4rem, 2.3vw, 2.1rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+            text-wrap: balance;
+        }}
+
+        .pd-trade-demo-steps {{
+            display: grid;
+            gap: 0.7rem;
+            margin: 1.25rem 0 1.4rem;
+            padding: 0;
+            list-style: none;
+            counter-reset: pd-demo;
+            color: #cde0d7;
+            font-size: 0.9rem;
+            line-height: 1.55;
+        }}
+
+        .pd-trade-demo-steps li {{
+            display: grid;
+            grid-template-columns: 1.6rem 1fr;
+            gap: 0.6rem;
+            counter-increment: pd-demo;
+        }}
+
+        .pd-trade-demo-steps li::before {{
+            display: grid;
+            width: 1.6rem;
+            height: 1.6rem;
+            place-items: center;
+            border: 1px solid #5d8f7a;
+            border-radius: 50%;
+            color: var(--pd-lime);
+            content: counter(pd-demo);
+            font-size: 0.72rem;
+            font-weight: 800;
+        }}
+
+        .pd-trade-demo-copy .pd-text-link {{
+            color: var(--pd-lime) !important;
+        }}
+
+        .pd-trade-demo figure {{
+            position: relative;
+            margin: 0;
+            padding: clamp(1rem, 2.5vw, 2rem) 0 clamp(1rem, 2.5vw, 2rem) clamp(0.5rem, 1.5vw, 1rem);
+            border-left: 1px solid #3f7661;
+        }}
+
+        .pd-trade-demo-frame {{
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #3f7661;
+            border-right: 0;
+            border-radius: 12px 0 0 12px;
+            background: var(--pd-white);
+        }}
+
+        .pd-trade-demo video {{
+            display: block;
+            width: 100%;
+            height: auto;
+            aspect-ratio: 16 / 10;
+            object-fit: cover;
+            object-position: left top;
+            background: var(--pd-canvas);
+        }}
+
+        .pd-trade-demo-toggle {{
+            position: absolute;
+            right: 0.75rem;
+            bottom: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.4rem 0.75rem;
+            border: 0;
+            border-radius: 999px;
+            background: rgba(5, 45, 34, 0.82);
+            color: var(--pd-white);
+            cursor: pointer;
+            font: inherit;
+            font-size: 0.74rem;
+            font-weight: 700;
+        }}
+
+        .pd-trade-demo-toggle:focus-visible {{
+            outline: 2px solid var(--pd-lime);
+            outline-offset: 2px;
+        }}
+
+        .pd-trade-demo-note {{
+            margin: 0.6rem 0 0;
+            color: #a9c7ba;
+            font-size: 0.74rem;
+        }}
+
+        @media (max-width: 900px) {{
+            .pd-trade-demo {{
+                grid-template-columns: 1fr;
+            }}
+
+            .pd-trade-demo figure {{
+                padding: 0 0 1.25rem 1.25rem;
+                border-left: 0;
+            }}
+        }}
+
         .pd-trade-grid {{
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1735,6 +1873,36 @@ st.html(
                 </p>
             </div>
 
+            <article class="pd-trade-demo" aria-labelledby="pd-trade-demo-title">
+                <div class="pd-trade-demo-copy">
+                    <span class="pd-trade-kicker">See it in action</span>
+                    <h3 id="pd-trade-demo-title">From tonight's signal to its track record in one click.</h3>
+                    <ol class="pd-trade-demo-steps">
+                        <li>After the close, Dividend Play lists the stocks inside their entry window.</li>
+                        <li>Each card gives the buy-at price, the sell-by date and the dip rule to wait for.</li>
+                        <li>See evidence opens every past trade on that stock, with its win rate and returns.</li>
+                    </ol>
+                    <a class="pd-text-link" href="./dividend_play" target="_self">Open Dividend Play</a>
+                </div>
+                <figure>
+                    <div class="pd-trade-demo-frame">
+                        <video
+                            muted
+                            loop
+                            playsinline
+                            preload="none"
+                            poster="{trade_demo_poster}"
+                            aria-label="Dividend Play walkthrough: the entry window cards for tonight, then the backtest evidence for one stock"
+                        >
+                            <source src="{trade_demo_webm}" type="video/webm">
+                            <source src="{trade_demo_mp4}" type="video/mp4">
+                        </video>
+                        <button class="pd-trade-demo-toggle" type="button" hidden>Pause</button>
+                    </div>
+                    <figcaption class="pd-trade-demo-note">Supporter view. Free visitors see the top window and the evidence for BBRI.</figcaption>
+                </figure>
+            </article>
+
             <div class="pd-trade-grid">
                 <article class="pd-trade-card">
                     <div class="pd-trade-top">
@@ -2001,6 +2169,56 @@ st.html(
             navLink.click();
         });
     }
+
+    // Trading demo clip: play only while on screen, never for reduced motion (the poster stays),
+    // and keep a visible pause button. Bound per element since reruns replace the DOM.
+    (function bindTradeDemo(tries) {
+        const video = document.querySelector('.pd-home .pd-trade-demo video');
+        if (!video) {
+            if (tries < 30) setTimeout(() => bindTradeDemo(tries + 1), 100);
+            return;
+        }
+        if (video.dataset.bound) return;
+        video.dataset.bound = '1';
+        const toggle = video.parentElement.querySelector('.pd-trade-demo-toggle');
+        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+        let userPaused = reduced.matches;
+        let onScreen = false;
+        video.muted = true;
+        const label = () => {
+            if (!toggle) return;
+            toggle.hidden = false;
+            toggle.textContent = video.paused ? 'Play' : 'Pause';
+            toggle.setAttribute('aria-label', (video.paused ? 'Play' : 'Pause') + ' the Dividend Play walkthrough');
+        };
+        const sync = () => {
+            if (onScreen && !userPaused) {
+                video.play().then(label).catch(label);
+            } else if (!video.paused) {
+                video.pause();
+            }
+            label();
+        };
+        video.addEventListener('play', label);
+        video.addEventListener('pause', label);
+        if (toggle) {
+            toggle.addEventListener('click', () => {
+                userPaused = !video.paused;
+                if (!userPaused) onScreen = true;
+                sync();
+            });
+        }
+        reduced.addEventListener('change', () => { userPaused = reduced.matches; sync(); });
+        if ('IntersectionObserver' in window) {
+            new IntersectionObserver((entries) => {
+                onScreen = entries[0].isIntersecting;
+                sync();
+            }, { threshold: 0.4 }).observe(video);
+        } else {
+            onScreen = true;
+            sync();
+        }
+    })(0);
     </script>
     ''',
     unsafe_allow_javascript=True,
