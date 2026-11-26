@@ -25,8 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # glibc malloc gives each thread its own arena and rarely hands freed pages back, so every Streamlit rerun
 # (a fresh thread) ratchets RSS up while Python's own numbers stay flat. jemalloc returns idle pages instead.
+# jemalloc sizes its arena count from the host's CPUs, not the container's share, and with the defaults RSS
+# settled near 1.5 GB (glibc: ~0.8 GB). Two arenas, a 1 s dirty decay and no muzzy stage hand pages back fast.
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
-ENV MALLOC_CONF=background_thread:true
+ENV MALLOC_CONF=background_thread:true,narenas:2,dirty_decay_ms:1000,muzzy_decay_ms:0
 
 WORKDIR /app
 
