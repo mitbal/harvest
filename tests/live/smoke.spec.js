@@ -48,7 +48,7 @@ test('home page renders the primary experience', async ({ page }) => {
     'Clear data. Calmer decisions.',
   );
   await expect(page).toHaveTitle(/Panen Dividen/);
-  await expect(page.getByRole('link', { name: /Start with the Ranking Screener/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Start with the Screener/ })).toBeVisible();
 });
 
 test('stock picker opens a research section for a selected stock', async ({ page }) => {

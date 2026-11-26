@@ -119,11 +119,17 @@ st.html(
 
         [data-testid="stMainBlockContainer"] {{
             max-width: 1240px;
-            padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 4rem;
+            /* Streamlit's header is fixed and 3.75rem tall: start the masthead just below it */
+            padding: 4.25rem clamp(1rem, 3vw, 2.5rem) 4rem;
         }}
 
         [data-testid="stHeader"] {{
             background: color-mix(in srgb, var(--pd-canvas) 86%, transparent);
+        }}
+
+        /* Keep in-page jumps (the Become a supporter pill) from landing under the header */
+        .pd-home [id] {{
+            scroll-margin-top: 4.5rem;
         }}
 
         .footer {{
@@ -1551,33 +1557,33 @@ st.html(
                 <div class="pd-hero-kicker">Built for Indonesian investors</div>
                 <h1 id="pd-hero-title">Clear data. Calmer decisions.</h1>
                 <p>
-                    Bring dividend stock research, portfolio analytics, historical timing,
-                    compounding simulation, and backtested trading signals together in one workspace.
+                    Dividend research, portfolio tracking, market heatmaps and backtested trading
+                    signals for IDX and the S&amp;P 500, in one workspace. Free to use, with no ads.
                 </p>
                 <div class="pd-actions">
                     <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
-                        Start with the Ranking Screener <span aria-hidden="true">→</span>
+                        Start with the Screener <span aria-hidden="true">→</span>
                     </a>
                     <a class="pd-button pd-button-secondary" href="./porto_overview" target="_self">
                         Analyze your portfolio
                     </a>
                 </div>
             </div>
-            <div class="pd-hero-visual" aria-label="Portfolio Analytics preview">
+            <div class="pd-hero-visual" aria-label="Portfolio preview">
                 <div class="pd-preview">
                     <div class="pd-preview-bar">
-                        <span>Portfolio Analytics</span>
+                        <span>Portfolio</span>
                         <span class="pd-preview-status">Dashboard preview</span>
                     </div>
                     <img
                         src="{portfolio_preview}"
-                        alt="Portfolio Analytics showing annual dividend income, target progress, yield on cost, investment value, and holdings"
+                        alt="Portfolio showing annual dividend income, target progress, yield on cost, investment value, and holdings"
                         decoding="async"
                         fetchpriority="high"
                     >
                 </div>
                 <div class="pd-hero-chip">
-                    From yield on cost to income targets, see your portfolio as one complete story.
+                    From yield on cost to your income goal, saved to your account when you log in.
                 </div>
             </div>
         </section>
@@ -1585,7 +1591,7 @@ st.html(
         <div class="pd-context" aria-label="Product coverage">
             <span>Focused on IDX and retail investors</span>
             <span>Research for JKSE and S&amp;P 500</span>
-            <span>11 tools, from research to nightly trading signals</span>
+            <span>11 tools across Dividend, Market and Trading</span>
         </div>
 
         <section class="pd-section" aria-labelledby="pd-workflow-title">
@@ -1603,15 +1609,16 @@ st.html(
                         <span class="pd-step">1</span>
                         <h3>Find candidates with context, not just yield.</h3>
                         <p>
-                            The Ranking Screener brings together dividend quality, valuation, growth,
-                            profitability, and risk to help you build a sharper shortlist.
+                            Rank stocks by Balanced, Income, Growth or Potential, filter for Syariah or
+                            non-state-owned names, then open one stock for its dividends, financials,
+                            multiples, intrinsic value, price and buy timing.
                         </p>
                         <a class="pd-text-link" href="./stock_picker" target="_self">Open the screener</a>
                     </div>
                     <div class="pd-workflow-image">
                         <img
                             src="{ranking_preview}"
-                            alt="Latest Ranking Screener with stock rankings, dividend yield, Dividend Score, valuation, profit margin, and return"
+                            alt="Screener with stock rankings, dividend yield, Dividend Score, valuation, profit margin, and return"
                             loading="lazy"
                             decoding="async"
                         >
@@ -1623,15 +1630,15 @@ st.html(
                         <span class="pd-step">2</span>
                         <h3>Understand when historical income shows up.</h3>
                         <p>
-                            Explore monthly dividend payout patterns, compare historical yields,
-                            and move on to timing analysis before and after the ex-date.
+                            See a full year of payouts at a glance, zoom into a single month, or list each
+                            month's payers by yield. Share the Full Year view as an image.
                         </p>
                         <a class="pd-text-link" href="./calendar" target="_self">View the payout calendar</a>
                     </div>
                     <div class="pd-workflow-image">
                         <img
                             src="{calendar_preview}"
-                            alt="Monthly Payout Calendar with dividend dates and the highest-yielding stocks in April"
+                            alt="Dividend Calendar month view with dividend dates and the highest-yielding stocks in April"
                             loading="lazy"
                             decoding="async"
                         >
@@ -1643,8 +1650,8 @@ st.html(
                         <span class="pd-step">3</span>
                         <h3>Test the impact on your portfolio.</h3>
                         <p>
-                            Track income, sector diversification, and portfolio targets. Compare DRIP
-                            and non-DRIP scenarios before committing to a long-term plan.
+                            Track income, sectors and your income goal in Portfolio. Then simulate a fixed
+                            yield, a single stock or a whole portfolio, with and without DRIP.
                         </p>
                         <a class="pd-text-link" href="./simulator" target="_self">Run a simulation</a>
                     </div>
@@ -1669,26 +1676,16 @@ st.html(
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">01</span>
-                    <h3>Historical DRIP Simulator</h3>
+                    <h3>Dividend Play: waiting for the dip</h3>
                     <p>
-                        Compare reinvesting versus not reinvesting using the history of a single stock
-                        or several, complete with allocation, residual cash, and a transaction log.
+                        See which stocks are inside their entry window but still above the buy-at price,
+                        and which announced dividends are still worth buying before the cum date.
                     </p>
-                    <a class="pd-text-link" href="./simulator" target="_self">Try the simulator</a>
+                    <a class="pd-text-link" href="./dividend_play" target="_self">Open Dividend Play</a>
                 </article>
 
                 <article class="pd-latest-row">
                     <span class="pd-latest-index">02</span>
-                    <h3>Best Timing Analysis</h3>
-                    <p>
-                        Study which months tend to be cheaper, how lows are distributed before the ex-date,
-                        and recovery patterns afterwards, all from auditable historical data.
-                    </p>
-                    <a class="pd-text-link" href="./best_timing" target="_self">Explore timing</a>
-                </article>
-
-                <article class="pd-latest-row">
-                    <span class="pd-latest-index">03</span>
                     <h3>Market Sell-off Dip</h3>
                     <p>
                         A new Swing Play setup that buys stocks pulled down with the JKSE on a sell-off day,
@@ -1698,13 +1695,33 @@ st.html(
                 </article>
 
                 <article class="pd-latest-row">
-                    <span class="pd-latest-index">04</span>
-                    <h3>My Trades hub</h3>
+                    <span class="pd-latest-index">03</span>
+                    <h3>Performance and preset groups in Comparison</h3>
                     <p>
-                        One page for what to act on after the close across Dividend, Swing and Value Play,
-                        plus a journal that counts down to each trade's sell-by date.
+                        Compare total return with dividends on one rebased chart, and load ready-made groups
+                        such as the big banks in one click.
                     </p>
-                    <a class="pd-text-link" href="./my_trades" target="_self">Open My Trades</a>
+                    <a class="pd-text-link" href="./stock_comparison" target="_self">Compare stocks</a>
+                </article>
+
+                <article class="pd-latest-row">
+                    <span class="pd-latest-index">04</span>
+                    <h3>Global indices and currencies</h3>
+                    <p>
+                        The Heatmap now covers world stock indices and currencies against the rupiah,
+                        next to JKSE and the S&amp;P 500.
+                    </p>
+                    <a class="pd-text-link" href="./market_watch" target="_self">Open the Heatmap</a>
+                </article>
+
+                <article class="pd-latest-row">
+                    <span class="pd-latest-index">05</span>
+                    <h3>Intrinsic value in the Screener</h3>
+                    <p>
+                        A dividend discount model for each dividend payer, with a low and high range so you can see
+                        how much the estimate depends on its assumptions.
+                    </p>
+                    <a class="pd-text-link" href="./stock_picker" target="_self">Open the Screener</a>
                 </article>
             </div>
         </section>
@@ -1726,8 +1743,8 @@ st.html(
                     </div>
                     <h3>Dividend Play</h3>
                     <p>
-                        Buy a dividend payer while it is cheap ahead of its ex-date, then sell into the run-up.
-                        Every past ex-date is one trade, so you can see how each stock has behaved.
+                        Buy a dividend payer on a dip ahead of its ex-date, then sell into the run-up. Every
+                        past ex-date is one trade, and announced dividends get a buy-before-cum verdict.
                     </p>
                     <ul class="pd-trade-access">
                         <li><b>Free</b><span>The top open entry window and the full evidence for BBRI.</span></li>
@@ -1744,7 +1761,7 @@ st.html(
                     <h3>Swing Play</h3>
                     <p>
                         Short swings on liquid IDX stocks, confirmed at the close and bought in the next session.
-                        Gorengan and pumped stocks are kept out of the universe.
+                        Gorengan stays out, and every setup is backtested on a point-in-time universe.
                     </p>
                     <ul class="pd-trade-access">
                         <li><b>Free</b><span>The top plan for the next session and the evidence for BBRI.</span></li>
@@ -1804,10 +1821,10 @@ st.html(
                 <div class="pd-insight-copy">
                     <h3>See where the market is heading at a glance.</h3>
                     <p>
-                        The Market Heatmap arranges daily returns by sector, industry, and market cap
-                        so breadth and the biggest moves are quicker to read.
+                        The Heatmap arranges returns by sector, industry and market cap for JKSE and the
+                        S&amp;P 500, and tracks global indices and currencies against the rupiah.
                     </p>
-                    <a class="pd-text-link" href="./market_watch" target="_self">Open the market heatmap</a>
+                    <a class="pd-text-link" href="./market_watch" target="_self">Open the Heatmap</a>
                 </div>
                 <figure>
                     <img
@@ -1832,8 +1849,8 @@ st.html(
                     <div class="pd-insight-copy">
                         <h3>Compare trade-offs, not a single number.</h3>
                         <p>
-                            Plot several stocks across two metrics at once to see relative position,
-                            outliers, and the candidates that best fit your research focus.
+                            Put up to five stocks side by side in a table, distribution or scatter, then
+                            check their dividend history and total return over the same period.
                         </p>
                         <a class="pd-text-link" href="./stock_comparison" target="_self">Compare stocks</a>
                     </div>
@@ -1871,38 +1888,38 @@ st.html(
 
             <div class="pd-tool-groups">
                 <div class="pd-tool-group">
-                    <p class="pd-tool-group-title">Dividend research</p>
+                    <p class="pd-tool-group-title">Dividend</p>
                     <a class="pd-tool-link" href="./stock_picker" target="_self">
-                        <strong>Ranking Screener</strong>
-                        <span>Dividend, valuation, fundamental, and risk rankings in a single stock research view.</span>
+                        <strong>Screener</strong>
+                        <span>Balanced, Income, Growth and Potential rankings, Syariah and ownership filters, and a full research page per stock.</span>
                     </a>
                     <a class="pd-tool-link" href="./calendar" target="_self">
-                        <strong>Payout Calendar</strong>
-                        <span>Historical payout patterns and monthly yields for JKSE or the S&amp;P 500.</span>
-                    </a>
-                    <a class="pd-tool-link" href="./best_timing" target="_self">
-                        <strong>Best Timing</strong>
-                        <span>Seasonality, pre-ex-date patterns, and recovery after the payout.</span>
+                        <strong>Calendar</strong>
+                        <span>Full year, single month and monthly tables of payouts for JKSE or the S&amp;P 500.</span>
                     </a>
                     <a class="pd-tool-link" href="./porto_overview" target="_self">
-                        <strong>Portfolio Analytics</strong>
-                        <span>Income, yield on cost, targets, diversification, and a dividend timeline.</span>
+                        <strong>Portfolio</strong>
+                        <span>Income, yield on cost, your income goal, sectors and an allocation map.</span>
                     </a>
                     <a class="pd-tool-link" href="./simulator" target="_self">
-                        <strong>Compounding Simulator</strong>
-                        <span>Simple projections and historical replay, with or without DRIP.</span>
+                        <strong>Simulator</strong>
+                        <span>Compounding with a fixed yield, a single stock or a portfolio, with or without DRIP.</span>
                     </a>
                 </div>
 
                 <div class="pd-tool-group">
-                    <p class="pd-tool-group-title">Market intelligence</p>
+                    <p class="pd-tool-group-title">Market</p>
                     <a class="pd-tool-link" href="./market_watch" target="_self">
-                        <strong>Market Heatmap</strong>
-                        <span>A snapshot of breadth, sectors, returns, valuation, yield, and macro indicators.</span>
+                        <strong>Heatmap</strong>
+                        <span>Returns, valuation and yield by sector for JKSE and the S&amp;P 500, plus global indices and currencies.</span>
                     </a>
                     <a class="pd-tool-link" href="./stock_comparison" target="_self">
-                        <strong>Stock Comparison</strong>
-                        <span>Compare 2–5 stocks on income, quality, growth, return, and risk.</span>
+                        <strong>Comparison</strong>
+                        <span>Compare 2–5 stocks on income, quality, growth and total return, or start from a preset group.</span>
+                    </a>
+                    <a class="pd-tool-link" href="./best_timing" target="_self">
+                        <strong>Best Timing</strong>
+                        <span>Seasonality, pre-ex-date patterns, and recovery after the payout.</span>
                     </a>
                 </div>
 
@@ -1932,8 +1949,8 @@ st.html(
             <h2 id="pd-closing-title">Start with one stock you want to understand.</h2>
             <div class="pd-closing-copy">
                 <p>
-                    Open the Ranking Screener, pick a market, then explore dividends, fundamentals,
-                    valuation, price action, and compounding simulations from a single page.
+                    Open the Screener, pick a market, then explore dividends, financials, multiples,
+                    intrinsic value, price action and compounding from a single page.
                 </p>
                 <a class="pd-button pd-button-primary" href="./stock_picker" target="_self">
                     Start researching stocks <span aria-hidden="true">→</span>
